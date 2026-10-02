@@ -25,6 +25,7 @@
 		"storybook": "bun run --filter @regit/ui storybook",
 		"build": "bun run --filter '*' build",
 		"check": "bun run --filter '*' check",
+		"test": "bun run --filter '*' test",
 		"gen": "bun run --filter '*' gen",
 		"format": "prettier --write .",
 		"lint": "prettier --check ."

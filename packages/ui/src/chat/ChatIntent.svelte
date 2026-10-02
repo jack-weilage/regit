@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Button from '../Button.svelte';
 	import ChatChecks from './ChatChecks.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
@@ -54,10 +55,10 @@
 			{#if !superseded && (onstart || ondismiss)}
 				<div class="actions">
 					{#if ondismiss}
-						<button type="button" class="quiet" onclick={ondismiss}>Dismiss</button>
+						<Button size="sm" onclick={ondismiss}>Dismiss</Button>
 					{/if}
 					{#if onstart}
-						<button type="button" onclick={onstart}>Spin off</button>
+						<Button variant="primary" size="sm" onclick={onstart}>Spin off</Button>
 					{/if}
 				</div>
 			{/if}
@@ -88,7 +89,7 @@
 
 			{#if onstart}
 				<div class="actions">
-					<button type="button" onclick={onstart}>Start</button>
+					<Button variant="primary" onclick={onstart}>Start</Button>
 				</div>
 			{/if}
 		</div>
@@ -105,7 +106,7 @@
 		gap: 0.5rem;
 		padding: 1rem;
 		border: 1px solid var(--color-border);
-		border-radius: calc(var(--radius) * 2);
+		border-radius: var(--radius-lg);
 		background: var(--color-bg);
 		font-size: var(--text-chat);
 		line-height: 1.5;
@@ -167,30 +168,6 @@
 		margin-block-start: 0.25rem;
 	}
 
-	button {
-		padding: 0.375rem 0.875rem;
-		border: 0;
-		border-radius: var(--radius);
-		background: var(--color-accent);
-		color: var(--color-accent-fg);
-		font: inherit;
-		font-weight: 500;
-		cursor: pointer;
-
-		&:hover {
-			background: color-mix(in oklab, var(--color-accent) 88%, var(--color-fg));
-		}
-
-		&.quiet {
-			background: none;
-			color: var(--color-muted);
-
-			&:hover {
-				background: var(--color-surface);
-			}
-		}
-	}
-
 	.collapsed {
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: baseline;
@@ -221,10 +198,6 @@
 			grid-area: 1 / 2;
 			gap: 0.25rem;
 			margin: 0;
-		}
-
-		button {
-			padding: 0.25rem 0.625rem;
 		}
 	}
 
@@ -264,7 +237,7 @@
 	}
 
 	@container intent (width < 28rem) {
-		.actions button {
+		.actions > :global(*) {
 			flex: 1;
 		}
 

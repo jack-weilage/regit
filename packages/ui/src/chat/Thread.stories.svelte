@@ -1,5 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { expect, waitFor } from 'storybook/test';
 	import ChatActivity from './ChatActivity.svelte';
 	import ChatComposer from './ChatComposer.svelte';
 	import ChatEvent from './ChatEvent.svelte';
@@ -142,7 +143,7 @@
 	}
 </script>
 
-<Story name="Thread" asChild>
+{#snippet thread()}
 	<div class="frame">
 		<ChatLog label="Thread messages">
 			{#each blocks as block (block.id)}
@@ -218,6 +219,25 @@
 			/>
 		</div>
 	</div>
+{/snippet}
+
+<Story name="Thread" asChild>{@render thread()}</Story>
+
+<Story
+	name="Start and spin off"
+	asChild
+	play={async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'Start' }));
+		await waitFor(() => expect(canvas.getByText('Attempt 1 started')).toBeVisible());
+		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: 'Spin off' }));
+		await waitFor(() => expect(canvas.getByText(/Spun off/)).toBeVisible());
+		await expect(
+			canvas.getByRole('link', { name: 'Stop loading the full audit log' })
+		).toBeVisible();
+	}}
+>
+	{@render thread()}
 </Story>
 
 <style>

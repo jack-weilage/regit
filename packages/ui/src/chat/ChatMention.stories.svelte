@@ -1,5 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { expect } from 'storybook/test';
 	import ChatGroup from './ChatGroup.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ChatMessage from './ChatMessage.svelte';
@@ -26,7 +27,17 @@
 	</ChatGroup>
 </Story>
 
-<Story name="Long names" asChild>
+<Story
+	name="Long names"
+	asChild
+	play={async ({ canvasElement }) => {
+		const [person, thread] = canvasElement.querySelectorAll<HTMLElement>('.mention');
+		const label = thread!.querySelector<HTMLElement>('.label')!;
+		await expect(person!.getClientRects()).toHaveLength(1);
+		await expect(thread!.getClientRects()).toHaveLength(1);
+		await expect(label.scrollWidth).toBeGreaterThan(label.clientWidth);
+	}}
+>
 	<div style="inline-size: 18rem">
 		<ChatGroup author={{ name: 'Lin Wei', kind: 'person' }}>
 			<ChatMessage>

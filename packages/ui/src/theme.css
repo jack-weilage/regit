@@ -4,6 +4,8 @@
 	--font-sans: system-ui, sans-serif;
 	--font-mono: ui-monospace, monospace;
 	--radius: 6px;
+	--radius-lg: 12px;
+	--shadow-floating: 0 0.25rem 1rem light-dark(rgb(0 0 0 / 0.08), rgb(0 0 0 / 0.4));
 
 	--text-chat: 0.8125rem;
 	--text-meta: 0.75rem;
@@ -11,10 +13,10 @@
 	--color-bg: light-dark(#ffffff, #0e0e10);
 	--color-surface: light-dark(#f4f4f5, #1c1c1f);
 	--color-fg: light-dark(#18181b, #f4f4f5);
-	--color-muted: light-dark(#71717a, #a1a1aa);
+	--color-muted: light-dark(#68686f, #a1a1aa);
 	--color-border: light-dark(#e4e4e7, #27272a);
 	--color-accent: light-dark(#ea580c, #fb923c);
-	--color-accent-fg: light-dark(#ffffff, #0e0e10);
+	--color-accent-fg: #0e0e10;
 }
 
 body {

@@ -9,4 +9,5 @@ Bun workspace: `apps/*` (deployables) and `packages/*` (shared code consumed as 
 - Shared components live in `packages/ui`, each with a Svelte CSF story (`*.stories.svelte`). Style with the tokens in `theme.css`.
 - Durable Objects, Workflows and containers belong in `apps/forge`. `apps/web` binds to them with `script_name: "regit-forge"`.
 - `worker-configuration.d.ts` is generated and gitignored. After editing a `wrangler.jsonc`, run `bun run gen`.
-- Keep code self-explanatory with minimal comments. Run `bun run check` before considering work done.
+- Stories are the component tests: Vitest runs every story in Chromium with accessibility checks, and `play` functions cover interactions. Wrap assertions on anything that animates in with `waitFor`.
+- Keep code self-explanatory with minimal comments. Run `bun run check` and `bun run test` before considering work done.

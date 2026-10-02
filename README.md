@@ -24,13 +24,14 @@ bun run dev
 
 `bun run dev` starts `forge` on <http://localhost:8787> and `web` on <http://localhost:5173>. Bindings across the two Workers resolve locally through Wrangler's dev registry.
 
-| Command             | What                                                     |
-| ------------------- | -------------------------------------------------------- |
-| `bun run storybook` | Storybook for `packages/ui` on <http://localhost:6006>   |
-| `bun run check`     | Type-check every workspace                               |
-| `bun run build`     | Build every workspace                                    |
-| `bun run gen`       | Regenerate binding types after a `wrangler.jsonc` change |
-| `bun run format`    | Format with Prettier                                     |
+| Command             | What                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| `bun run storybook` | Storybook for `packages/ui` on <http://localhost:6006>       |
+| `bun run check`     | Type-check every workspace                                   |
+| `bun run test`      | Run story tests (interactions and accessibility) in Chromium |
+| `bun run build`     | Build every workspace                                        |
+| `bun run gen`       | Regenerate binding types after a `wrangler.jsonc` change     |
+| `bun run format`    | Format with Prettier                                         |
 
 Git hooks run through lefthook: pre-commit formats staged files, and pre-push runs `check`.
 

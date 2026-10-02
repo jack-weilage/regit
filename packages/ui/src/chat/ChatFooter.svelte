@@ -16,6 +16,9 @@
 </script>
 
 <script lang="ts">
+	import Button from '../Button.svelte';
+	import Popover from '../Popover.svelte';
+
 	interface Props {
 		mode: string;
 		context: { used: number; limit: number; parts?: { label: string; tokens: number }[] };
@@ -26,10 +29,8 @@
 
 	const id = $props.id();
 	const hues = [250, 150, 300, 40, 190, 0];
-	const gap = 6;
 
-	let footer: HTMLElement;
-	let placement = $state({ right: 0, offset: 0, below: false });
+	let footer: HTMLElement | undefined = $state();
 
 	let percent = $derived(Math.round((context.used / context.limit) * 100));
 	let total = $derived(
@@ -38,90 +39,75 @@
 			cost: 0
 		})
 	);
-
-	function place(event: ToggleEvent) {
-		if (event.newState !== 'open') return;
-		const rect = footer.getBoundingClientRect();
-		const below = rect.top < innerHeight - rect.bottom;
-		placement = {
-			right: innerWidth - rect.right,
-			offset: below ? rect.bottom + gap : innerHeight - rect.top + gap,
-			below
-		};
-	}
 </script>
 
 <footer bind:this={footer}>
 	<span>{mode}</span>
-	<button type="button" popovertarget="{id}-usage" class="usage">
-		<span class="ring" style:--used={percent} aria-hidden="true"></span>
-		<span>{percent}% context</span>
-		<span class="cost">{formatCost(total.cost)}</span>
-	</button>
-	<div
-		id="{id}-usage"
-		popover
-		class={{ below: placement.below }}
-		onbeforetoggle={place}
-		style:right="{placement.right}px"
-		style:top={placement.below ? `${placement.offset}px` : undefined}
-		style:bottom={placement.below ? undefined : `${placement.offset}px`}
-	>
-		<div class="context">
-			<p class="summary">
-				<span>Context window</span>
-				<span>{formatTokens(context.used)} / {formatTokens(context.limit)}</span>
-			</p>
-			<div
-				class={['bar', { parts: context.parts }]}
-				role="img"
-				aria-label="{percent}% of the context window used"
-			>
-				{#each context.parts ?? [{ label: 'Used', tokens: context.used }] as part, index (part.label)}
-					<span
-						style:flex-basis="{(part.tokens / context.limit) * 100}%"
-						style:--hue={hues[index % hues.length]}
-					></span>
-				{/each}
-			</div>
-			{#if context.parts}
-				<ul class="legend">
-					{#each context.parts as part, index (part.label)}
-						<li style:--hue={hues[index % hues.length]}>
-							{part.label} <span>{formatTokens(part.tokens)}</span>
-						</li>
+	<span class="trigger">
+		<Button variant="ghost" size="xs" popovertarget="{id}-usage">
+			<span class="ring" style:--used={percent} aria-hidden="true"></span>
+			<span>{percent}% context</span>
+			<span class="cost">{formatCost(total.cost)}</span>
+		</Button>
+	</span>
+	<Popover id="{id}-usage" anchor={footer}>
+		<div class="usage">
+			<div class="context">
+				<p class="summary">
+					<span>Context window</span>
+					<span>{formatTokens(context.used)} / {formatTokens(context.limit)}</span>
+				</p>
+				<div
+					class={['bar', { parts: context.parts }]}
+					role="img"
+					aria-label="{percent}% of the context window used"
+				>
+					{#each context.parts ?? [{ label: 'Used', tokens: context.used }] as part, index (part.label)}
+						<span
+							style:flex-basis="{(part.tokens / context.limit) * 100}%"
+							style:--hue={hues[index % hues.length]}
+						></span>
 					{/each}
-				</ul>
+				</div>
+				{#if context.parts}
+					<ul class="legend">
+						{#each context.parts as part, index (part.label)}
+							<li style:--hue={hues[index % hues.length]}>
+								{part.label} <span>{formatTokens(part.tokens)}</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+			{#if usage.length}
+				<table>
+					<thead>
+						<tr><th>Task</th><th>Model</th><th>Tokens used</th><th>Cost</th></tr>
+					</thead>
+					<tbody>
+						{#each usage as row (row.task)}
+							<tr>
+								<td>{row.task}</td>
+								<td>{row.model}</td>
+								<td>{formatTokens(row.tokens)}</td>
+								<td>{formatCost(row.cost)}</td>
+							</tr>
+						{/each}
+					</tbody>
+					<tfoot>
+						<tr>
+							<td>Total</td>
+							<td></td>
+							<td>{formatTokens(total.tokens)}</td>
+							<td>{formatCost(total.cost)}</td>
+						</tr>
+					</tfoot>
+				</table>
+			{:else}
+				<p class="empty">No usage yet</p>
 			{/if}
 		</div>
-		{#if usage.length}
-			<table>
-				<thead>
-					<tr><th>Task</th><th>Model</th><th>Tokens used</th><th>Cost</th></tr>
-				</thead>
-				<tbody>
-					{#each usage as row (row.task)}
-						<tr>
-							<td>{row.task}</td>
-							<td>{row.model}</td>
-							<td>{formatTokens(row.tokens)}</td>
-							<td>{formatCost(row.cost)}</td>
-						</tr>
-					{/each}
-				</tbody>
-				<tfoot>
-					<tr>
-						<td>Total</td>
-						<td></td>
-						<td>{formatTokens(total.tokens)}</td>
-						<td>{formatCost(total.cost)}</td>
-					</tr>
-				</tfoot>
-			</table>
-		{:else}
-			<p class="empty">No usage yet</p>
-		{/if}
-	</div>
+	</Popover>
 </footer>
 
 <style>
@@ -136,22 +122,8 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.usage {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 0.375rem;
+	.trigger {
 		margin-inline: -0.375rem;
-		padding: 0.125rem 0.375rem;
-		border: 0;
-		border-radius: var(--radius);
-		background: none;
-		color: inherit;
-		font: inherit;
-		cursor: pointer;
-
-		&:hover {
-			background: var(--color-surface);
-		}
 	}
 
 	.ring {
@@ -171,15 +143,8 @@
 		color: var(--color-fg);
 	}
 
-	[popover] {
-		inset: auto;
-		margin: 0;
+	.usage {
 		padding: 0.625rem 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: calc(var(--radius) * 2);
-		background: var(--color-bg);
-		box-shadow: 0 0.25rem 1rem light-dark(rgb(0 0 0 / 0.08), rgb(0 0 0 / 0.4));
-		color: var(--color-fg);
 		font-size: var(--text-meta);
 		font-variant-numeric: tabular-nums;
 
@@ -246,42 +211,6 @@
 
 	.empty {
 		color: var(--color-muted);
-	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		[popover] {
-			transform-origin: bottom right;
-			transition:
-				opacity 0.15s,
-				translate 0.15s,
-				scale 0.15s,
-				display 0.15s allow-discrete,
-				overlay 0.15s allow-discrete;
-
-			&:not(:popover-open) {
-				opacity: 0;
-				translate: 0 0.25rem;
-				scale: 0.98;
-			}
-
-			@starting-style {
-				opacity: 0;
-				translate: 0 0.25rem;
-				scale: 0.98;
-			}
-
-			&.below {
-				transform-origin: top right;
-
-				&:not(:popover-open) {
-					translate: 0 -0.25rem;
-				}
-
-				@starting-style {
-					translate: 0 -0.25rem;
-				}
-			}
-		}
 	}
 
 	table {

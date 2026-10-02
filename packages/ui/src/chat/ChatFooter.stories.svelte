@@ -1,5 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { expect, waitFor } from 'storybook/test';
 	import ChatFooter from './ChatFooter.svelte';
 
 	const { Story } = defineMeta({
@@ -28,6 +29,23 @@
 
 <Story name="Default" />
 
+<Story
+	name="Usage breakdown"
+	play={async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: /24% context \$0\.84/ }));
+		await waitFor(() => expect(canvas.getByRole('cell', { name: 'kimi-k2.7-code' })).toBeVisible());
+		await expect(canvas.getByRole('row', { name: /Total/ })).toHaveTextContent('$0.84');
+	}}
+/>
+
 <Story name="Nearly full" args={{ mode: 'Large', context: { used: 182_000, limit: 200_000 } }} />
 
-<Story name="Fresh" args={{ mode: 'Small', context: { used: 3_000, limit: 128_000 }, usage: [] }} />
+<Story
+	name="Fresh"
+	args={{ mode: 'Small', context: { used: 3_000, limit: 128_000 }, usage: [] }}
+	play={async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button'));
+		await waitFor(() => expect(canvas.getByText('No usage yet')).toBeVisible());
+		await expect(canvas.queryByRole('table')).toBeNull();
+	}}
+/>

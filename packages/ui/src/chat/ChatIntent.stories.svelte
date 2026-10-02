@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { fn } from 'storybook/test';
+	import { expect, fn } from 'storybook/test';
 	import ChatIntent from './ChatIntent.svelte';
 	import { threads } from './fixtures.ts';
 
@@ -24,11 +24,26 @@
 		],
 		onstart: fn()
 	}}
+	play={async ({ args, canvas, userEvent }) => {
+		await expect(
+			canvas.getByText('Settings loads in under a second for an org with 5,000 members.')
+		).toBeVisible();
+		await expect(canvas.getByRole('link', { name: /Paginate the member list/ })).toBeVisible();
+		await userEvent.click(canvas.getByRole('button', { name: 'Start' }));
+		await expect(args.onstart).toHaveBeenCalledOnce();
+	}}
 />
 
 <Story name="Started" />
 
-<Story name="Superseded" args={{ superseded: true }} />
+<Story
+	name="Superseded"
+	args={{ superseded: true }}
+	play={async ({ args, canvas }) => {
+		await expect(canvas.getByText(args.headline).tagName).toBe('S');
+		await expect(canvas.queryByRole('button')).toBeNull();
+	}}
+/>
 
 <Story
 	name="Several checks"
@@ -64,5 +79,11 @@
 		doneWhen: ['Settings makes one audit log query that returns a single row.'],
 		onstart: fn(),
 		ondismiss: fn()
+	}}
+	play={async ({ args, canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'Spin off' }));
+		await userEvent.click(canvas.getByRole('button', { name: 'Dismiss' }));
+		await expect(args.onstart).toHaveBeenCalledOnce();
+		await expect(args.ondismiss).toHaveBeenCalledOnce();
 	}}
 />

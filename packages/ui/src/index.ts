@@ -1,4 +1,6 @@
 export { default as Avatar } from './Avatar.svelte';
+export { default as Button } from './Button.svelte';
+export { default as Popover } from './Popover.svelte';
 export { default as ChatActivity } from './chat/ChatActivity.svelte';
 export { default as ChatComposer } from './chat/ChatComposer.svelte';
 export { default as ChatEvent } from './chat/ChatEvent.svelte';
