@@ -66,6 +66,7 @@ type StepRow = {
 const author = { name: 'ReGit', email: 'agent@regit.dev' };
 const sandboxPort = 8080;
 const sliceMs = 10 * 60 * 1000;
+const healthTimeoutMs = 5 * 60 * 1000;
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
@@ -287,8 +288,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	// TODO: size the instance per mode
 	async #sandbox(attempt: AttemptRow, fork: Fork, token: string): Promise<Fetch> {
 		const container = this.ctx.container!;
-		const port = container.getTcpPort(sandboxPort);
-		const fetch: Fetch = (url, init) => port.fetch(url, init);
+		const fetch: Fetch = (url, init) => container.getTcpPort(sandboxPort).fetch(url, init);
 		const workspace = sandboxWorkspace(fetch);
 		await this.#allowGit(fork, token, false);
 		if (container.running) {
@@ -360,7 +360,8 @@ function isActive(status: AttemptStatus) {
 
 async function waitUntilHealthy(fetch: Fetch) {
 	let lastError: unknown;
-	for (let attempt = 0; attempt < 150; attempt++) {
+	const deadline = Date.now() + healthTimeoutMs;
+	while (Date.now() < deadline) {
 		try {
 			const response = await fetch('http://sandbox/health', { signal: AbortSignal.timeout(1000) });
 			await response.body?.cancel();
@@ -370,5 +371,7 @@ async function waitUntilHealthy(fetch: Fetch) {
 		}
 		await scheduler.wait(200);
 	}
-	throw new Error('The sandbox did not become healthy', { cause: lastError });
+	const reason =
+		lastError instanceof Error ? lastError.message : String(lastError ?? 'no response');
+	throw new Error(`The sandbox did not become healthy: ${reason}`, { cause: lastError });
 }

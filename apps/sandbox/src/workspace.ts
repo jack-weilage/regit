@@ -25,8 +25,12 @@ export async function clone(root: string, { remote, token, branch }: CloneReques
 			await rm(join(root, entry), { recursive: true, force: true });
 		}
 	}
-	const args = ['clone', ...(branch ? ['--branch', branch] : []), remote, '.'];
-	await git(root, args, auth(token));
+	await git(root, ['clone', remote, '.'], auth(token));
+	if (!branch) return;
+	const remoteBranch = await git(root, ['rev-parse', '--verify', `origin/${branch}`]).catch(
+		() => null
+	);
+	await git(root, ['checkout', '-B', branch, ...(remoteBranch ? [`origin/${branch}`] : [])]);
 }
 
 function exists(path: string) {

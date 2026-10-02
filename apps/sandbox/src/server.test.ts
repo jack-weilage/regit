@@ -140,6 +140,17 @@ describe('workspace', () => {
 		expect(await readFile(join(empty, 'greeting.ts'), 'utf8')).toContain('hello');
 	});
 
+	test('creates the requested branch when the remote lacks it', async () => {
+		const empty = join(dir, 'fresh');
+		await git(dir, ['init', empty]);
+		await rm(join(empty, '.git'), { recursive: true });
+		sandbox = createSandbox(empty);
+
+		await workspace.clone({ remote, branch: 'trunk' });
+		expect(await git(empty, ['branch', '--show-current'])).toBe('trunk');
+		expect(await readFile(join(empty, 'greeting.ts'), 'utf8')).toContain('hello');
+	});
+
 	test('replaces a clone of a different remote, as left by a restored snapshot', async () => {
 		const other = join(dir, 'other.git');
 		await git(dir, ['init', '--bare', '--initial-branch', 'main', other]);
