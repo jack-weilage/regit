@@ -137,6 +137,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		try {
 			const fetch = await this.#sandbox(attempt);
 			const { model, effort } = modes[attempt.mode];
+			// TODO: for the MVP deploy, call models through AI Gateway (env.AI.gateway, BYOK, cf-aig-metadata per thread) instead of the ChatGPT subscription
 			const account = this.env.CHATGPT.getByName('default');
 			const run = runAttempt({
 				model: chatgptModel({
