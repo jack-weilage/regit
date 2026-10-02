@@ -1,12 +1,12 @@
 import OpenAI from 'openai';
 import type { ResponseInputItem, ResponseStreamEvent } from 'openai/resources/responses/responses';
 import type { ModelClient, ModelEvent, Turn } from '../types.ts';
-import type { ChatGPTAuth } from './auth.ts';
+import type { TokenSource } from './auth.ts';
 
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface ChatGPTOptions {
-	auth: ChatGPTAuth;
+	auth: TokenSource;
 	model: string;
 	sessionId: string;
 	effort?: ReasoningEffort;
@@ -35,6 +35,7 @@ export function chatgptModel({
 	maxRetries,
 	fetch
 }: ChatGPTOptions): ModelClient {
+	// TODO: set prompt cache breakpoints when moving to the API; GPT-5.6+ only caches at explicit breakpoints, and an uncached run costs about 3x
 	// TODO: switch to the Responses WebSocket transport so each step only sends new items (needs a fetch-based socket, since the SDK's runs on `ws`)
 	const client = new OpenAI({
 		apiKey: 'chatgpt',
@@ -80,9 +81,10 @@ export function chatgptModel({
 				for await (const event of stream) yield* fromEvent(event);
 			} catch (error) {
 				if (error instanceof OpenAI.APIError) {
-					const body = error.error as { message?: string } | undefined;
+					const body = error.error as { message?: string } | string | undefined;
 					throw new ModelError(
-						body?.message ?? error.message,
+						(typeof body === 'object' && body.message) ||
+							`The model request failed with ${error.status}`,
 						error.status,
 						error.type ?? error.code ?? undefined
 					);
@@ -101,7 +103,7 @@ function toInput(turn: Turn): ResponseInputItem[] {
 			];
 		case 'assistant':
 			return [
-				...((turn.reasoning ?? []) as ResponseInputItem[]),
+				...(turn.reasoning ?? []).map((item) => JSON.parse(item) as ResponseInputItem),
 				...(turn.text
 					? [{ type: 'message' as const, role: 'assistant' as const, content: turn.text }]
 					: []),
@@ -131,7 +133,7 @@ function* fromEvent(event: ResponseStreamEvent): Generator<ModelEvent> {
 				const { call_id, name, arguments: args } = event.item;
 				yield { type: 'call', call: { id: call_id, name, arguments: args } };
 			} else if (event.item.type === 'reasoning') {
-				yield { type: 'reasoning', data: event.item };
+				yield { type: 'reasoning', data: JSON.stringify(event.item) };
 			}
 			break;
 		case 'response.completed': {

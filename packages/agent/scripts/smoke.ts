@@ -33,7 +33,7 @@ const files: Record<string, string> = { 'src/greeting.ts': "export const greetin
 const run = runAgent({
 	model: chatgptModel({
 		auth: new ChatGPTAuth(codexStore),
-		model: process.argv[2] ?? 'gpt-5.5',
+		model: process.argv[2] ?? 'gpt-6.1-sol',
 		sessionId: crypto.randomUUID(),
 		effort: 'low'
 	}),
@@ -62,5 +62,5 @@ const run = runAgent({
 for await (const event of run) {
 	if (event.type === 'text') process.stdout.write(event.delta);
 	if (event.type === 'call') console.log(`\n→ ${event.call.name}(${event.call.arguments})`);
-	if (event.type === 'usage') console.log(`\n· usage ${JSON.stringify(event.usage)}`);
+	if (event.type === 'step') console.log(`\n· usage ${JSON.stringify(event.usage)}`);
 }

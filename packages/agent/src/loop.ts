@@ -1,4 +1,12 @@
-import type { AgentEvent, ModelClient, ToolCall, ToolExecutor, Turn, Usage } from './types.ts';
+import type {
+	AgentEvent,
+	ModelClient,
+	ToolCall,
+	ToolExecutor,
+	ToolResult,
+	Turn,
+	Usage
+} from './types.ts';
 
 export interface AgentOptions {
 	model: ModelClient;
@@ -26,7 +34,7 @@ export async function* runAgent({
 
 		let text = '';
 		const calls: ToolCall[] = [];
-		const reasoning: unknown[] = [];
+		const reasoning: string[] = [];
 		let usage: Usage | undefined;
 
 		for await (const event of model.respond(
@@ -47,13 +55,13 @@ export async function* runAgent({
 		}
 
 		const reply: Turn = { role: 'assistant', text, calls, ...(reasoning.length && { reasoning }) };
-		turns.push(reply);
-		yield { type: 'turn', turn: reply };
-		if (usage) yield { type: 'usage', usage };
 
-		if (calls.length === 0) return 'finished';
+		if (calls.length === 0) {
+			yield { type: 'step', turns: [reply], usage };
+			return 'finished';
+		}
 
-		const results = [];
+		const results: ToolResult[] = [];
 		for (const call of calls) {
 			if (signal?.aborted) return 'aborted';
 			const output = await tools
@@ -64,9 +72,9 @@ export async function* runAgent({
 			yield { type: 'result', result };
 		}
 
-		const toolTurn: Turn = { role: 'tool', results };
-		turns.push(toolTurn);
-		yield { type: 'turn', turn: toolTurn };
+		const step: Turn[] = [reply, { role: 'tool', results }];
+		turns.push(...step);
+		yield { type: 'step', turns: step, usage };
 	}
 
 	return 'step-limit';

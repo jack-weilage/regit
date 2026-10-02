@@ -80,7 +80,7 @@ describe('chatgptModel', () => {
 		);
 
 		expect(await respond()).toEqual([
-			{ type: 'reasoning', data: reasoning },
+			{ type: 'reasoning', data: JSON.stringify(reasoning) },
 			{ type: 'text', delta: 'Reading' },
 			{ type: 'call', call: { id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' } },
 			{ type: 'done', usage: { inputTokens: 120, cachedInputTokens: 100, outputTokens: 30 } }
@@ -97,7 +97,7 @@ describe('chatgptModel', () => {
 					role: 'assistant',
 					text: 'Reading',
 					calls: [{ id: 'call_1', name: 'read_file', arguments: '{}' }],
-					reasoning: [{ type: 'reasoning', id: 'rs_1' }]
+					reasoning: [JSON.stringify({ type: 'reasoning', id: 'rs_1' })]
 				},
 				{ role: 'tool', results: [{ callId: 'call_1', output: 'export {}' }] }
 			]
@@ -141,6 +141,20 @@ describe('chatgptModel', () => {
 			status: 429,
 			code: 'usage_limit_reached',
 			message: 'Limit reached'
+		});
+	});
+
+	test('keeps non-JSON error pages out of the message', async () => {
+		const { respond } = setup(
+			new Response('<html>Unable to load site</html>', {
+				status: 403,
+				headers: { 'Content-Type': 'text/html' }
+			})
+		);
+
+		await expect(respond()).rejects.toMatchObject({
+			status: 403,
+			message: 'The model request failed with 403'
 		});
 	});
 

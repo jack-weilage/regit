@@ -13,11 +13,13 @@
     "apps/forge": {
       "name": "@regit/forge",
       "dependencies": {
+        "@regit/agent": "workspace:*",
         "@regit/core": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "catalog:",
         "typescript": "catalog:",
+        "vitest": "^5.0.3",
         "wrangler": "catalog:",
       },
     },

@@ -1,3 +1,5 @@
+import { access } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CloneRequest, CommitRequest, PushRequest } from '@regit/agent';
 import { git } from './exec.ts';
 
@@ -10,6 +12,13 @@ function auth(token: string) {
 }
 
 export async function clone(root: string, { remote, token, branch }: CloneRequest) {
+	if (
+		await access(join(root, '.git')).then(
+			() => true,
+			() => false
+		)
+	)
+		return;
 	const args = ['clone', ...(branch ? ['--branch', branch] : []), remote, '.'];
 	await git(root, args, auth(token));
 }

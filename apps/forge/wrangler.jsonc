@@ -5,5 +5,22 @@
 	"compatibility_date": "2026-10-01",
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },
-	"workers_dev": false
+	"workers_dev": false,
+	"durable_objects": {
+		"bindings": [
+			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
+			{ "name": "CHATGPT", "class_name": "ChatGPTAccount" }
+		]
+	},
+	"exports": {
+		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite", "container": "sandbox" },
+		"ChatGPTAccount": { "type": "durable-object", "storage": "sqlite" }
+	},
+	"containers": [
+		{
+			"name": "sandbox",
+			"scheduling_policy": "durable_object",
+			"images": { "sandbox": { "dockerfile": "../sandbox/Dockerfile" } }
+		}
+	]
 }

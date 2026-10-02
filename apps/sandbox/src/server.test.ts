@@ -140,6 +140,12 @@ describe('workspace', () => {
 		expect(await readFile(join(empty, 'greeting.ts'), 'utf8')).toContain('hello');
 	});
 
+	test('leaves an existing clone alone', async () => {
+		await call('write_file', { path: 'draft.ts', content: 'export {};\n' });
+		await workspace.clone({ remote, token: 'token' });
+		expect(await readFile(join(root, 'draft.ts'), 'utf8')).toBe('export {};\n');
+	});
+
 	test('commits checkpoints only when something changed, then pushes', async () => {
 		expect(await workspace.commit({ message: 'nothing', author })).toBeNull();
 

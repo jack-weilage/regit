@@ -32,11 +32,11 @@ describe('runAgent', () => {
 		);
 
 		expect(outcome).toBe('finished');
-		expect(events).toContainEqual({
-			type: 'turn',
-			turn: { role: 'assistant', text: 'All done', calls: [] }
+		expect(events.at(-1)).toEqual({
+			type: 'step',
+			turns: [{ role: 'assistant', text: 'All done', calls: [] }],
+			usage
 		});
-		expect(events).toContainEqual({ type: 'usage', usage });
 	});
 
 	test('runs tool calls and sends their results back to the model', async () => {
@@ -62,7 +62,11 @@ describe('runAgent', () => {
 
 	test('keeps reasoning on the assistant turn so it can be replayed', async () => {
 		const { model, requests } = scriptedModel([
-			[{ type: 'reasoning', data: { id: 'rs_1' } }, call('c1', 'run', {}), { type: 'done', usage }],
+			[
+				{ type: 'reasoning', data: '{"id":"rs_1"}' },
+				call('c1', 'run', {}),
+				{ type: 'done', usage }
+			],
 			[{ type: 'done', usage }]
 		]);
 		const { tools } = fakeTools({ run: () => 'ok' });
@@ -70,7 +74,7 @@ describe('runAgent', () => {
 
 		expect(requests[1]!.history[0]).toMatchObject({
 			role: 'assistant',
-			reasoning: [{ id: 'rs_1' }]
+			reasoning: ['{"id":"rs_1"}']
 		});
 	});
 

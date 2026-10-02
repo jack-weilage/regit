@@ -9,6 +9,11 @@ export interface ChatGPTTokens {
 	idToken?: string;
 }
 
+export interface TokenSource {
+	tokens(): Promise<ChatGPTTokens>;
+	refresh(): Promise<ChatGPTTokens>;
+}
+
 export interface TokenStore {
 	load(): Promise<ChatGPTTokens>;
 	save(tokens: ChatGPTTokens): Promise<void>;
@@ -19,7 +24,7 @@ export interface AuthOptions {
 	now?: () => number;
 }
 
-export class ChatGPTAuth {
+export class ChatGPTAuth implements TokenSource {
 	#store: TokenStore;
 	#fetch: typeof fetch;
 	#now: () => number;
