@@ -32,6 +32,8 @@
 		background: none;
 		color: inherit;
 		font: inherit;
+		font-size: var(--text-chat);
+		line-height: 1.5;
 		cursor: pointer;
 
 		&:focus-visible {
@@ -54,6 +56,7 @@
 
 	.xs {
 		padding: 0.125rem 0.375rem;
+		font-size: var(--text-meta);
 	}
 
 	.icon {
