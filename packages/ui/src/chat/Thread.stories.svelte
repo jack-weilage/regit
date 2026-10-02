@@ -201,7 +201,16 @@
 			/>
 			<ChatFooter
 				mode="Medium"
-				context={{ used: 48_000, limit: 200_000 }}
+				context={{
+					used: 48_000,
+					limit: 200_000,
+					parts: [
+						{ label: 'Instructions', tokens: 6_000 },
+						{ label: 'Lessons', tokens: 2_000 },
+						{ label: 'Thread', tokens: 9_000 },
+						{ label: 'Code', tokens: 31_000 }
+					]
+				}}
 				usage={[
 					{ task: 'Coding', model: 'kimi-k2.7-code', tokens: 980_000, cost: 0.71 },
 					{ task: 'Search', model: 'qwen3-embedding', tokens: 160_000, cost: 0.02 }
