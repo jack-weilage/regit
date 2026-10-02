@@ -1,7 +1,7 @@
-import { access } from 'node:fs/promises';
+import { access, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CloneRequest, CommitRequest, PushRequest } from '@regit/agent';
-import { git } from './exec.ts';
+import type { CloneRequest, CommitRequest, PushRequest, Toolchain } from '@regit/agent';
+import { exec, git, truncate } from './exec.ts';
 
 function auth(token: string) {
 	return {
@@ -12,15 +12,27 @@ function auth(token: string) {
 }
 
 export async function clone(root: string, { remote, token, branch }: CloneRequest) {
-	if (
-		await access(join(root, '.git')).then(
-			() => true,
-			() => false
-		)
-	)
-		return;
+	if (await exists(join(root, '.git'))) {
+		const origin = await git(root, ['remote', 'get-url', 'origin']).catch(() => '');
+		if (origin === remote) {
+			await git(root, ['fetch', 'origin', branch ?? 'HEAD'], auth(token));
+			await git(root, ['reset', '--hard', 'FETCH_HEAD']);
+			await git(root, ['clean', '-fd']);
+			return;
+		}
+		for (const entry of await readdir(root)) {
+			await rm(join(root, entry), { recursive: true, force: true });
+		}
+	}
 	const args = ['clone', ...(branch ? ['--branch', branch] : []), remote, '.'];
 	await git(root, args, auth(token));
+}
+
+function exists(path: string) {
+	return access(path).then(
+		() => true,
+		() => false
+	);
 }
 
 export async function commit(root: string, { message, author }: CommitRequest) {
@@ -40,4 +52,19 @@ export async function commit(root: string, { message, author }: CommitRequest) {
 
 export async function push(root: string, { token, ref }: PushRequest) {
 	await git(root, ['push', 'origin', `HEAD:${ref}`], auth(token));
+}
+
+export async function toolchain(root: string, mise: string): Promise<Toolchain> {
+	const install = await exec(mise, ['install'], { cwd: root, timeout: 15 * 60 * 1000 });
+	if (install.code !== 0)
+		throw new Error(`mise install failed: ${truncate(install.output.trim(), 4000)}`);
+
+	const list = await exec(mise, ['ls', '--current', '--json'], { cwd: root });
+	if (list.code !== 0) throw new Error(`mise ls failed: ${list.output.trim()}`);
+	const current = JSON.parse(list.stdout) as Record<string, { version: string }[]>;
+	return Object.fromEntries(
+		Object.entries(current)
+			.map(([tool, versions]) => [tool, versions.map((v) => v.version).sort()] as const)
+			.sort(([a], [b]) => a.localeCompare(b))
+	);
 }

@@ -11,6 +11,7 @@ Bun workspace: `apps/*` (deployables) and `packages/*` (shared code consumed as 
 - Durable Objects, Workflows and containers belong in `apps/forge`. `apps/web` binds to them with `script_name: "regit-forge"`.
 - The agent loop, model clients and sandbox tool clients live in `packages/agent` as plain TypeScript that takes its model, tools and storage as interfaces, so it is unit tested with fakes. `apps/sandbox` is the container's tool server (`bun run image` builds it); it is tested in-process against a temporary git repo.
 - Leave a one-line `// TODO:` where a deferred follow-up belongs.
+- The sandbox image is mise-based: toolchains come from the repository's version files (installed and snapshotted per repo by `AttemptSandbox`) plus `apps/sandbox/mise-system.toml`. Locally, containers can't reach the internet over HTTPS (Miniflare's egress sidecar resets it), so tests must not depend on downloads.
 - `worker-configuration.d.ts` is generated and gitignored. After editing a `wrangler.jsonc`, run `bun run gen`.
 - Stories are the component tests: Vitest runs every story in Chromium with accessibility checks, and `play` functions cover interactions. Wrap assertions on anything that animates in with `waitFor`.
 - Keep code self-explanatory with minimal comments. Run `bun run check` and `bun run test` before considering work done.

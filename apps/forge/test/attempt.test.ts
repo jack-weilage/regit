@@ -89,6 +89,7 @@ test('runs the agent in a container, checkpointing its work to the fork', async 
 		task: 'Make the greeting say hi',
 		mode: 'small',
 		repo: {
+			name: 'sam/greeting',
 			remote: `http://host.docker.internal:${git.port}/repo.git`,
 			token: 'artifact-token',
 			branch: 'main'
@@ -141,6 +142,7 @@ test('fails the attempt when the model fails', async () => {
 		task: 'Anything',
 		mode: 'medium',
 		repo: {
+			name: 'sam/greeting',
 			remote: `http://host.docker.internal:${git.port}/repo.git`,
 			token: 'artifact-token',
 			branch: 'main'
@@ -152,4 +154,54 @@ test('fails the attempt when the model fails', async () => {
 		error: 'No credits',
 		steps: []
 	});
+});
+
+test('snapshots the toolchain, restores it, and refreshes it when the tools change', async () => {
+	await script([
+		[{ type: 'response.output_text.delta', delta: 'Nothing to do.' }],
+		[{ type: 'response.output_text.delta', delta: 'Still nothing.' }],
+		[{ type: 'response.output_text.delta', delta: 'All set.' }]
+	]);
+	const api = await worker.getExport();
+	const env = await worker.getEnv();
+	const repo = {
+		name: 'sam/toolchain',
+		remote: `http://host.docker.internal:${git.port}/repo.git`,
+		token: 'artifact-token',
+		branch: 'main'
+	};
+	const recorded = () => env.TOOLCHAINS.get<{ id: string; key: string }>(repo.name, 'json');
+
+	await api.startAttempt('thread-3', { task: 'Look around', mode: 'small', repo });
+	expect(await settled(api, 'thread-3')).toMatchObject({
+		status: 'finished',
+		toolchain: { tools: { jq: [expect.any(String)] }, restored: false }
+	});
+	const first = await recorded();
+	expect(first).toMatchObject({ id: expect.any(String), key: expect.any(String) });
+
+	await api.startAttempt('thread-4', { task: 'Look again', mode: 'small', repo });
+	expect(await settled(api, 'thread-4')).toMatchObject({
+		status: 'finished',
+		toolchain: { restored: true }
+	});
+	expect(await recorded()).toEqual(first);
+
+	const seed = join(dir, 'seed');
+	const pinned = 'path:/opt/mise/installs/jq/1.8.2';
+	await writeFile(join(seed, '.tool-versions'), `jq ${pinned}\n`);
+	sh(seed, 'add', '.');
+	sh(seed, '-c', 'user.name=Sam', '-c', 'user.email=sam@example.com', 'commit', '-m', 'Pin jq');
+	sh(seed, 'push', join(dir, 'repo.git'), 'main');
+
+	await api.startAttempt('thread-5', { task: 'Look once more', mode: 'small', repo });
+	const third = await settled(api, 'thread-5');
+	expect(third.error).toBeNull();
+	expect(third).toMatchObject({
+		status: 'finished',
+		toolchain: { tools: { jq: [pinned] }, restored: true }
+	});
+	const refreshed = await recorded();
+	expect(refreshed!.key).not.toBe(first!.key);
+	expect(refreshed!.id).not.toBe(first!.id);
 });

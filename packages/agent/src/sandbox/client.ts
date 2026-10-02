@@ -6,6 +6,7 @@ import type {
 	ErrorResponse,
 	Fetch,
 	PushRequest,
+	ToolchainResponse,
 	ToolResponse
 } from './protocol.ts';
 import { toolSpecs } from './specs.ts';
@@ -54,6 +55,10 @@ export function sandboxWorkspace(fetch: Fetch) {
 		},
 		async push(request: PushRequest) {
 			await post(fetch, '/workspace/push', JSON.stringify(request));
+		},
+		async toolchain() {
+			const { tools } = await post<ToolchainResponse>(fetch, '/workspace/toolchain', '{}');
+			return tools;
 		}
 	};
 }

@@ -9,6 +9,7 @@ export interface ExecOptions {
 export interface ExecResult {
 	code: number | null;
 	output: string;
+	stdout: string;
 	timedOut: boolean;
 }
 
@@ -25,10 +26,13 @@ export function exec(
 			stdio: ['ignore', 'pipe', 'pipe']
 		});
 		let output = '';
+		let stdout = '';
 		let timedOut = false;
-		const append = (chunk: Buffer) => (output += chunk);
-		child.stdout.on('data', append);
-		child.stderr.on('data', append);
+		child.stdout.on('data', (chunk: Buffer) => {
+			output += chunk;
+			stdout += chunk;
+		});
+		child.stderr.on('data', (chunk: Buffer) => (output += chunk));
 
 		const timer = setTimeout(() => {
 			timedOut = true;
@@ -38,7 +42,7 @@ export function exec(
 		child.on('error', reject);
 		child.on('close', (code) => {
 			clearTimeout(timer);
-			resolve({ code, output, timedOut });
+			resolve({ code, output, stdout, timedOut });
 		});
 	});
 }

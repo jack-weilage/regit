@@ -1,0 +1,7 @@
+[tools]
+jq = "latest"
+
+[settings]
+yes = true
+trusted_config_paths = ["/workspace"]
+idiomatic_version_file_enable_tools = ["node", "bun", "deno", "python", "ruby", "go", "java"]

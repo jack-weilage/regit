@@ -10,13 +10,14 @@ import {
 	type Fetch,
 	type Mode,
 	type Step,
+	type Toolchain,
 	type Turn
 } from '@regit/agent';
 
 export interface AttemptInput {
 	task: string;
 	mode: Mode;
-	repo: { remote: string; token: string; branch: string };
+	repo: { name: string; remote: string; token: string; branch: string };
 }
 
 export type AttemptStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'failed' | 'cancelled';
@@ -24,17 +25,27 @@ export type AttemptStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'fai
 export interface AttemptSnapshot {
 	status: AttemptStatus;
 	error: string | null;
+	toolchain: { tools: Toolchain; restored: boolean } | null;
 	steps: (Step & { checkpoint: string | null })[];
+}
+
+interface ToolchainSnapshot {
+	id: string;
+	key: string;
+	image: string;
 }
 
 type AttemptRow = {
 	task: string;
 	mode: Mode;
+	repo: string;
 	remote: string;
 	token: string;
 	branch: string;
 	status: AttemptStatus;
 	error: string | null;
+	toolchain: string | null;
+	restored: number | null;
 };
 
 type StepRow = {
@@ -67,11 +78,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 				id INTEGER PRIMARY KEY CHECK (id = 1),
 				task TEXT NOT NULL,
 				mode TEXT NOT NULL,
+				repo TEXT NOT NULL,
 				remote TEXT NOT NULL,
 				token TEXT NOT NULL,
 				branch TEXT NOT NULL,
 				status TEXT NOT NULL,
-				error TEXT
+				error TEXT,
+				toolchain TEXT,
+				restored INTEGER
 			);
 			CREATE TABLE IF NOT EXISTS steps (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,9 +102,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async start({ task, mode, repo }: AttemptInput) {
 		if (this.#attempt()) throw new Error('This attempt has already started');
 		this.#sql.exec(
-			`INSERT INTO attempt (id, task, mode, remote, token, branch, status) VALUES (1, ?, ?, ?, ?, ?, 'queued')`,
+			`INSERT INTO attempt (id, task, mode, repo, remote, token, branch, status) VALUES (1, ?, ?, ?, ?, ?, ?, 'queued')`,
 			task,
 			mode,
+			repo.name,
 			repo.remote,
 			repo.token,
 			repo.branch
@@ -105,6 +120,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return {
 			status: attempt.status,
 			error: attempt.error,
+			toolchain: attempt.toolchain
+				? { tools: JSON.parse(attempt.toolchain) as Toolchain, restored: attempt.restored === 1 }
+				: null,
 			steps: steps.map((row) => ({
 				turns: JSON.parse(row.turns) as Turn[],
 				usage:
@@ -214,26 +232,72 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	// TODO: inject the Artifacts token with interceptOutboundHttps so it never enters the container
-	// TODO: size the instance per mode, and snapshot the workspace instead of re-cloning after restarts
+	// TODO: size the instance per mode
 	async #sandbox(attempt: AttemptRow): Promise<Fetch> {
 		const container = this.ctx.container!;
-		if (!container.running) {
-			container.start({
-				image: container.images.sandbox!,
-				enableInternet: true,
-				instance: 'standard-1'
-			});
-		}
 		const port = container.getTcpPort(sandboxPort);
 		const fetch: Fetch = (url, init) => port.fetch(url, init);
-		await waitUntilHealthy(fetch);
-		await sandboxWorkspace(fetch).clone({
-			remote: attempt.remote,
-			token: attempt.token,
-			branch: attempt.branch
-		});
+		const workspace = sandboxWorkspace(fetch);
+		if (container.running) {
+			await waitUntilHealthy(fetch);
+			return fetch;
+		}
+
+		const image = container.images.sandbox!;
+		const cached = await this.env.TOOLCHAINS.get<ToolchainSnapshot>(attempt.repo, 'json');
+		let restored = cached?.image === image ? cached : null;
+		try {
+			await this.#start(restored ? { containerSnapshot: { id: restored.id } } : { image }, fetch);
+		} catch (error) {
+			if (!restored) throw error;
+			restored = null;
+			await this.env.TOOLCHAINS.delete(attempt.repo);
+			await this.#start({ image }, fetch);
+		}
+
+		await workspace.clone({ remote: attempt.remote, token: attempt.token, branch: attempt.branch });
+		const tools = await workspace.toolchain();
+		this.#sql.exec(
+			'UPDATE attempt SET toolchain = ?, restored = ?',
+			JSON.stringify(tools),
+			restored ? 1 : 0
+		);
+
+		const key = await digest({ image, tools });
+		if (key !== restored?.key) {
+			try {
+				const snapshot = await container.snapshotContainer({
+					name: `toolchain-${key.slice(0, 12)}`
+				});
+				await this.env.TOOLCHAINS.put(
+					attempt.repo,
+					JSON.stringify({ id: snapshot.id, key, image })
+				);
+			} catch (error) {
+				console.warn('Could not snapshot the toolchain', error);
+			}
+		}
 		return fetch;
 	}
+
+	async #start(source: { image: string } | { containerSnapshot: { id: string } }, fetch: Fetch) {
+		const container = this.ctx.container!;
+		container.start({ ...source, enableInternet: true, instance: 'standard-1' });
+		try {
+			await waitUntilHealthy(fetch);
+		} catch (error) {
+			if (container.running) await container.destroy();
+			throw error;
+		}
+	}
+}
+
+async function digest(value: unknown) {
+	const bytes = await crypto.subtle.digest(
+		'SHA-256',
+		new TextEncoder().encode(JSON.stringify(value))
+	);
+	return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function isActive(status: AttemptStatus) {

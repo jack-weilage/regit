@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sandboxTools, sandboxWorkspace, type ToolArguments, type ToolName } from '@regit/agent';
@@ -140,10 +140,70 @@ describe('workspace', () => {
 		expect(await readFile(join(empty, 'greeting.ts'), 'utf8')).toContain('hello');
 	});
 
-	test('leaves an existing clone alone', async () => {
+	test('replaces a clone of a different remote, as left by a restored snapshot', async () => {
+		const other = join(dir, 'other.git');
+		await git(dir, ['init', '--bare', '--initial-branch', 'main', other]);
+		await git(root, ['push', other, 'main']);
+		await git(root, ['remote', 'set-url', 'origin', other]);
+		await call('write_file', { path: 'stale.ts', content: 'export {};\n' });
+
+		await workspace.clone({ remote, token: 'token', branch: 'main' });
+		expect(await git(root, ['remote', 'get-url', 'origin'])).toBe(remote);
+		await expect(readFile(join(root, 'stale.ts'), 'utf8')).rejects.toThrow();
+	});
+
+	test('installs and reports the toolchain with mise', async () => {
+		const mise = join(dir, 'mise');
+		const log = join(dir, 'mise.log');
+		await writeFile(
+			mise,
+			`#!/usr/bin/env bash
+echo "$PWD $*" >> ${log}
+if [ "$1" = ls ]; then
+	echo 'mise WARN some warning' >&2
+	echo '{"node":[{"version":"22.23.3"}],"jq":[{"version":"1.8.2"}]}'
+fi
+`
+		);
+		await chmod(mise, 0o755);
+		sandbox = createSandbox(root, { mise });
+
+		expect(await workspace.toolchain()).toEqual({ jq: ['1.8.2'], node: ['22.23.3'] });
+		expect((await readFile(log, 'utf8')).trim().split('\n')).toEqual([
+			`${root} install`,
+			`${root} ls --current --json`
+		]);
+	});
+
+	test('reports a failed toolchain install', async () => {
+		const mise = join(dir, 'mise');
+		await writeFile(mise, '#!/usr/bin/env bash\necho "no such version" >&2\nexit 1\n');
+		await chmod(mise, 0o755);
+		sandbox = createSandbox(root, { mise });
+
+		await expect(workspace.toolchain()).rejects.toThrow('mise install failed: no such version');
+	});
+
+	test('resets a clone of the same remote to the remote branch', async () => {
+		const elsewhere = join(dir, 'elsewhere');
+		await git(dir, ['clone', remote, elsewhere]);
+		await writeFile(join(elsewhere, 'checkpoint.ts'), 'export {};\n');
+		await git(elsewhere, ['add', '.']);
+		await git(elsewhere, [
+			'-c',
+			'user.name=ReGit',
+			'-c',
+			'user.email=agent@regit.dev',
+			'commit',
+			'-m',
+			'Checkpoint'
+		]);
+		await git(elsewhere, ['push', 'origin', 'main']);
 		await call('write_file', { path: 'draft.ts', content: 'export {};\n' });
-		await workspace.clone({ remote, token: 'token' });
-		expect(await readFile(join(root, 'draft.ts'), 'utf8')).toBe('export {};\n');
+
+		await workspace.clone({ remote, token: 'token', branch: 'main' });
+		expect(await readFile(join(root, 'checkpoint.ts'), 'utf8')).toBe('export {};\n');
+		await expect(readFile(join(root, 'draft.ts'), 'utf8')).rejects.toThrow();
 	});
 
 	test('commits checkpoints only when something changed, then pushes', async () => {

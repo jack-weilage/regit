@@ -1,14 +1,22 @@
-FROM oven/bun:1.4-slim
+FROM oven/bun:1.4-slim AS server
+WORKDIR /app
+COPY src ./src
+RUN bun build --compile --minify src/main.ts --outfile /regit-sandbox
 
-# TODO: install the toolchains target repositories need (Node, Python, …) once the demo repo is chosen
+FROM debian:trixie-slim
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates git ripgrep \
 	&& rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY src ./src
+COPY --from=jdxcode/mise:2026.10.0 /usr/local/bin/mise /usr/local/bin/mise
+COPY --from=server /regit-sandbox /usr/local/bin/regit-sandbox
+COPY mise-system.toml /etc/mise/config.toml
+
+ENV MISE_DATA_DIR=/opt/mise MISE_CACHE_DIR=/opt/mise/cache PATH=/opt/mise/shims:$PATH
+RUN echo 'export PATH="/opt/mise/shims:$PATH"' > /etc/profile.d/mise.sh \
+	&& mise install
 
 ENV SANDBOX_ROOT=/workspace PORT=8080
 EXPOSE 8080
-CMD ["bun", "src/main.ts"]
+CMD ["regit-sandbox"]

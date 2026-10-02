@@ -9,6 +9,7 @@
 	"vars": { "AI_GATEWAY": "regit" },
 	"ai": { "binding": "AI", "remote": true },
 	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],
+	"kv_namespaces": [{ "binding": "TOOLCHAINS" }],
 	"durable_objects": {
 		"bindings": [{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" }]
 	},

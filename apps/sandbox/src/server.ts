@@ -1,9 +1,18 @@
 import { isTool, ToolError, tools } from './tools.ts';
-import { clone, commit, push } from './workspace.ts';
+import { clone, commit, push, toolchain } from './workspace.ts';
 
-const workspace = { clone, commit, push } as const;
+export interface SandboxOptions {
+	mise?: string;
+}
 
-export function createSandbox(root: string) {
+export function createSandbox(root: string, { mise = 'mise' }: SandboxOptions = {}) {
+	const workspace: Record<string, (body: never) => Promise<object>> = {
+		clone: async (body) => (await clone(root, body), {}),
+		commit: async (body) => ({ sha: await commit(root, body) }),
+		push: async (body) => (await push(root, body), {}),
+		toolchain: async () => ({ tools: await toolchain(root, mise) })
+	};
+
 	return async function fetch(request: Request): Promise<Response> {
 		const { pathname } = new URL(request.url);
 		if (request.method === 'GET' && pathname === '/health') return new Response('ok');
@@ -18,9 +27,7 @@ export function createSandbox(root: string) {
 				return Response.json({ output: await tools[name](root, args as never) });
 			}
 			if (group === 'workspace' && Object.hasOwn(workspace, name)) {
-				const action = workspace[name as keyof typeof workspace];
-				const result = await action(root, (await request.json()) as never);
-				return Response.json(name === 'commit' ? { sha: result } : {});
+				return Response.json(await workspace[name]!((await request.json()) as never));
 			}
 			return error('Not found', 404);
 		} catch (cause) {

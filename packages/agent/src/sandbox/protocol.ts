@@ -32,6 +32,12 @@ export interface CommitResponse {
 	sha: string | null;
 }
 
+export type Toolchain = Record<string, string[]>;
+
+export interface ToolchainResponse {
+	tools: Toolchain;
+}
+
 export interface PushRequest {
 	token: string;
 	ref: string;
