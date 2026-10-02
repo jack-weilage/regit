@@ -5,7 +5,11 @@
 	--font-mono: ui-monospace, monospace;
 	--radius: 6px;
 
+	--text-chat: 0.8125rem;
+	--text-meta: 0.75rem;
+
 	--color-bg: light-dark(#ffffff, #0e0e10);
+	--color-surface: light-dark(#f4f4f5, #1c1c1f);
 	--color-fg: light-dark(#18181b, #f4f4f5);
 	--color-muted: light-dark(#71717a, #a1a1aa);
 	--color-border: light-dark(#e4e4e7, #27272a);
@@ -18,4 +22,19 @@ body {
 	font-family: var(--font-sans);
 	background: var(--color-bg);
 	color: var(--color-fg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	@container style(--chat-ready: 1) {
+		.chat-enter {
+			transition:
+				opacity 0.2s,
+				translate 0.2s;
+
+			@starting-style {
+				opacity: 0;
+				translate: 0 0.5rem;
+			}
+		}
+	}
 }

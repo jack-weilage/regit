@@ -1,1 +1,11 @@
-export {};
+export { default as Avatar } from './Avatar.svelte';
+export { default as ChatActivity } from './chat/ChatActivity.svelte';
+export { default as ChatComposer } from './chat/ChatComposer.svelte';
+export { default as ChatEvent } from './chat/ChatEvent.svelte';
+export { default as ChatFooter, type Usage } from './chat/ChatFooter.svelte';
+export { default as ChatGroup } from './chat/ChatGroup.svelte';
+export { default as ChatIntent } from './chat/ChatIntent.svelte';
+export { default as ChatLog } from './chat/ChatLog.svelte';
+export { default as ChatMention } from './chat/ChatMention.svelte';
+export { default as ChatMessage } from './chat/ChatMessage.svelte';
+export type { Author, AuthorKind, Mentionable } from './chat/types.ts';
