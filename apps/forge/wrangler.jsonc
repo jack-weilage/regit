@@ -13,10 +13,14 @@
 	"kv_namespaces": [{ "binding": "TOOLCHAINS" }],
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"durable_objects": {
-		"bindings": [{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" }]
+		"bindings": [
+			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
+			{ "name": "REPOS", "class_name": "RepoCoordinator" }
+		]
 	},
 	"exports": {
-		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite", "container": "sandbox" }
+		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite", "container": "sandbox" },
+		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" }
 	},
 	"containers": [
 		{

@@ -217,3 +217,98 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	expect(refreshed!.key).not.toBe(first!.key);
 	expect(refreshed!.id).not.toBe(first!.id);
 });
+
+test('coordinates a thread from conversation to a finished attempt, live', async () => {
+	await seed('notes', { 'notes.md': 'Some notes\n' });
+	const propose = (headline: string) => [
+		{
+			type: 'response.output_item.done',
+			item: {
+				type: 'function_call',
+				call_id: 'propose',
+				name: 'propose_intent',
+				arguments: JSON.stringify({
+					headline,
+					purpose: 'Readers need a title.',
+					doneWhen: ['notes.md starts with a title']
+				})
+			}
+		}
+	];
+	await script([
+		propose('docs: tidy the notes'),
+		propose('docs(notes): add a title'),
+		[
+			{ type: 'response.output_text.delta', delta: 'Adding the title' },
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'call_1',
+					name: 'write_file',
+					arguments: JSON.stringify({ path: 'notes.md', content: '# Notes\n\nSome notes\n' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+
+	const { url } = await server.listen();
+	const live: { type: string; entry?: { type: string } }[] = [];
+	const socket = new WebSocket(new URL('/repos/notes/live', url.href.replace(/^http/, 'ws')).href);
+	socket.addEventListener('message', (event) => live.push(JSON.parse(String(event.data))));
+	await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
+
+	const api = await worker.getExport();
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const opened = await api.openThread('notes', {
+		author: sam,
+		text: 'The notes need a title.',
+		mode: 'small'
+	});
+	expect(opened).toMatchObject({ status: 'draft', headline: 'docs: tidy the notes' });
+
+	await api.reply('notes', opened.id, { author: sam, text: 'Call it Notes.' });
+	await api.startThread('notes', opened.id);
+
+	let detail = await api.thread('notes', opened.id);
+	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		detail = await api.thread('notes', opened.id);
+	}
+	socket.close();
+
+	expect(detail!.summary).toMatchObject({
+		status: 'needs-you',
+		headline: 'docs(notes): add a title'
+	});
+	expect(
+		detail!.entries.map((entry) =>
+			entry.type === 'message'
+				? `${entry.author.name}: ${entry.text}`
+				: entry.type === 'event'
+					? entry.text.replace(/[0-9a-f]{7}$/, 'sha')
+					: `intent ${entry.intent.headline}`
+		)
+	).toEqual([
+		'Sam: The notes need a title.',
+		'intent docs: tidy the notes',
+		'Sam: Call it Notes.',
+		'intent docs(notes): add a title',
+		'Started the attempt',
+		'ReGit: Adding the title',
+		'Checkpoint sha',
+		'ReGit: Added the title.',
+		'The attempt finished'
+	]);
+	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
+	expect(await api.threads('notes')).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
+	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
+		'# Notes\n\nSome notes'
+	);
+
+	const requests = await modelRequests();
+	expect(
+		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)
+	).toEqual(['intent', 'intent', 'code', 'code']);
+});

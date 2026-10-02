@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	codingInstructions,
 	modes,
@@ -146,7 +147,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async cancel() {
 		const attempt = this.#attempt();
 		if (!attempt || !isActive(attempt.status)) return;
-		this.#setStatus('cancelled');
+		await this.#finish(attempt, 'cancelled');
 		this.#controller?.abort();
 		await this.ctx.storage.deleteAlarm();
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
@@ -193,6 +194,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			while (!next.done) {
 				if (next.value.type === 'step') {
 					this.#saveStep(next.value);
+					await this.#report(attempt, { type: 'step', step: next.value });
 					if (Date.now() > deadline) {
 						await run.return('aborted');
 						await this.ctx.storage.setAlarm(Date.now());
@@ -201,13 +203,26 @@ export class AttemptSandbox extends DurableObject<Env> {
 				}
 				next = await run.next();
 			}
-			if (this.#attempt()?.status === 'running') this.#setStatus(outcomes[next.value]);
+			if (this.#attempt()?.status === 'running') await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
 			if (this.#attempt()?.status !== 'running') return;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
-			this.#setStatus('failed', error instanceof Error ? error.message : String(error));
+			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
 		} finally {
 			this.#controller = undefined;
+		}
+	}
+
+	async #finish(attempt: AttemptRow, status: AttemptStatus, error: string | null = null) {
+		this.#setStatus(status, error);
+		await this.#report(attempt, { type: 'status', status, error });
+	}
+
+	async #report(attempt: AttemptRow, update: AttemptUpdate) {
+		try {
+			await this.env.REPOS.getByName(attempt.repo).attemptUpdated(this.ctx.id.name!, update);
+		} catch (error) {
+			console.warn('Could not report the attempt to its repository', error);
 		}
 	}
 
