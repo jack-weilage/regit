@@ -1,0 +1,21 @@
+{
+	"name": "@regit/agent",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"check": "tsc",
+		"test": "vitest run",
+		"smoke": "bun scripts/smoke.ts"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "^5.0.3"
+	},
+	"dependencies": {
+		"openai": "^7.27.0"
+	}
+}
