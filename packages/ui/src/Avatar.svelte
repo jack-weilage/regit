@@ -36,6 +36,7 @@
 	}
 
 	.avatar {
+		contain: layout;
 		display: inline-block;
 		flex: none;
 		inline-size: var(--avatar-size);

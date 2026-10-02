@@ -1,5 +1,7 @@
 <script lang="ts">
+	import ChatChecks from './ChatChecks.svelte';
 	import ChatMention from './ChatMention.svelte';
+	import ThreadIcon from './ThreadIcon.svelte';
 	import type { Mentionable } from './types.ts';
 
 	interface Props {
@@ -7,40 +9,62 @@
 		purpose: string;
 		doneWhen: string[];
 		similar?: Mentionable[];
+		handoff?: boolean;
 		superseded?: boolean;
 		onstart?: () => void;
+		ondismiss?: () => void;
 	}
 
-	let { headline, purpose, doneWhen, similar = [], superseded = false, onstart }: Props = $props();
+	let {
+		headline,
+		purpose,
+		doneWhen,
+		similar = [],
+		handoff = false,
+		superseded = false,
+		onstart,
+		ondismiss
+	}: Props = $props();
 </script>
 
 {#snippet details()}
 	<p class="purpose">{purpose}</p>
 	<div class="section">
 		<p class="heading">Done when</p>
-		<ul class="checks">
-			{#each doneWhen as check (check)}
-				<li>
-					<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /></svg>
-					{check}
-				</li>
-			{/each}
-		</ul>
+		<ChatChecks checks={doneWhen} />
 	</div>
 {/snippet}
 
-<section class="intent" aria-label={superseded ? 'Superseded intent' : 'Suggested intent'}>
-	{#if superseded}
-		<details class="card superseded">
-			<summary>
-				<span class="label">Superseded</span>
-				<span class="headline">{headline}</span>
-			</summary>
-			<div class="body">
-				{@render details()}
-			</div>
-		</details>
-	{:else}
+{#if superseded || handoff}
+	<section class="intent" aria-label={superseded ? 'Superseded intent' : 'Suggested separate work'}>
+		<div class={['card', 'collapsed', { superseded, 'chat-enter': !superseded }]}>
+			<details>
+				<summary>
+					{#if superseded}
+						<s class="headline">{headline}</s>
+					{:else}
+						<ThreadIcon plus />
+						<span class="headline">{headline}</span>
+					{/if}
+				</summary>
+				<div class="body">
+					{@render details()}
+				</div>
+			</details>
+			{#if !superseded && (onstart || ondismiss)}
+				<div class="actions">
+					{#if ondismiss}
+						<button type="button" class="quiet" onclick={ondismiss}>Dismiss</button>
+					{/if}
+					{#if onstart}
+						<button type="button" onclick={onstart}>Spin off</button>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	</section>
+{:else}
+	<section class="intent" aria-label="Suggested intent">
 		<div class="card chat-enter">
 			<p class="headline">{headline}</p>
 
@@ -50,11 +74,11 @@
 				<div class="section">
 					<p class="heading">Similar threads</p>
 					<ul class="similar">
-						{#each similar as thread (thread.handle)}
+						{#each similar as item (item.handle)}
 							<li>
-								<ChatMention mention={thread} />
-								{#if thread.detail}
-									<span>{thread.detail}</span>
+								<ChatMention mention={item} />
+								{#if item.detail}
+									<span>{item.detail}</span>
 								{/if}
 							</li>
 						{/each}
@@ -68,8 +92,8 @@
 				</div>
 			{/if}
 		</div>
-	{/if}
-</section>
+	</section>
+{/if}
 
 <style>
 	.intent {
@@ -117,7 +141,6 @@
 		font-weight: 600;
 	}
 
-	.checks,
 	.similar {
 		display: grid;
 		gap: 0.25rem;
@@ -127,36 +150,9 @@
 
 		li {
 			display: flex;
-			gap: 0.5rem;
-		}
-	}
-
-	.checks {
-		li {
-			align-items: baseline;
-			padding: 0.5rem 0.75rem;
-			border-radius: var(--radius);
-			background: var(--color-surface);
-		}
-
-		svg {
-			--size: 1rem;
-
-			flex: none;
-			inline-size: var(--size);
-			block-size: var(--size);
-			translate: 0 calc((var(--size) - 1cap) / 2);
-			fill: none;
-			stroke: var(--color-muted);
-			stroke-width: 1.5;
-		}
-	}
-
-	.similar {
-		li {
 			flex-wrap: wrap;
 			align-items: baseline;
-			column-gap: 0.5rem;
+			gap: 0.5rem;
 		}
 
 		span {
@@ -184,44 +180,75 @@
 		&:hover {
 			background: color-mix(in oklab, var(--color-accent) 88%, var(--color-fg));
 		}
+
+		&.quiet {
+			background: none;
+			color: var(--color-muted);
+
+			&:hover {
+				background: var(--color-surface);
+			}
+		}
 	}
 
-	.superseded {
-		display: block;
-		padding: 0.5rem 0.75rem;
-		border-style: dashed;
-		background: none;
-		color: var(--color-muted);
+	.collapsed {
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: baseline;
+		column-gap: 0.75rem;
+		padding: 0.5rem 0.5rem 0.5rem 1rem;
+
+		details {
+			display: grid;
+			grid-area: 1 / 1 / 2 / -1;
+			grid-template-columns: subgrid;
+
+			&::details-content {
+				grid-column: 1 / -1;
+			}
+		}
+
+		summary {
+			grid-column: 1;
+		}
 
 		.body {
 			display: grid;
 			gap: 0.5rem;
 			margin-block-start: 0.5rem;
 		}
+
+		.actions {
+			grid-area: 1 / 2;
+			gap: 0.25rem;
+			margin: 0;
+		}
+
+		button {
+			padding: 0.25rem 0.625rem;
+		}
+	}
+
+	.superseded {
+		padding: 0.5rem 0.75rem 0.5rem 1rem;
+		border-style: dashed;
+		background: none;
+		color: var(--color-muted);
 	}
 
 	summary {
 		display: flex;
-		align-items: center;
+		align-items: baseline;
 		gap: 0.5rem;
+		font-family: var(--font-mono);
 		font-size: var(--text-meta);
 		list-style: none;
 		cursor: pointer;
 
-		&::before {
-			content: '';
-			flex: none;
-			inline-size: 0.375rem;
-			block-size: 0.375rem;
-			border-block-end: 1.5px solid;
-			border-inline-end: 1.5px solid;
-			rotate: -45deg;
-			transition: rotate 0.15s;
-		}
+		> :global(svg) {
+			--icon-size: 1rem;
 
-		.label {
-			flex: none;
-			font-weight: 600;
+			translate: 0 calc((var(--icon-size) - 1ex) / 2);
+			color: var(--color-muted);
 		}
 
 		.headline {
@@ -230,15 +257,23 @@
 			text-overflow: ellipsis;
 			white-space: nowrap;
 		}
-	}
 
-	details[open] summary::before {
-		rotate: 45deg;
+		s {
+			text-decoration-color: color-mix(in oklab, currentColor 60%, transparent);
+		}
 	}
 
 	@container intent (width < 28rem) {
 		.actions button {
 			flex: 1;
+		}
+
+		.collapsed {
+			grid-template-columns: minmax(0, 1fr);
+
+			.actions {
+				grid-area: 2 / 1;
+			}
 		}
 	}
 </style>

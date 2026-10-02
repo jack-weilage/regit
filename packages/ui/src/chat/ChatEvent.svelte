@@ -45,4 +45,9 @@
 	time {
 		font-variant-numeric: tabular-nums;
 	}
+
+	.event :global(code) {
+		font-family: var(--font-mono);
+		font-size: inherit;
+	}
 </style>

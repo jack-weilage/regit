@@ -22,6 +22,7 @@
 	type Entry =
 		| { type: 'message'; id: string; author: Author; text: string }
 		| { type: 'intent'; id: string; intent: Intent }
+		| { type: 'handoff'; id: string; intent: Intent; outcome?: 'dismissed' | Mentionable }
 		| { type: 'event'; id: string; text: string };
 
 	type Block =
@@ -48,6 +49,12 @@
 			]
 		}
 	];
+
+	const separateWork: Intent = {
+		headline: 'perf(settings): stop loading the full audit log',
+		purpose: 'It changes the audit log query, not member loading.',
+		doneWhen: ['Settings makes one audit log query that returns a single row.']
+	};
 
 	const id = () => crypto.randomUUID();
 
@@ -123,7 +130,14 @@
 				id: id(),
 				author: agent,
 				text: 'Found the slow query. Running checks next.'
-			}
+			},
+			{ type: 'handoff', id: id(), intent: separateWork }
+		);
+	}
+
+	function resolve(entryId: string, outcome: 'dismissed' | Mentionable) {
+		entries = entries.map((entry) =>
+			entry.id === entryId && entry.type === 'handoff' ? { ...entry, outcome } : entry
 		);
 	}
 </script>
@@ -150,6 +164,25 @@
 						superseded={block.id !== latestIntent}
 						onstart={started || refining ? undefined : start}
 					/>
+				{:else if block.type === 'handoff'}
+					{#if block.outcome === 'dismissed'}
+						<ChatEvent>Dismissed separate work: <code>{block.intent.headline}</code></ChatEvent>
+					{:else if block.outcome}
+						<ChatEvent>Spun off <ChatMention mention={block.outcome} />&nbsp;· running</ChatEvent>
+					{:else}
+						<ChatIntent
+							{...block.intent}
+							handoff
+							onstart={() =>
+								resolve(block.id, {
+									kind: 'thread',
+									handle: 'audit-log-query',
+									label: 'Stop loading the full audit log',
+									href: '#'
+								})}
+							ondismiss={() => resolve(block.id, 'dismissed')}
+						/>
+					{/if}
 				{:else}
 					<ChatEvent>{block.text}</ChatEvent>
 				{/if}

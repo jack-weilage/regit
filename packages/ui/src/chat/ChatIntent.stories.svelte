@@ -54,3 +54,15 @@
 		/>
 	</div>
 </Story>
+
+<Story
+	name="Separate work"
+	args={{
+		handoff: true,
+		headline: 'perf(settings): stop loading the full audit log',
+		purpose: 'It changes the audit log query, not member loading.',
+		doneWhen: ['Settings makes one audit log query that returns a single row.'],
+		onstart: fn(),
+		ondismiss: fn()
+	}}
+/>

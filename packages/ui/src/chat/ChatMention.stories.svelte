@@ -25,3 +25,21 @@
 		</ChatMessage>
 	</ChatGroup>
 </Story>
+
+<Story name="Long names" asChild>
+	<div style="inline-size: 18rem">
+		<ChatGroup author={{ name: 'Lin Wei', kind: 'person' }}>
+			<ChatMessage>
+				<p>
+					Ask <ChatMention mention={{ ...people[3]!, label: 'Noor Haddad-Al-Rashid Vandenberg' }} /> about
+					<ChatMention
+						mention={{
+							...threads[2]!,
+							label: 'Audit log retention policy for enterprise organisations'
+						}}
+					/>.
+				</p>
+			</ChatMessage>
+		</ChatGroup>
+	</div>
+</Story>

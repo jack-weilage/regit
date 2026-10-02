@@ -12,10 +12,11 @@
 
 <svelte:element this={mention.href ? 'a' : 'span'} class="mention" href={mention.href}>
 	{#if mention.kind === 'thread'}
-		<ThreadIcon />{mention.label}
+		<ThreadIcon />
 	{:else}
-		<Avatar name={mention.label} src={mention.avatar} aria-hidden="true" />{mention.label}
+		<Avatar name={mention.label} src={mention.avatar} aria-hidden="true" />
 	{/if}
+	<span class="label">{mention.label}</span>
 </svelte:element>
 
 <style>
@@ -23,6 +24,11 @@
 		--icon-size: 0.875em;
 		--avatar-size: 1.125em;
 
+		box-sizing: border-box;
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.3em;
+		max-inline-size: min(100%, 20em);
 		padding: 0.05em 0.3em;
 		border-radius: 0.25rem;
 		background: color-mix(in oklab, currentColor 8%, transparent);
@@ -31,14 +37,18 @@
 		text-decoration: none;
 
 		& :global(svg) {
-			margin-inline-end: 0.25em;
-			vertical-align: calc((1cap - var(--icon-size)) / 2);
+			translate: 0 calc((var(--icon-size) - 1cap) / 2);
 		}
 
 		& :global(.avatar) {
-			margin-inline-end: 0.3em;
-			vertical-align: calc((1cap - var(--avatar-size)) / 2);
+			translate: 0 calc((var(--avatar-size) - 1cap) / 2);
 		}
+	}
+
+	.label {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	a.mention:hover {
