@@ -1,0 +1,26 @@
+{
+	"name": "@regit/ui",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./theme.css": "./src/theme.css"
+	},
+	"scripts": {
+		"storybook": "storybook dev --port 6006",
+		"build": "storybook build --output-dir dist",
+		"check": "svelte-check --tsconfig ./tsconfig.json"
+	},
+	"devDependencies": {
+		"@storybook/addon-a11y": "^10.6.1",
+		"@storybook/addon-docs": "^10.6.1",
+		"@storybook/addon-svelte-csf": "^5.1.5",
+		"@storybook/svelte-vite": "^10.6.1",
+		"@sveltejs/vite-plugin-svelte": "catalog:",
+		"storybook": "^10.6.1",
+		"svelte": "catalog:",
+		"svelte-check": "catalog:",
+		"typescript": "catalog:",
+		"vite": "catalog:"
+	}
+}

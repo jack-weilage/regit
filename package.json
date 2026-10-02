@@ -22,6 +22,7 @@
 	},
 	"scripts": {
 		"dev": "bun run --filter @regit/forge --filter @regit/web --parallel dev",
+		"storybook": "bun run --filter @regit/ui storybook",
 		"build": "bun run --filter '*' build",
 		"check": "bun run --filter '*' check",
 		"gen": "bun run --filter '*' gen",

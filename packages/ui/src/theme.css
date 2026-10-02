@@ -1,0 +1,21 @@
+:root {
+	color-scheme: light dark;
+
+	--font-sans: system-ui, sans-serif;
+	--font-mono: ui-monospace, monospace;
+	--radius: 6px;
+
+	--color-bg: light-dark(#ffffff, #0e0e10);
+	--color-fg: light-dark(#18181b, #f4f4f5);
+	--color-muted: light-dark(#71717a, #a1a1aa);
+	--color-border: light-dark(#e4e4e7, #27272a);
+	--color-accent: light-dark(#ea580c, #fb923c);
+	--color-accent-fg: light-dark(#ffffff, #0e0e10);
+}
+
+body {
+	margin: 0;
+	font-family: var(--font-sans);
+	background: var(--color-bg);
+	color: var(--color-fg);
+}

@@ -15,7 +15,8 @@
 		"prepare": "wrangler types && svelte-kit sync || true"
 	},
 	"dependencies": {
-		"@regit/core": "workspace:*"
+		"@regit/core": "workspace:*",
+		"@regit/ui": "workspace:*"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-cloudflare": "catalog:",
