@@ -1,0 +1,30 @@
+{
+	"name": "@regit/web",
+	"private": true,
+	"type": "module",
+	"imports": {
+		"#lib/*": "./src/lib/*"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite build && wrangler dev --port 4173",
+		"deploy": "vite build && wrangler deploy",
+		"check": "wrangler types && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"gen": "wrangler types",
+		"prepare": "wrangler types && svelte-kit sync || true"
+	},
+	"dependencies": {
+		"@regit/core": "workspace:*"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-cloudflare": "catalog:",
+		"@sveltejs/kit": "catalog:",
+		"@sveltejs/vite-plugin-svelte": "catalog:",
+		"svelte": "catalog:",
+		"svelte-check": "catalog:",
+		"typescript": "catalog:",
+		"vite": "catalog:",
+		"wrangler": "catalog:"
+	}
+}

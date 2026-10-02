@@ -1,0 +1,10 @@
+pre-commit:
+  jobs:
+    - name: format
+      run: bunx prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+pre-push:
+  jobs:
+    - name: check
+      run: bun run check
