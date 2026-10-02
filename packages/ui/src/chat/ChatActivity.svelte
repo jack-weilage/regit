@@ -17,14 +17,14 @@
 	.activity {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: var(--space-4);
 		color: var(--color-muted);
 		font-size: var(--text-meta);
 	}
 
 	.dots {
 		display: flex;
-		gap: 0.1875rem;
+		gap: var(--space-2);
 
 		span {
 			inline-size: 0.375rem;

@@ -23,7 +23,7 @@
 	.event {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: var(--space-5);
 		margin: 0;
 		color: var(--color-muted);
 		font-size: var(--text-meta);

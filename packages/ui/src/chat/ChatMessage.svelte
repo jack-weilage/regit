@@ -24,7 +24,7 @@
 		.message {
 			--tight: 0.25rem;
 
-			padding: 0.5rem 0.875rem;
+			padding: var(--space-4) var(--space-5);
 			border-radius: 0.875rem;
 			background: var(--color-surface);
 		}
@@ -73,7 +73,7 @@
 		}
 
 		pre {
-			padding: 0.75rem;
+			padding: var(--space-5);
 			overflow-x: auto;
 			border-radius: var(--radius);
 			font-size: var(--text-meta);

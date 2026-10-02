@@ -103,8 +103,8 @@
 
 	.card {
 		display: grid;
-		gap: 0.5rem;
-		padding: 1rem;
+		gap: var(--space-4);
+		padding: var(--space-6);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		background: var(--color-bg);
@@ -128,12 +128,12 @@
 
 	.section {
 		display: grid;
-		gap: 0.375rem;
-		margin-block-start: 0.25rem;
+		gap: var(--space-3);
+		margin-block-start: var(--space-2);
 	}
 
 	.purpose + .section {
-		margin-block-start: 0.75rem;
+		margin-block-start: var(--space-5);
 	}
 
 	.heading {
@@ -144,7 +144,7 @@
 
 	.similar {
 		display: grid;
-		gap: 0.25rem;
+		gap: var(--space-2);
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -153,7 +153,7 @@
 			display: flex;
 			flex-wrap: wrap;
 			align-items: baseline;
-			gap: 0.5rem;
+			gap: var(--space-4);
 		}
 
 		span {
@@ -165,14 +165,14 @@
 	.actions {
 		display: flex;
 		justify-content: flex-end;
-		margin-block-start: 0.25rem;
+		margin-block-start: var(--space-2);
 	}
 
 	.collapsed {
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: baseline;
-		column-gap: 0.75rem;
-		padding: 0.5rem 0.5rem 0.5rem 1rem;
+		column-gap: var(--space-5);
+		padding: var(--space-4) var(--space-4) var(--space-4) var(--space-6);
 
 		details {
 			display: grid;
@@ -190,19 +190,19 @@
 
 		.body {
 			display: grid;
-			gap: 0.5rem;
-			margin-block-start: 0.5rem;
+			gap: var(--space-4);
+			margin-block-start: var(--space-4);
 		}
 
 		.actions {
 			grid-area: 1 / 2;
-			gap: 0.25rem;
+			gap: var(--space-2);
 			margin: 0;
 		}
 	}
 
 	.superseded {
-		padding: 0.5rem 0.75rem 0.5rem 1rem;
+		padding: var(--space-4) var(--space-5) var(--space-4) var(--space-6);
 		border-style: dashed;
 		background: none;
 		color: var(--color-muted);
@@ -211,7 +211,7 @@
 	summary {
 		display: flex;
 		align-items: baseline;
-		gap: 0.5rem;
+		gap: var(--space-4);
 		font-family: var(--font-mono);
 		font-size: var(--text-meta);
 		list-style: none;

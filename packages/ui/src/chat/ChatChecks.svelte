@@ -18,7 +18,7 @@
 <style>
 	ul {
 		display: grid;
-		gap: 0.25rem;
+		gap: var(--space-2);
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -27,8 +27,8 @@
 	li {
 		display: flex;
 		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
+		gap: var(--space-4);
+		padding: var(--space-4) var(--space-5);
 		border-radius: var(--radius);
 		background: var(--color-surface);
 	}

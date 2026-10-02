@@ -159,9 +159,9 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: end;
-		gap: 0.5rem;
-		padding: 0.5rem;
-		padding-inline-start: 0.75rem;
+		gap: var(--space-4);
+		padding: var(--space-4);
+		padding-inline-start: var(--space-5);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		background: var(--color-bg);
@@ -182,7 +182,7 @@
 	.suggestions {
 		max-block-size: 16rem;
 		margin: 0;
-		padding: 0.25rem;
+		padding: var(--space-2);
 		overflow-y: auto;
 		font-size: var(--text-chat);
 		list-style: none;
@@ -193,8 +193,8 @@
 
 			display: flex;
 			align-items: center;
-			gap: 0.5rem;
-			padding: 0.375rem 0.5rem;
+			gap: var(--space-4);
+			padding: var(--space-3) var(--space-4);
 			border-radius: var(--radius);
 			cursor: pointer;
 
@@ -204,7 +204,7 @@
 
 			> :global(svg) {
 				box-sizing: border-box;
-				padding: 0.125rem;
+				padding: var(--space-1);
 				color: var(--color-muted);
 			}
 		}
@@ -236,7 +236,7 @@
 	textarea {
 		field-sizing: content;
 		max-block-size: 12lh;
-		padding: 0.25rem 0;
+		padding: var(--space-2) 0;
 		border: 0;
 		outline: 0;
 		background: none;

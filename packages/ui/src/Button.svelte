@@ -26,7 +26,7 @@
 		display: inline-flex;
 		align-items: baseline;
 		justify-content: center;
-		gap: 0.375rem;
+		gap: var(--space-3);
 		border: 0;
 		border-radius: var(--radius);
 		background: none;
@@ -47,20 +47,20 @@
 	}
 
 	.md {
-		padding: 0.375rem 0.875rem;
+		padding: var(--space-3) var(--space-5);
 	}
 
 	.sm {
-		padding: 0.25rem 0.625rem;
+		padding: var(--space-2) var(--space-4);
 	}
 
 	.xs {
-		padding: 0.125rem 0.375rem;
+		padding: var(--space-1) var(--space-3);
 		font-size: var(--text-meta);
 	}
 
 	.icon {
-		padding: 0.375rem;
+		padding: var(--space-3);
 	}
 
 	.primary {

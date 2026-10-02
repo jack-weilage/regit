@@ -42,7 +42,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: start;
-		gap: 0.375rem;
+		gap: var(--space-3);
 	}
 
 	.group[data-kind='agent'] {
@@ -58,9 +58,9 @@
 
 		display: flex;
 		align-items: center;
-		gap: 0.375rem;
+		gap: var(--space-3);
 		max-inline-size: 100%;
-		padding-inline: 0.25rem;
+		padding-inline: var(--space-2);
 		font-size: var(--text-meta);
 		line-height: 1rem;
 	}
@@ -82,7 +82,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: start;
-		gap: 0.25rem;
+		gap: var(--space-2);
 		align-self: stretch;
 		min-inline-size: 0;
 	}
@@ -93,6 +93,6 @@
 
 	.group[data-kind='agent'] .messages {
 		align-items: stretch;
-		gap: 0.75rem;
+		gap: var(--space-5);
 	}
 </style>

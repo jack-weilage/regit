@@ -115,15 +115,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 1rem;
-		padding-inline: calc(0.75rem + 1px);
+		gap: var(--space-6);
+		padding-inline: calc(var(--space-5) + 1px);
 		color: var(--color-muted);
 		font-size: var(--text-meta);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.trigger {
-		margin-inline: -0.375rem;
+		margin-inline: calc(var(--space-3) * -1);
 	}
 
 	.ring {
@@ -139,12 +139,12 @@
 	}
 
 	.cost {
-		margin-inline-start: 0.25rem;
+		margin-inline-start: var(--space-2);
 		color: var(--color-fg);
 	}
 
 	.usage {
-		padding: 0.625rem 0.75rem;
+		padding: var(--space-5);
 		font-size: var(--text-meta);
 		font-variant-numeric: tabular-nums;
 
@@ -155,14 +155,14 @@
 
 	.context {
 		display: grid;
-		gap: 0.375rem;
-		margin-block-end: 0.75rem;
+		gap: var(--space-3);
+		margin-block-end: var(--space-5);
 	}
 
 	.summary {
 		display: flex;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: var(--space-6);
 
 		span:first-child {
 			color: var(--color-muted);
@@ -189,7 +189,7 @@
 	.legend {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.125rem 0.75rem;
+		gap: var(--space-1) var(--space-5);
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -199,7 +199,7 @@
 			display: inline-block;
 			inline-size: 0.5rem;
 			block-size: 0.5rem;
-			margin-inline-end: 0.3rem;
+			margin-inline-end: var(--space-2);
 			border-radius: 2px;
 			background: light-dark(oklch(0.62 0.13 var(--hue)), oklch(0.7 0.12 var(--hue)));
 		}
@@ -225,7 +225,7 @@
 
 		th,
 		td {
-			padding: 0.25rem 0.75rem 0.25rem 0;
+			padding: var(--space-2) var(--space-5) var(--space-2) 0;
 		}
 
 		:is(th, td):last-child {
