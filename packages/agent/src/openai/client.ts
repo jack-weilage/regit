@@ -145,11 +145,14 @@ function* fromEvent(event: ResponseStreamEvent): Generator<ModelEvent> {
 			break;
 		case 'response.completed': {
 			const usage = event.response.usage;
+			const details = usage?.input_tokens_details as
+				{ cached_tokens: number; cache_write_tokens?: number } | undefined;
 			yield {
 				type: 'done',
 				usage: {
 					inputTokens: usage?.input_tokens ?? 0,
-					cachedInputTokens: usage?.input_tokens_details.cached_tokens ?? 0,
+					cachedInputTokens: details?.cached_tokens ?? 0,
+					cacheWriteTokens: details?.cache_write_tokens ?? 0,
 					outputTokens: usage?.output_tokens ?? 0
 				}
 			};

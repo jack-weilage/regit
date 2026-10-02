@@ -110,7 +110,10 @@ describe('openaiModel', () => {
 			{ type: 'reasoning', data: JSON.stringify(reasoning) },
 			{ type: 'text', delta: 'Reading' },
 			{ type: 'call', call: { id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' } },
-			{ type: 'done', usage: { inputTokens: 120, cachedInputTokens: 100, outputTokens: 30 } }
+			{
+				type: 'done',
+				usage: { inputTokens: 120, cachedInputTokens: 100, cacheWriteTokens: 20, outputTokens: 30 }
+			}
 		]);
 	});
 

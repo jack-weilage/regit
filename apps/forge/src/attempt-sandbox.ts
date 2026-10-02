@@ -41,6 +41,7 @@ type StepRow = {
 	turns: string;
 	input_tokens: number | null;
 	cached_input_tokens: number | null;
+	cache_write_tokens: number | null;
 	output_tokens: number | null;
 	checkpoint: string | null;
 };
@@ -77,6 +78,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				turns TEXT NOT NULL,
 				input_tokens INTEGER,
 				cached_input_tokens INTEGER,
+				cache_write_tokens INTEGER,
 				output_tokens INTEGER,
 				checkpoint TEXT
 			);
@@ -111,6 +113,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						: {
 								inputTokens: row.input_tokens,
 								cachedInputTokens: row.cached_input_tokens ?? 0,
+								cacheWriteTokens: row.cache_write_tokens ?? 0,
 								outputTokens: row.output_tokens ?? 0
 							},
 				checkpoint: row.checkpoint
@@ -200,10 +203,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	#saveStep({ turns, usage, checkpoint }: Step & { checkpoint?: string }) {
 		this.#sql.exec(
-			'INSERT INTO steps (turns, input_tokens, cached_input_tokens, output_tokens, checkpoint) VALUES (?, ?, ?, ?, ?)',
+			'INSERT INTO steps (turns, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, checkpoint) VALUES (?, ?, ?, ?, ?, ?)',
 			JSON.stringify(turns),
 			usage?.inputTokens ?? null,
 			usage?.cachedInputTokens ?? null,
+			usage?.cacheWriteTokens ?? null,
 			usage?.outputTokens ?? null,
 			checkpoint ?? null
 		);

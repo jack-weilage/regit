@@ -3,7 +3,7 @@ import { runAgent, type AgentOutcome } from './loop.ts';
 import { fakeTools, scriptedModel } from './testing.ts';
 import type { AgentEvent } from './types.ts';
 
-const usage = { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5 };
+const usage = { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 5 };
 const call = (id: string, name: string, args: object) =>
 	({ type: 'call', call: { id, name, arguments: JSON.stringify(args) } }) as const;
 

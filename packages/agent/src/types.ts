@@ -23,6 +23,7 @@ export type Turn =
 export interface Usage {
 	inputTokens: number;
 	cachedInputTokens: number;
+	cacheWriteTokens: number;
 	outputTokens: number;
 }
 

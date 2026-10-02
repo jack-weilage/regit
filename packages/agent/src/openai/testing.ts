@@ -3,7 +3,11 @@ import type { Gateway, GatewayRequest } from './gateway.ts';
 export const completed = {
 	type: 'response.completed',
 	response: {
-		usage: { input_tokens: 120, output_tokens: 30, input_tokens_details: { cached_tokens: 100 } }
+		usage: {
+			input_tokens: 120,
+			output_tokens: 30,
+			input_tokens_details: { cached_tokens: 100, cache_write_tokens: 20 }
+		}
 	}
 };
 

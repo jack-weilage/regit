@@ -3,7 +3,7 @@ import { runAttempt, type Checkpoints } from './attempt.ts';
 import type { CommitRequest, PushRequest } from './sandbox/protocol.ts';
 import { fakeTools, scriptedModel } from './testing.ts';
 
-const usage = { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5 };
+const usage = { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 5 };
 const author = { name: 'ReGit', email: 'agent@regit.dev' };
 const push = { token: 'token', ref: 'main' };
 
