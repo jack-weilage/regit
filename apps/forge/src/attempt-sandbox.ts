@@ -263,6 +263,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			restored ? 1 : 0
 		);
 
+		// TODO: if image updates keep making snapshots cold, back up /opt/mise per toolchain key with @cloudflare/sandbox's DirectoryBackup, which restores into newer images
 		const key = await digest({ image, tools });
 		if (key !== restored?.key) {
 			try {
