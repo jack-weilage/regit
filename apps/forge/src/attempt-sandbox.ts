@@ -68,6 +68,7 @@ const author = { name: 'ReGit', email: 'agent@regit.dev' };
 const sandboxPort = 8080;
 const sliceMs = 10 * 60 * 1000;
 const healthTimeoutMs = 5 * 60 * 1000;
+const idleTimeoutMs = 5 * 60 * 1000;
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
@@ -81,6 +82,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
+		if (ctx.container?.running) {
+			void ctx.blockConcurrencyWhile(() => ctx.container!.setInactivityTimeout(idleTimeoutMs));
+		}
 		this.#sql.exec(`
 			CREATE TABLE IF NOT EXISTS attempt (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -352,6 +356,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async #start(source: { image: string } | { containerSnapshot: { id: string } }, fetch: Fetch) {
 		const container = this.ctx.container!;
 		container.start({ ...source, enableInternet: true, instance: 'standard-1' });
+		await container.setInactivityTimeout(idleTimeoutMs);
 		try {
 			await waitUntilHealthy(fetch);
 		} catch (error) {
