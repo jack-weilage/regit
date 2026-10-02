@@ -5,19 +5,21 @@
 		variant?: 'primary' | 'quiet' | 'ghost';
 		size?: 'md' | 'sm' | 'xs';
 		icon?: boolean;
+		element?: HTMLButtonElement;
 	}
 
 	let {
 		variant = 'quiet',
 		size = 'md',
 		icon = false,
+		element = $bindable(),
 		type = 'button',
 		children,
 		...rest
 	}: Props = $props();
 </script>
 
-<button class={['button', variant, size, { icon }]} {type} {...rest}>
+<button bind:this={element} class={['button', variant, size, { icon }]} {type} {...rest}>
 	{@render children?.()}
 </button>
 

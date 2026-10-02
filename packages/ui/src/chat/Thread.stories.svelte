@@ -5,6 +5,7 @@
 	import ChatComposer from './ChatComposer.svelte';
 	import ChatEvent from './ChatEvent.svelte';
 	import ChatFooter from './ChatFooter.svelte';
+	import ChatHeader from './ChatHeader.svelte';
 	import ChatGroup from './ChatGroup.svelte';
 	import ChatIntent from './ChatIntent.svelte';
 	import ChatLog from './ChatLog.svelte';
@@ -95,6 +96,9 @@
 	let started = $state(false);
 
 	let latestIntent = $derived(entries.findLast((entry) => entry.type === 'intent')?.id);
+	let latestHeadline = $derived(
+		entries.findLast((entry) => entry.type === 'intent')?.intent.headline ?? ''
+	);
 
 	let blocks = $derived(
 		entries.reduce<Block[]>((blocks, entry) => {
@@ -145,6 +149,16 @@
 
 {#snippet thread()}
 	<div class="frame">
+		<ChatHeader
+			headline={latestHeadline}
+			status={started ? 'running' : 'draft'}
+			people={[sam, lin]}
+			onpreview={started ? () => {} : undefined}
+			actions={[
+				{ label: 'Copy link', onselect: () => {} },
+				{ label: 'Discard', onselect: () => {} }
+			]}
+		/>
 		<ChatLog label="Thread messages">
 			{#each blocks as block (block.id)}
 				{#if block.type === 'group'}

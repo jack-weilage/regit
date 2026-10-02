@@ -18,6 +18,7 @@
 		manual = false,
 		open = false,
 		matchWidth = false,
+		ontoggle,
 		children,
 		...rest
 	}: Props = $props();
@@ -60,7 +61,10 @@
 	popover={manual ? 'manual' : 'auto'}
 	class={['popover', { below: placement.below }]}
 	onbeforetoggle={(event) => event.newState === 'open' && place()}
-	ontoggle={(event) => (shown = event.newState === 'open')}
+	ontoggle={(event) => {
+		shown = event.newState === 'open';
+		ontoggle?.(event);
+	}}
 	style:right="{placement.right}px"
 	style:top={placement.below ? `${placement.offset}px` : undefined}
 	style:bottom={placement.below ? undefined : `${placement.offset}px`}

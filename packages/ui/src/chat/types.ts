@@ -14,3 +14,10 @@ export interface Mentionable {
 	avatar?: string;
 	href?: string;
 }
+
+export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'landing' | 'shipped' | 'discarded';
+
+export interface ThreadAction {
+	label: string;
+	onselect: () => void;
+}
