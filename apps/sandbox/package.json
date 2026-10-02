@@ -1,0 +1,17 @@
+{
+	"name": "@regit/sandbox",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "SANDBOX_ROOT=.workspace bun --watch src/main.ts",
+		"image": "docker build --platform linux/amd64 -t regit-sandbox .",
+		"check": "tsc",
+		"test": "vitest run"
+	},
+	"devDependencies": {
+		"@regit/agent": "workspace:*",
+		"@types/bun": "latest",
+		"typescript": "catalog:",
+		"vitest": "^5.0.3"
+	}
+}

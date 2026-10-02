@@ -9,6 +9,8 @@ Bun workspace: `apps/*` (deployables) and `packages/*` (shared code consumed as 
 - Use the `--space-1` to `--space-7` scale in `theme.css` (2–20px, in rem) for padding, margins and gaps rather than raw values; borders and focus outlines stay in px. Sizes that belong to text (icons, inline avatars, button, bubble and chip padding) use em so they scale with it; `--chat-inset` aligns content with the composer's text.
 - Shared components live in `packages/ui`, each with a Svelte CSF story (`*.stories.svelte`). Style with the tokens in `theme.css`.
 - Durable Objects, Workflows and containers belong in `apps/forge`. `apps/web` binds to them with `script_name: "regit-forge"`.
+- The agent loop, model clients and sandbox tool clients live in `packages/agent` as plain TypeScript that takes its model, tools and storage as interfaces, so it is unit tested with fakes. `apps/sandbox` is the container's tool server (`bun run image` builds it); it is tested in-process against a temporary git repo.
+- Leave a one-line `// TODO:` where a deferred follow-up belongs.
 - `worker-configuration.d.ts` is generated and gitignored. After editing a `wrangler.jsonc`, run `bun run gen`.
 - Stories are the component tests: Vitest runs every story in Chromium with accessibility checks, and `play` functions cover interactions. Wrap assertions on anything that animates in with `waitFor`.
 - Keep code self-explanatory with minimal comments. Run `bun run check` and `bun run test` before considering work done.
