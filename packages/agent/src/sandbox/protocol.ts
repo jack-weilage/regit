@@ -19,8 +19,8 @@ export interface ErrorResponse {
 
 export interface CloneRequest {
 	remote: string;
-	token: string;
 	branch?: string;
+	token?: string;
 }
 
 export interface CommitRequest {
@@ -39,8 +39,8 @@ export interface ToolchainResponse {
 }
 
 export interface PushRequest {
-	token: string;
 	ref: string;
+	token?: string;
 }
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;

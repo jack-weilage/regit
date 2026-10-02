@@ -12,6 +12,7 @@ RUN apt-get update \
 COPY --from=jdxcode/mise:2026.10.0 /usr/local/bin/mise /usr/local/bin/mise
 COPY --from=server /regit-sandbox /usr/local/bin/regit-sandbox
 COPY mise-system.toml /etc/mise/config.toml
+COPY start.sh /usr/local/bin/regit-start
 
 ENV MISE_DATA_DIR=/opt/mise MISE_CACHE_DIR=/opt/mise/cache PATH=/opt/mise/shims:$PATH
 RUN echo 'export PATH="/opt/mise/shims:$PATH"' > /etc/profile.d/mise.sh \
@@ -19,4 +20,4 @@ RUN echo 'export PATH="/opt/mise/shims:$PATH"' > /etc/profile.d/mise.sh \
 
 ENV SANDBOX_ROOT=/workspace PORT=8080
 EXPOSE 8080
-CMD ["regit-sandbox"]
+CMD ["regit-start"]

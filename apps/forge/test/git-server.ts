@@ -1,12 +1,19 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 export async function serveGit(root: string) {
 	const requests: IncomingHttpHeaders[] = [];
 	const server = createServer((req, res) => {
-		requests.push(req.headers);
 		const url = new URL(req.url!, 'http://git');
+		if (url.pathname === '/_control/requests') {
+			res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(requests));
+			return;
+		}
+		forkOnFirstUse(root, url.pathname);
+		requests.push(req.headers);
 		const backend = spawn('git', ['http-backend'], {
 			env: {
 				...process.env,
@@ -44,4 +51,17 @@ export async function serveGit(root: string) {
 		requests,
 		close: () => new Promise<void>((resolve) => server.close(() => resolve()))
 	};
+}
+
+function forkOnFirstUse(root: string, path: string) {
+	const name = path.split('/')[1]?.replace(/\.git$/, '');
+	const base = name?.split('--')[0];
+	if (!name || !base || base === name || existsSync(join(root, `${name}.git`))) return;
+	execFileSync('git', [
+		'clone',
+		'--quiet',
+		'--bare',
+		join(root, `${base}.git`),
+		join(root, `${name}.git`)
+	]);
 }

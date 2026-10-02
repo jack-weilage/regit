@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import type { CloneRequest, CommitRequest, PushRequest, Toolchain } from '@regit/agent';
 import { exec, git, truncate } from './exec.ts';
 
-function auth(token: string) {
+function auth(token?: string) {
+	if (!token) return undefined;
 	return {
 		GIT_CONFIG_COUNT: '1',
 		GIT_CONFIG_KEY_0: 'http.extraHeader',

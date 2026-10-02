@@ -17,7 +17,7 @@ import {
 export interface AttemptInput {
 	task: string;
 	mode: Mode;
-	repo: { name: string; remote: string; token: string; branch: string };
+	repo: string;
 }
 
 export type AttemptStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'failed' | 'cancelled';
@@ -27,6 +27,12 @@ export interface AttemptSnapshot {
 	error: string | null;
 	toolchain: { tools: Toolchain; restored: boolean } | null;
 	steps: (Step & { checkpoint: string | null })[];
+}
+
+interface Fork {
+	name: string;
+	remote: string;
+	branch: string;
 }
 
 interface ToolchainSnapshot {
@@ -39,9 +45,9 @@ type AttemptRow = {
 	task: string;
 	mode: Mode;
 	repo: string;
-	remote: string;
-	token: string;
-	branch: string;
+	fork: string | null;
+	remote: string | null;
+	branch: string | null;
 	status: AttemptStatus;
 	error: string | null;
 	toolchain: string | null;
@@ -79,9 +85,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 				task TEXT NOT NULL,
 				mode TEXT NOT NULL,
 				repo TEXT NOT NULL,
-				remote TEXT NOT NULL,
-				token TEXT NOT NULL,
-				branch TEXT NOT NULL,
+				fork TEXT,
+				remote TEXT,
+				branch TEXT,
 				status TEXT NOT NULL,
 				error TEXT,
 				toolchain TEXT,
@@ -102,13 +108,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async start({ task, mode, repo }: AttemptInput) {
 		if (this.#attempt()) throw new Error('This attempt has already started');
 		this.#sql.exec(
-			`INSERT INTO attempt (id, task, mode, repo, remote, token, branch, status) VALUES (1, ?, ?, ?, ?, ?, ?, 'queued')`,
+			`INSERT INTO attempt (id, task, mode, repo, status) VALUES (1, ?, ?, ?, 'queued')`,
 			task,
 			mode,
-			repo.name,
-			repo.remote,
-			repo.token,
-			repo.branch
+			repo
 		);
 		await this.ctx.storage.setAlarm(Date.now());
 	}
@@ -156,7 +159,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
 		try {
-			const fetch = await this.#sandbox(attempt);
+			const fork = await this.#fork(attempt);
+			const token = await this.#token(fork);
+			const fetch = await this.#sandbox(attempt, fork, token);
+			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
 			const run = runAttempt({
 				model: openaiModel({
@@ -171,9 +177,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 					}
 				}),
 				tools: sandboxTools(fetch),
-				checkpoints: sandboxWorkspace(fetch),
+				checkpoints: {
+					commit: (request) => workspace.commit(request),
+					push: (request) => this.#push(fork, token, () => workspace.push(request))
+				},
 				author,
-				push: { token: attempt.token, ref: attempt.branch },
+				push: { ref: fork.branch },
 				instructions: codingInstructions,
 				history: this.#history(attempt),
 				signal: controller.signal
@@ -231,13 +240,57 @@ export class AttemptSandbox extends DurableObject<Env> {
 		);
 	}
 
-	// TODO: inject the Artifacts token with interceptOutboundHttps so it never enters the container
+	async #fork(attempt: AttemptRow): Promise<Fork> {
+		if (attempt.fork && attempt.remote && attempt.branch) {
+			return { name: attempt.fork, remote: attempt.remote, branch: attempt.branch };
+		}
+		const name = `${attempt.repo}--${this.ctx.id.name}`;
+		using base = await this.env.ARTIFACTS.get(attempt.repo);
+		const fork = await base
+			.fork(name, { description: attempt.task.slice(0, 200) })
+			.catch(async (error) => {
+				if ((error as ArtifactsError).code !== 'ALREADY_EXISTS') throw error;
+				using existing = await this.env.ARTIFACTS.get(name);
+				return existing.info();
+			});
+		this.#sql.exec(
+			'UPDATE attempt SET fork = ?, remote = ?, branch = ?',
+			fork.name,
+			fork.remote,
+			fork.defaultBranch
+		);
+		return { name: fork.name, remote: fork.remote, branch: fork.defaultBranch };
+	}
+
+	async #token(fork: Fork) {
+		using repo = await this.env.ARTIFACTS.get(fork.name);
+		const { plaintext } = await repo.createToken('write', 60 * 60);
+		return plaintext;
+	}
+
+	async #allowGit(fork: Fork, token: string, push: boolean) {
+		const remote = new URL(fork.remote);
+		if (remote.protocol !== 'https:') return;
+		const proxy = this.ctx.exports.GitProxy({ props: { remote: fork.remote, token, push } });
+		await this.ctx.container!.interceptOutboundHttps(remote.hostname, proxy);
+	}
+
+	async #push(fork: Fork, token: string, push: () => Promise<void>) {
+		await this.#allowGit(fork, token, true);
+		try {
+			await push();
+		} finally {
+			await this.#allowGit(fork, token, false);
+		}
+	}
+
 	// TODO: size the instance per mode
-	async #sandbox(attempt: AttemptRow): Promise<Fetch> {
+	async #sandbox(attempt: AttemptRow, fork: Fork, token: string): Promise<Fetch> {
 		const container = this.ctx.container!;
 		const port = container.getTcpPort(sandboxPort);
 		const fetch: Fetch = (url, init) => port.fetch(url, init);
 		const workspace = sandboxWorkspace(fetch);
+		await this.#allowGit(fork, token, false);
 		if (container.running) {
 			await waitUntilHealthy(fetch);
 			return fetch;
@@ -255,7 +308,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			await this.#start({ image }, fetch);
 		}
 
-		await workspace.clone({ remote: attempt.remote, token: attempt.token, branch: attempt.branch });
+		await workspace.clone({ remote: fork.remote, branch: fork.branch });
 		const tools = await workspace.toolchain();
 		this.#sql.exec(
 			'UPDATE attempt SET toolchain = ?, restored = ?',

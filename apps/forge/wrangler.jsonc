@@ -10,6 +10,7 @@
 	"ai": { "binding": "AI", "remote": true },
 	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],
 	"kv_namespaces": [{ "binding": "TOOLCHAINS" }],
+	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"durable_objects": {
 		"bindings": [{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" }]
 	},
