@@ -161,7 +161,7 @@
 		align-items: end;
 		gap: var(--space-4);
 		padding: var(--space-4);
-		padding-inline-start: var(--space-5);
+		padding-inline-start: var(--chat-inset);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		background: var(--color-bg);
@@ -188,8 +188,8 @@
 		list-style: none;
 
 		li {
-			--avatar-size: 1.25rem;
-			--icon-size: 1.25rem;
+			--avatar-size: 1.5em;
+			--icon-size: 1.5em;
 
 			display: flex;
 			align-items: center;
@@ -236,7 +236,7 @@
 	textarea {
 		field-sizing: content;
 		max-block-size: 12lh;
-		padding: var(--space-2) 0;
+		padding: 0.3em 0;
 		border: 0;
 		outline: 0;
 		background: none;
@@ -252,8 +252,8 @@
 	}
 
 	.send {
-		inline-size: 1rem;
-		block-size: 1rem;
+		inline-size: 1.25em;
+		block-size: 1.25em;
 		align-self: center;
 		fill: none;
 		stroke: currentColor;

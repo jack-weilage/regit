@@ -54,7 +54,7 @@
 	}
 
 	header {
-		--avatar-size: 1.125rem;
+		--avatar-size: 1.5em;
 
 		display: flex;
 		align-items: center;

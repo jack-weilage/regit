@@ -116,7 +116,8 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: var(--space-6);
-		padding-inline: calc(var(--space-5) + 1px);
+		padding-inline: var(--chat-inset);
+		border-inline: 1px solid transparent;
 		color: var(--color-muted);
 		font-size: var(--text-meta);
 		font-variant-numeric: tabular-nums;
@@ -127,7 +128,7 @@
 	}
 
 	.ring {
-		--size: 0.875rem;
+		--size: 1.15em;
 
 		flex: none;
 		inline-size: var(--size);
@@ -144,7 +145,7 @@
 	}
 
 	.usage {
-		padding: var(--space-5);
+		padding: var(--chat-inset);
 		font-size: var(--text-meta);
 		font-variant-numeric: tabular-nums;
 
@@ -172,7 +173,7 @@
 	.bar {
 		display: flex;
 		gap: 2px;
-		block-size: 0.375rem;
+		block-size: 0.5em;
 		overflow: hidden;
 		border-radius: 999px;
 		background: var(--color-surface);
@@ -197,8 +198,8 @@
 		li::before {
 			content: '';
 			display: inline-block;
-			inline-size: 0.5rem;
-			block-size: 0.5rem;
+			inline-size: 0.65em;
+			block-size: 0.65em;
 			margin-inline-end: var(--space-2);
 			border-radius: 2px;
 			background: light-dark(oklch(0.62 0.13 var(--hue)), oklch(0.7 0.12 var(--hue)));

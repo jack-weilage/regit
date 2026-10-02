@@ -47,20 +47,20 @@
 	}
 
 	.md {
-		padding: var(--space-3) var(--space-5);
+		padding: 0.5em 1em;
 	}
 
 	.sm {
-		padding: var(--space-2) var(--space-4);
+		padding: 0.3em 0.6em;
 	}
 
 	.xs {
-		padding: var(--space-1) var(--space-3);
+		padding: 0.15em 0.5em;
 		font-size: var(--text-meta);
 	}
 
 	.icon {
-		padding: var(--space-3);
+		padding: 0.45em;
 	}
 
 	.primary {

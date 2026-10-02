@@ -30,7 +30,7 @@
 		gap: 0.3em;
 		max-inline-size: min(100%, 20em);
 		padding: 0.05em 0.3em;
-		border-radius: 0.25rem;
+		border-radius: 0.3em;
 		background: color-mix(in oklab, currentColor 8%, transparent);
 		color: inherit;
 		font-weight: 500;

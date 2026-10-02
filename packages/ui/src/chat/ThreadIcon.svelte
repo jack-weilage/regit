@@ -22,8 +22,8 @@
 <style>
 	svg {
 		flex: none;
-		inline-size: var(--icon-size, 1rem);
-		block-size: var(--icon-size, 1rem);
+		inline-size: var(--icon-size, 1.25em);
+		block-size: var(--icon-size, 1.25em);
 		fill: none;
 		stroke: currentColor;
 		stroke-width: 1.25;

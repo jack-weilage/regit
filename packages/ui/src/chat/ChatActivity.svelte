@@ -27,8 +27,8 @@
 		gap: var(--space-2);
 
 		span {
-			inline-size: 0.375rem;
-			block-size: 0.375rem;
+			inline-size: 0.5em;
+			block-size: 0.5em;
 			border-radius: 50%;
 			background: currentColor;
 			opacity: 0.4;
@@ -47,7 +47,7 @@
 	@keyframes pulse {
 		30% {
 			opacity: 1;
-			translate: 0 -0.125rem;
+			translate: 0 -0.15em;
 		}
 	}
 

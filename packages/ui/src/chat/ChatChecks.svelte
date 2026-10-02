@@ -34,7 +34,7 @@
 	}
 
 	svg {
-		--size: 1rem;
+		--size: 1.25em;
 
 		flex: none;
 		inline-size: var(--size);

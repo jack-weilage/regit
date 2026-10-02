@@ -17,6 +17,7 @@
 
 	--text-chat: 0.8125rem;
 	--text-meta: 0.75rem;
+	--chat-inset: var(--space-5);
 
 	--color-bg: light-dark(#ffffff, #0e0e10);
 	--color-surface: light-dark(#f4f4f5, #1c1c1f);

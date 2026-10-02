@@ -218,7 +218,7 @@
 		cursor: pointer;
 
 		> :global(svg) {
-			--icon-size: 1rem;
+			--icon-size: 1.3em;
 
 			translate: 0 calc((var(--icon-size) - 1ex) / 2);
 			color: var(--color-muted);

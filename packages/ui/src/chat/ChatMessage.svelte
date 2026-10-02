@@ -22,10 +22,10 @@
 
 	@container style(--chat-role: person) or style(--chat-role: own) {
 		.message {
-			--tight: 0.25rem;
+			--tight: 0.3em;
 
-			padding: var(--space-4) var(--space-5);
-			border-radius: 0.875rem;
+			padding: 0.6em 0.9em;
+			border-radius: 1.1em;
 			background: var(--color-surface);
 		}
 	}
@@ -68,7 +68,7 @@
 
 		code {
 			padding: 0.1em 0.3em;
-			border-radius: 0.25rem;
+			border-radius: 0.3em;
 			font-size: 0.875em;
 		}
 
