@@ -1,26 +1,11 @@
-<script module lang="ts">
-	import type { ThreadStatus } from './types.ts';
-
-	const statuses: Record<
-		ThreadStatus,
-		{ label: string; icon: 'pending' | 'running' | 'attention' | 'passed' | 'failed' }
-	> = {
-		draft: { label: 'Not started', icon: 'pending' },
-		running: { label: 'Running', icon: 'running' },
-		'needs-you': { label: 'Needs you', icon: 'attention' },
-		landing: { label: 'Landing', icon: 'running' },
-		shipped: { label: 'Shipped', icon: 'passed' },
-		discarded: { label: 'Discarded', icon: 'failed' }
-	};
-</script>
-
 <script lang="ts">
 	import Avatar from '../Avatar.svelte';
 	import Button from '../Button.svelte';
 	import Menu from '../Menu.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import ChatMention from './ChatMention.svelte';
-	import type { Author, Mentionable, ThreadAction } from './types.ts';
+	import { statuses } from './status.ts';
+	import type { Author, Mentionable, ThreadAction, ThreadStatus } from './types.ts';
 
 	interface Props {
 		headline: string;

@@ -1,4 +1,5 @@
 <script lang="ts">
+	// TODO: show a profile preview on hover wherever avatars appear (thread previews, the thread header, chat groups, mentions)
 	import type { HTMLAttributes } from 'svelte/elements';
 
 	interface Props extends HTMLAttributes<HTMLSpanElement> {

@@ -10,6 +10,7 @@
 		open?: boolean;
 		matchWidth?: boolean;
 		align?: 'start' | 'end';
+		side?: 'block' | 'inline';
 		children: Snippet;
 	}
 
@@ -20,6 +21,7 @@
 		open = false,
 		matchWidth = false,
 		align = 'end',
+		side = 'block',
 		ontoggle,
 		children,
 		...rest
@@ -28,13 +30,24 @@
 	const gap = 6;
 
 	let shown = $state(false);
-	let placement = $state({ inline: 0, offset: 0, width: 0, below: false });
+	let placement = $state({ inline: 0, offset: 0, width: 0, below: false, beside: false });
 
 	function place() {
 		if (!anchor) return;
 		const rect = anchor.getBoundingClientRect();
+		if (side === 'inline') {
+			placement = {
+				inline: rect.right + gap,
+				offset: rect.top,
+				width: rect.width,
+				below: true,
+				beside: true
+			};
+			return;
+		}
 		const below = rect.top < innerHeight - rect.bottom;
 		placement = {
+			beside: false,
 			inline: align === 'end' ? innerWidth - rect.right : rect.left,
 			offset: below ? rect.bottom + gap : innerHeight - rect.top + gap,
 			width: rect.width,
@@ -61,14 +74,14 @@
 <div
 	{id}
 	popover={manual ? 'manual' : 'auto'}
-	class={['popover', align, { below: placement.below }]}
+	class={['popover', align, { below: placement.below, beside: placement.beside }]}
 	onbeforetoggle={(event) => event.newState === 'open' && place()}
 	ontoggle={(event) => {
 		shown = event.newState === 'open';
 		ontoggle?.(event);
 	}}
-	style:right={align === 'end' ? `${placement.inline}px` : undefined}
-	style:left={align === 'start' ? `${placement.inline}px` : undefined}
+	style:right={align === 'end' && !placement.beside ? `${placement.inline}px` : undefined}
+	style:left={align === 'start' || placement.beside ? `${placement.inline}px` : undefined}
 	style:top={placement.below ? `${placement.offset}px` : undefined}
 	style:bottom={placement.below ? undefined : `${placement.offset}px`}
 	style:inline-size={matchWidth ? `${placement.width}px` : undefined}
@@ -118,6 +131,10 @@
 				transform-origin: top left;
 			}
 
+			&.beside {
+				transform-origin: top left;
+			}
+
 			&:not(:popover-open) {
 				opacity: 0;
 				translate: 0 var(--shift);
@@ -128,6 +145,16 @@
 				opacity: 0;
 				translate: 0 var(--shift);
 				scale: 0.98;
+			}
+
+			&.beside:not(:popover-open) {
+				translate: -0.25rem 0;
+			}
+
+			@starting-style {
+				&.beside {
+					translate: -0.25rem 0;
+				}
 			}
 		}
 	}
