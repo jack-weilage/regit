@@ -44,15 +44,16 @@ export const tools: Tools = {
 	},
 
 	async find_files(root, { pattern }) {
-		const { output } = await exec('rg', ['--files', '--hidden', '-g', '!.git', '-g', pattern], {
+		const { output } = await exec('rg', ['--files', '--hidden', '-g', pattern, '-g', '!.git'], {
 			cwd: root
 		});
 		return truncate(output.split('\n').filter(Boolean).sort().join('\n')) || 'No files found';
 	},
 
 	async search(root, { pattern, path = '.', glob }) {
-		const args = ['-n', '--no-heading', '--color', 'never', '--hidden', '-g', '!.git'];
+		const args = ['-n', '--no-heading', '--color', 'never', '--hidden'];
 		if (glob) args.push('-g', glob);
+		args.push('-g', '!.git');
 		const { code, output } = await exec('rg', [...args, '-e', pattern, inside(root, path)], {
 			cwd: root
 		});

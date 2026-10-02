@@ -95,6 +95,8 @@ describe('tools', () => {
 		});
 
 		expect(await call('find_files', { pattern: '**/*.ts' })).toBe('greeting.ts\nsrc/other.ts');
+		expect(await call('find_files', { pattern: '*' })).not.toContain('.git/');
+		expect(await call('search', { pattern: 'main', glob: '*' })).not.toContain('.git/');
 		expect(await call('search', { pattern: 'greeting', glob: 'src/**' })).toBe(
 			'src/other.ts:1:import { greeting } from "../greeting";'
 		);
