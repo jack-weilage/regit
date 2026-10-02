@@ -9,6 +9,7 @@
 		manual?: boolean;
 		open?: boolean;
 		matchWidth?: boolean;
+		align?: 'start' | 'end';
 		children: Snippet;
 	}
 
@@ -18,6 +19,7 @@
 		manual = false,
 		open = false,
 		matchWidth = false,
+		align = 'end',
 		ontoggle,
 		children,
 		...rest
@@ -26,14 +28,14 @@
 	const gap = 6;
 
 	let shown = $state(false);
-	let placement = $state({ right: 0, offset: 0, width: 0, below: false });
+	let placement = $state({ inline: 0, offset: 0, width: 0, below: false });
 
 	function place() {
 		if (!anchor) return;
 		const rect = anchor.getBoundingClientRect();
 		const below = rect.top < innerHeight - rect.bottom;
 		placement = {
-			right: innerWidth - rect.right,
+			inline: align === 'end' ? innerWidth - rect.right : rect.left,
 			offset: below ? rect.bottom + gap : innerHeight - rect.top + gap,
 			width: rect.width,
 			below
@@ -59,13 +61,14 @@
 <div
 	{id}
 	popover={manual ? 'manual' : 'auto'}
-	class={['popover', { below: placement.below }]}
+	class={['popover', align, { below: placement.below }]}
 	onbeforetoggle={(event) => event.newState === 'open' && place()}
 	ontoggle={(event) => {
 		shown = event.newState === 'open';
 		ontoggle?.(event);
 	}}
-	style:right="{placement.right}px"
+	style:right={align === 'end' ? `${placement.inline}px` : undefined}
+	style:left={align === 'start' ? `${placement.inline}px` : undefined}
 	style:top={placement.below ? `${placement.offset}px` : undefined}
 	style:bottom={placement.below ? undefined : `${placement.offset}px`}
 	style:inline-size={matchWidth ? `${placement.width}px` : undefined}
@@ -105,6 +108,14 @@
 				--shift: -0.25rem;
 
 				transform-origin: top right;
+			}
+
+			&.start {
+				transform-origin: bottom left;
+			}
+
+			&.start.below {
+				transform-origin: top left;
 			}
 
 			&:not(:popover-open) {

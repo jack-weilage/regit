@@ -1,5 +1,6 @@
 export { default as Avatar } from './Avatar.svelte';
 export { default as Button } from './Button.svelte';
+export { default as Menu, type MenuItem } from './Menu.svelte';
 export { default as Popover } from './Popover.svelte';
 export { default as StatusIcon } from './StatusIcon.svelte';
 export { default as ChatActivity } from './chat/ChatActivity.svelte';
@@ -12,4 +13,5 @@ export { default as ChatIntent } from './chat/ChatIntent.svelte';
 export { default as ChatLog } from './chat/ChatLog.svelte';
 export { default as ChatMention } from './chat/ChatMention.svelte';
 export { default as ChatMessage } from './chat/ChatMessage.svelte';
+export { default as NewThreadPalette, type Mode } from './chat/NewThreadPalette.svelte';
 export type { Author, AuthorKind, Mentionable, ThreadAction, ThreadStatus } from './chat/types.ts';

@@ -17,7 +17,7 @@
 <script lang="ts">
 	import Avatar from '../Avatar.svelte';
 	import Button from '../Button.svelte';
-	import Popover from '../Popover.svelte';
+	import Menu from '../Menu.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import type { Author, Mentionable, ThreadAction } from './types.ts';
@@ -33,39 +33,7 @@
 
 	let { headline, status, parent, people = [], actions = [], onpreview }: Props = $props();
 
-	const id = $props.id();
-
-	let trigger: HTMLButtonElement | undefined = $state();
-	let menu: HTMLElement | undefined = $state();
-
 	let current = $derived(statuses[status]);
-
-	function items() {
-		return [...(menu?.querySelectorAll<HTMLElement>('[role=menuitem]') ?? [])];
-	}
-
-	function focusFirst(event: ToggleEvent) {
-		if (event.newState === 'open') items()[0]?.focus();
-	}
-
-	function onkeydown(event: KeyboardEvent) {
-		const all = items();
-		const index = all.indexOf(document.activeElement as HTMLElement);
-		const next = {
-			ArrowDown: index + 1,
-			ArrowUp: index - 1,
-			Home: 0,
-			End: all.length - 1
-		}[event.key];
-		if (next === undefined) return;
-		event.preventDefault();
-		all[(next + all.length) % all.length]?.focus();
-	}
-
-	function select(action: ThreadAction) {
-		document.getElementById(`${id}-menu`)?.hidePopover();
-		action.onselect();
-	}
 </script>
 
 <header>
@@ -95,34 +63,15 @@
 			</Button>
 		{/if}
 		{#if actions.length}
-			<Button
-				bind:element={trigger}
-				variant="ghost"
-				size="sm"
-				icon
-				aria-label="Thread actions"
-				popovertarget="{id}-menu"
-			>
-				<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
-					<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" />
-				</svg>
-			</Button>
-			<Popover id="{id}-menu" anchor={trigger} ontoggle={focusFirst}>
-				<div
-					bind:this={menu}
-					class="menu"
-					role="menu"
-					aria-label="Thread actions"
-					tabindex="-1"
-					{onkeydown}
-				>
-					{#each actions as action (action.label)}
-						<button type="button" role="menuitem" onclick={() => select(action)}>
-							{action.label}
-						</button>
-					{/each}
-				</div>
-			</Popover>
+			<Menu label="Thread actions" items={actions}>
+				{#snippet trigger(props)}
+					<Button variant="ghost" size="sm" icon aria-label="Thread actions" {...props}>
+						<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
+							<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" />
+						</svg>
+					</Button>
+				{/snippet}
+			</Menu>
 		{/if}
 	</div>
 </header>
@@ -216,31 +165,6 @@
 		stroke-width: 1.5;
 		stroke-linecap: round;
 		stroke-linejoin: round;
-	}
-
-	.menu {
-		display: grid;
-		min-inline-size: 10rem;
-		padding: var(--space-2);
-		font-size: var(--text-chat);
-		outline: 0;
-
-		button {
-			padding: var(--space-3) var(--space-4);
-			border: 0;
-			border-radius: var(--radius);
-			background: none;
-			color: inherit;
-			font: inherit;
-			text-align: start;
-			cursor: pointer;
-
-			&:hover,
-			&:focus-visible {
-				background: var(--color-surface);
-				outline: 0;
-			}
-		}
 	}
 
 	@container header (width < 28rem) {
