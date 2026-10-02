@@ -6,6 +6,7 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },
 	"workers_dev": false,
+	"preview_urls": false,
 	"vars": { "AI_GATEWAY": "regit" },
 	"ai": { "binding": "AI", "remote": true },
 	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],
