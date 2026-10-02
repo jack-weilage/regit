@@ -3,5 +3,5 @@ export { codingInstructions } from './instructions.ts';
 export { runAgent, type AgentOptions, type AgentOutcome } from './loop.ts';
 export { modes, type Mode } from './modes.ts';
 export type * from './types.ts';
-export * from './chatgpt/index.ts';
+export * from './openai/index.ts';
 export * from './sandbox/index.ts';

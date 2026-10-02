@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from './chatgpt/client.ts';
+import type { ReasoningEffort } from './openai/client.ts';
 
 export type Mode = 'small' | 'medium' | 'large';
 

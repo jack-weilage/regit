@@ -3,45 +3,36 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from 'wrangler';
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
+import type { GatewayRequest } from '@regit/agent';
 import type Forge from '../src/index.ts';
+import type FakeModels from './fake-models.ts';
 import { serveGit } from './git-server.ts';
 
-const server = createTestHarness({ workers: [{ configPath: './wrangler.jsonc' }] });
+const server = createTestHarness({
+	workers: [
+		{ configPath: './wrangler.jsonc', bindingOverrides: { MODELS: 'fake-models' } },
+		{
+			config: {
+				name: 'fake-models',
+				main: './test/fake-models.ts',
+				compatibility_date: '2026-10-01'
+			}
+		}
+	]
+});
 const worker = server.getWorker<Env, { default: typeof Forge }>();
-const tokens = { accessToken: 'access-1', refreshToken: 'refresh-1', accountId: 'account' };
+const models = server.getWorker<unknown, { default: typeof FakeModels }>('fake-models');
 
 let dir: string;
 let git: Awaited<ReturnType<typeof serveGit>>;
-let modelRequests: any[];
 
-function eventStream(events: object[]) {
-	return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
-		headers: { 'Content-Type': 'text/event-stream' }
-	});
+async function script(replies: object[][]) {
+	await (await models.getExport()).script(replies);
 }
 
-function fakeModel(replies: object[][]) {
-	const realFetch = globalThis.fetch;
-	vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-		const request = new Request(input, init);
-		if (!request.url.startsWith('https://chatgpt.com/')) return realFetch(input, init);
-		modelRequests.push({
-			headers: Object.fromEntries(request.headers),
-			body: await request.json()
-		});
-		const reply = replies.shift();
-		if (!reply) throw new Error('The fake model ran out of replies');
-		return eventStream([
-			...reply,
-			{
-				type: 'response.completed',
-				response: {
-					usage: { input_tokens: 50, output_tokens: 10, input_tokens_details: { cached_tokens: 0 } }
-				}
-			}
-		]);
-	});
+async function modelRequests() {
+	return JSON.parse(await (await models.getExport()).requests()) as GatewayRequest[];
 }
 
 function sh(cwd: string, ...args: string[]) {
@@ -61,7 +52,6 @@ beforeAll(() => server.listen());
 afterAll(() => server.close());
 
 beforeEach(async () => {
-	modelRequests = [];
 	dir = await mkdtemp(join(tmpdir(), 'regit-forge-'));
 	const seed = join(dir, 'seed');
 	sh(dir, 'init', '--initial-branch', 'main', seed);
@@ -73,14 +63,13 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	vi.restoreAllMocks();
 	await git.close();
 	await server.reset();
 	await rm(dir, { recursive: true, force: true });
 });
 
 test('runs the agent in a container, checkpointing its work to the fork', async () => {
-	fakeModel([
+	await script([
 		[
 			{ type: 'response.output_text.delta', delta: 'Say hi instead' },
 			{
@@ -96,7 +85,6 @@ test('runs the agent in a container, checkpointing its work to the fork', async 
 		[{ type: 'response.output_text.delta', delta: 'Changed the greeting to hi.' }]
 	]);
 	const api = await worker.getExport();
-	await api.connectChatGPT(tokens);
 	await api.startAttempt('thread-1', {
 		task: 'Make the greeting say hi',
 		mode: 'small',
@@ -125,22 +113,33 @@ test('runs the agent in a container, checkpointing its work to the fork', async 
 		true
 	);
 
-	expect(modelRequests[0].headers).toMatchObject({
-		authorization: 'Bearer access-1',
-		'chatgpt-account-id': 'account'
+	const [first, second] = await modelRequests();
+	expect(first).toMatchObject({
+		provider: 'openai',
+		endpoint: 'responses',
+		headers: { 'cf-aig-metadata': { thread: 'thread-1', mode: 'small', task: 'code' } },
+		query: { model: 'gpt-6-luna' }
 	});
-	expect(modelRequests[1].body.input.at(-1)).toEqual({
+	expect((second!.query as { input: unknown[] }).input.at(-1)).toMatchObject({
 		type: 'function_call_output',
 		call_id: 'call_1',
-		output: 'Edited greeting.ts'
+		output: [{ type: 'input_text', text: 'Edited greeting.ts' }]
 	});
 });
 
-test('fails the attempt when ChatGPT is not connected', async () => {
+test('fails the attempt when the model fails', async () => {
+	await script([
+		[
+			{
+				type: 'response.failed',
+				response: { error: { code: 'credit_balance_exhausted', message: 'No credits' } }
+			}
+		]
+	]);
 	const api = await worker.getExport();
 	await api.startAttempt('thread-2', {
 		task: 'Anything',
-		mode: 'small',
+		mode: 'medium',
 		repo: {
 			remote: `http://host.docker.internal:${git.port}/repo.git`,
 			token: 'artifact-token',
@@ -150,15 +149,7 @@ test('fails the attempt when ChatGPT is not connected', async () => {
 
 	expect(await settled(api, 'thread-2')).toMatchObject({
 		status: 'failed',
-		error: expect.stringContaining('ChatGPT is not connected')
+		error: 'No credits',
+		steps: []
 	});
-});
-
-test('persists tokens when ChatGPT is connected', async () => {
-	const api = await worker.getExport();
-	await api.connectChatGPT(tokens);
-
-	const storage = await worker.getDurableObjectStorage('CHATGPT', { name: 'default' });
-	const [row] = await storage.exec<{ value: string }>('SELECT value FROM tokens');
-	expect(JSON.parse(row!.value)).toEqual(tokens);
 });

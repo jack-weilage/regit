@@ -1,18 +1,21 @@
 import OpenAI from 'openai';
-import type { ResponseInputItem, ResponseStreamEvent } from 'openai/resources/responses/responses';
+import type {
+	ResponseInputItem,
+	ResponseInputText,
+	ResponseStreamEvent
+} from 'openai/resources/responses/responses';
 import type { ModelClient, ModelEvent, Turn } from '../types.ts';
-import type { TokenSource } from './auth.ts';
+import { gatewayFetch, type Gateway, type Metadata } from './gateway.ts';
 
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
-export interface ChatGPTOptions {
-	auth: TokenSource;
+export interface OpenAIModelOptions {
+	gateway: Gateway;
 	model: string;
 	sessionId: string;
 	effort?: ReasoningEffort;
-	originator?: string;
+	metadata?: Metadata;
 	maxRetries?: number;
-	fetch?: typeof fetch;
 }
 
 export class ModelError extends Error {
@@ -26,36 +29,36 @@ export class ModelError extends Error {
 	}
 }
 
-export function chatgptModel({
-	auth,
+const breakpoint = { mode: 'explicit' } as const;
+
+// TODO: switch to the Responses WebSocket transport so each step only sends new items, once AI Gateway's binding supports it
+export function openaiModel({
+	gateway,
 	model,
 	sessionId,
 	effort = 'medium',
-	originator = 'regit',
-	maxRetries,
-	fetch
-}: ChatGPTOptions): ModelClient {
-	// TODO: set prompt cache breakpoints when moving to the API; GPT-5.6+ only caches at explicit breakpoints, and an uncached run costs about 3x
-	// TODO: switch to the Responses WebSocket transport so each step only sends new items (needs a fetch-based socket, since the SDK's runs on `ws`)
+	metadata,
+	maxRetries
+}: OpenAIModelOptions): ModelClient {
 	const client = new OpenAI({
-		apiKey: 'chatgpt',
-		baseURL: 'https://chatgpt.com/backend-api/codex',
-		defaultHeaders: { originator, 'session-id': sessionId },
-		maxRetries,
-		fetch
+		apiKey: 'ai-gateway',
+		baseURL: 'https://ai-gateway.invalid/v1',
+		fetch: gatewayFetch(gateway, 'openai', metadata),
+		maxRetries
 	});
 
 	return {
 		async *respond({ instructions, history, tools }, signal) {
-			const create = async (refreshed = false) => {
-				const tokens = await (refreshed ? auth.refresh() : auth.tokens());
-				return client.responses.create(
+			try {
+				const stream = await client.responses.create(
 					{
 						model,
 						stream: true,
 						store: false,
-						instructions,
-						input: history.flatMap(toInput),
+						input: [
+							{ type: 'message', role: 'developer', content: [cached(instructions)] },
+							...withBreakpoint(history.flatMap(toInput))
+						],
 						tools: tools.map((tool) => ({ type: 'function', strict: false, ...tool })),
 						tool_choice: 'auto',
 						parallel_tool_calls: true,
@@ -63,21 +66,8 @@ export function chatgptModel({
 						include: ['reasoning.encrypted_content'],
 						prompt_cache_key: sessionId
 					},
-					{
-						signal,
-						headers: {
-							Authorization: `Bearer ${tokens.accessToken}`,
-							'ChatGPT-Account-ID': tokens.accountId
-						}
-					}
+					{ signal }
 				);
-			};
-
-			try {
-				const stream = await create().catch((error: unknown) => {
-					if (error instanceof OpenAI.AuthenticationError) return create(true);
-					throw error;
-				});
 				for await (const event of stream) yield* fromEvent(event);
 			} catch (error) {
 				if (error instanceof OpenAI.APIError) {
@@ -93,6 +83,23 @@ export function chatgptModel({
 			}
 		}
 	};
+}
+
+function cached(text: string): ResponseInputText {
+	return { type: 'input_text', text, prompt_cache_breakpoint: breakpoint };
+}
+
+function withBreakpoint(items: ResponseInputItem[]) {
+	const last = items.at(-1);
+	if (last?.type === 'function_call_output' && typeof last.output === 'string') {
+		items[items.length - 1] = { ...last, output: [cached(last.output)] };
+	} else if (last?.type === 'message' && last.role === 'user' && typeof last.content !== 'string') {
+		const content = [...last.content];
+		const text = content.at(-1);
+		if (text?.type === 'input_text') content[content.length - 1] = cached(text.text);
+		items[items.length - 1] = { ...last, content } as ResponseInputItem;
+	}
+	return items;
 }
 
 function toInput(turn: Turn): ResponseInputItem[] {

@@ -9,8 +9,7 @@
 		"check": "wrangler types && tsc && tsc -p test",
 		"gen": "wrangler types",
 		"prepare": "wrangler types || true",
-		"test": "vitest run",
-		"try": "node scripts/try.ts"
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@regit/agent": "workspace:*",

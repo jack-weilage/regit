@@ -1,17 +1,12 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChatGPTTokens } from '@regit/agent';
 import type { AttemptInput, AttemptSnapshot } from './attempt-sandbox.ts';
 
 export { AttemptSandbox } from './attempt-sandbox.ts';
-export { ChatGPTAccount } from './chatgpt-account.ts';
+export { Models } from './models.ts';
 
 export default class Forge extends WorkerEntrypoint<Env> {
 	override async fetch() {
 		return new Response(null, { status: 404 });
-	}
-
-	async connectChatGPT(tokens: ChatGPTTokens) {
-		await this.env.CHATGPT.getByName('default').saveTokens(tokens);
 	}
 
 	async startAttempt(thread: string, input: AttemptInput) {

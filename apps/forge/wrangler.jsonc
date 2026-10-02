@@ -6,15 +6,14 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },
 	"workers_dev": false,
+	"vars": { "AI_GATEWAY": "regit" },
+	"ai": { "binding": "AI", "remote": true },
+	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],
 	"durable_objects": {
-		"bindings": [
-			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
-			{ "name": "CHATGPT", "class_name": "ChatGPTAccount" }
-		]
+		"bindings": [{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" }]
 	},
 	"exports": {
-		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite", "container": "sandbox" },
-		"ChatGPTAccount": { "type": "durable-object", "storage": "sqlite" }
+		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite", "container": "sandbox" }
 	},
 	"containers": [
 		{

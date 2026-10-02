@@ -1,8 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-	chatgptModel,
 	codingInstructions,
 	modes,
+	openaiModel,
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
@@ -137,14 +137,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 		try {
 			const fetch = await this.#sandbox(attempt);
 			const { model, effort } = modes[attempt.mode];
-			// TODO: for the MVP deploy, call models through AI Gateway (env.AI.gateway, BYOK, cf-aig-metadata per thread) instead of the ChatGPT subscription
-			const account = this.env.CHATGPT.getByName('default');
 			const run = runAttempt({
-				model: chatgptModel({
-					auth: { tokens: () => account.tokens(), refresh: () => account.refresh() },
+				model: openaiModel({
+					gateway: { run: (request) => this.env.MODELS.run(request) },
 					model,
 					effort,
-					sessionId: this.ctx.id.toString()
+					sessionId: this.ctx.id.toString(),
+					metadata: {
+						thread: this.ctx.id.name ?? this.ctx.id.toString(),
+						mode: attempt.mode,
+						task: 'code'
+					}
 				}),
 				tools: sandboxTools(fetch),
 				checkpoints: sandboxWorkspace(fetch),
