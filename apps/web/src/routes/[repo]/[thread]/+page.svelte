@@ -39,7 +39,7 @@
 		| Exclude<Entry, { type: 'message' }>;
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
-	const tasks = { intent: 'Drafting intents', attempt: 'Agent' };
+	const tasks = { intent: 'Drafting intents', conversation: 'Conversation', attempt: 'Agent' };
 
 	let { params } = $props();
 
@@ -49,7 +49,7 @@
 	let user = $derived(await getUser());
 
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
-	let drafting = $derived.by(() => {
+	let thinking = $derived.by(() => {
 		const last = detail?.entries.at(-1);
 		return (
 			detail?.summary.status === 'draft' &&
@@ -113,11 +113,7 @@
 	{@const { summary } = detail}
 	<ThreadView>
 		{#snippet header()}
-			<ChatHeader
-				headline={summary.headline || 'Drafting an intent…'}
-				status={summary.status}
-				{actions}
-			/>
+			<ChatHeader headline={summary.headline || 'New thread'} status={summary.status} {actions} />
 		{/snippet}
 		<ChatLog label="Thread messages">
 			{#each blocks as block (block.id)}
@@ -139,7 +135,7 @@
 						status={block.id === latestIntent && summary.status === 'running'
 							? 'working'
 							: undefined}
-						onstart={block.id === latestIntent && summary.status === 'draft' && !drafting
+						onstart={block.id === latestIntent && summary.status === 'draft' && !thinking
 							? () => startThread({ repo: params.repo, id: params.thread })
 							: undefined}
 					/>
@@ -147,8 +143,8 @@
 					<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 				{/if}
 			{/each}
-			{#if drafting}
-				<ChatActivity>Drafting an intent</ChatActivity>
+			{#if thinking}
+				<ChatActivity>ReGit is thinking</ChatActivity>
 			{:else if summary.status === 'running'}
 				<ChatActivity>ReGit is working</ChatActivity>
 			{/if}

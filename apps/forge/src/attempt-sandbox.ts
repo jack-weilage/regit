@@ -5,11 +5,16 @@ import { db } from './db.ts';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	codingInstructions,
+	combineTools,
+	intentTools,
 	modes,
 	openaiModel,
+	readOnlyTools,
+	runAgent,
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
+	threadInstructions,
 	type AgentOutcome,
 	type Fetch,
 	type Mode,
@@ -24,6 +29,13 @@ export interface AttemptInput {
 	repo: string;
 }
 
+export interface ConverseInput {
+	repo: string;
+	mode: Mode;
+	author: string;
+	text: string;
+}
+
 export type AttemptStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'failed' | 'cancelled';
 
 export interface AttemptSnapshot {
@@ -35,6 +47,12 @@ export interface AttemptSnapshot {
 
 interface Fork {
 	name: string;
+	remote: string;
+	branch: string;
+}
+
+interface Target {
+	repo: string;
 	remote: string;
 	branch: string;
 }
@@ -96,6 +114,19 @@ export class AttemptSandbox extends DurableObject<Env> {
 				toolchain TEXT,
 				restored INTEGER
 			);
+			CREATE TABLE IF NOT EXISTS conversation (
+				seq INTEGER PRIMARY KEY AUTOINCREMENT,
+				turns TEXT NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS inbox (
+				seq INTEGER PRIMARY KEY AUTOINCREMENT,
+				author TEXT NOT NULL,
+				text TEXT NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS meta (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			);
 			CREATE TABLE IF NOT EXISTS steps (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
 				turns TEXT NOT NULL,
@@ -106,6 +137,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 				checkpoint TEXT
 			);
 		`);
+	}
+
+	async converse({ repo, mode, author, text }: ConverseInput) {
+		this.#setMeta('repo', repo);
+		this.#setMeta('mode', mode);
+		this.#sql.exec('INSERT INTO inbox (author, text) VALUES (?, ?)', author, text);
+		const attempt = this.#attempt();
+		if (!attempt || !isActive(attempt.status)) await this.ctx.storage.setAlarm(Date.now());
 	}
 
 	async start({ task, mode, repo }: AttemptInput) {
@@ -164,7 +203,63 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	override async alarm() {
 		const attempt = this.#attempt();
-		if (!attempt || !isActive(attempt.status)) return;
+		if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
+		else if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) await this.#converse();
+	}
+
+	async #converse() {
+		const repo = this.#meta('repo')!;
+		const mode = this.#meta('mode') as Mode;
+		const thread = this.ctx.id.name!;
+		try {
+			using base = await this.env.ARTIFACTS.get(repo);
+			const info = await base.info();
+			const { plaintext: token } = await base.createToken('read', 60 * 60);
+			const fetch = await this.#sandbox(
+				{ repo, remote: info.remote, branch: info.defaultBranch },
+				token
+			);
+			const { model, effort } = modes[mode];
+			const coordinator = this.env.REPOS.getByName(repo);
+			const tools = combineTools(
+				sandboxTools(fetch, readOnlyTools),
+				intentTools((intent) => coordinator.intentProposed(thread, intent))
+			);
+
+			for (let messages = this.#takeInbox(); messages.length; messages = this.#takeInbox()) {
+				this.#saveConversation(
+					messages.map(({ author, text }) => ({ role: 'user', text: `${author}: ${text}` }))
+				);
+				const history = this.#sql
+					.exec<{ turns: string }>('SELECT turns FROM conversation ORDER BY seq')
+					.toArray()
+					.flatMap((row) => JSON.parse(row.turns) as Turn[]);
+				const run = runAgent({
+					model: openaiModel({
+						gateway: { run: (request) => this.env.MODELS.run(request) },
+						model,
+						effort,
+						sessionId: `${this.ctx.id.toString()}/conversation`,
+						metadata: { thread, mode, task: 'conversation' }
+					}),
+					tools,
+					instructions: threadInstructions,
+					history
+				});
+				for await (const event of run) {
+					if (event.type !== 'step') continue;
+					this.#saveConversation(event.turns);
+					await this.#report(repo, { type: 'reply', step: event });
+				}
+			}
+		} catch (error) {
+			this.#sql.exec('DELETE FROM inbox');
+			const reason = error instanceof Error ? error.message : String(error);
+			await this.#report(repo, { type: 'conversation-failed', error: reason });
+		}
+	}
+
+	async #runAttempt(attempt: AttemptRow) {
 		this.#setStatus('running');
 
 		const controller = (this.#controller = new AbortController());
@@ -172,7 +267,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
-			const fetch = await this.#sandbox(attempt, fork, token);
+			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
 			const run = runAttempt({
@@ -203,7 +298,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			while (!next.done) {
 				if (next.value.type === 'step') {
 					this.#saveStep(next.value);
-					await this.#report(attempt, { type: 'step', step: next.value });
+					await this.#report(attempt.repo, { type: 'step', step: next.value });
 					if (Date.now() > deadline) {
 						await run.return('aborted');
 						await this.ctx.storage.setAlarm(Date.now());
@@ -224,15 +319,39 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #finish(attempt: AttemptRow, status: AttemptStatus, error: string | null = null) {
 		this.#setStatus(status, error);
-		await this.#report(attempt, { type: 'status', status, error });
+		await this.#report(attempt.repo, { type: 'status', status, error });
 	}
 
-	async #report(attempt: AttemptRow, update: AttemptUpdate) {
+	async #report(repo: string, update: AttemptUpdate) {
 		try {
-			await this.env.REPOS.getByName(attempt.repo).attemptUpdated(this.ctx.id.name!, update);
+			await this.env.REPOS.getByName(repo).attemptUpdated(this.ctx.id.name!, update);
 		} catch (error) {
 			console.warn('Could not report the attempt to its repository', error);
 		}
+	}
+
+	#meta(key: string) {
+		return this.#sql
+			.exec<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)
+			.toArray()[0]?.value;
+	}
+
+	#setMeta(key: string, value: string) {
+		this.#sql.exec(
+			'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+			key,
+			value
+		);
+	}
+
+	#takeInbox() {
+		return this.#sql
+			.exec<{ author: string; text: string }>('DELETE FROM inbox RETURNING author, text')
+			.toArray();
+	}
+
+	#saveConversation(turns: Turn[]) {
+		this.#sql.exec('INSERT INTO conversation (turns) VALUES (?)', JSON.stringify(turns));
 	}
 
 	#attempt() {
@@ -293,10 +412,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return plaintext;
 	}
 
-	async #allowGit(fork: Fork, token: string, push: boolean) {
-		const remote = new URL(fork.remote);
+	async #allowGit(target: { remote: string }, token: string, push: boolean) {
+		const remote = new URL(target.remote);
 		if (remote.protocol !== 'https:') return;
-		const proxy = this.ctx.exports.GitProxy({ props: { remote: fork.remote, token, push } });
+		const proxy = this.ctx.exports.GitProxy({ props: { remote: target.remote, token, push } });
 		await this.ctx.container!.interceptOutboundHttps(remote.hostname, proxy);
 	}
 
@@ -310,18 +429,22 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	// TODO: size the instance per mode
-	async #sandbox(attempt: AttemptRow, fork: Fork, token: string): Promise<Fetch> {
+	async #sandbox(target: Target, token: string): Promise<Fetch> {
 		const container = this.ctx.container!;
 		const fetch: Fetch = (url, init) => container.getTcpPort(sandboxPort).fetch(url, init);
 		const workspace = sandboxWorkspace(fetch);
-		await this.#allowGit(fork, token, false);
+		await this.#allowGit(target, token, false);
 		if (container.running) {
 			await waitUntilHealthy(fetch);
+			if (this.#meta('workspace') !== target.remote) {
+				await workspace.clone({ remote: target.remote, branch: target.branch });
+				this.#setMeta('workspace', target.remote);
+			}
 			return fetch;
 		}
 
 		const image = container.images.sandbox!;
-		const forRepo = eq(toolchainSnapshots.repo, attempt.repo);
+		const forRepo = eq(toolchainSnapshots.repo, target.repo);
 		const [cached] = await db.select().from(toolchainSnapshots).where(forRepo);
 		let restored = cached?.image === image ? cached : null;
 		try {
@@ -336,7 +459,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			await this.#start({ image }, fetch);
 		}
 
-		await workspace.clone({ remote: fork.remote, branch: fork.branch });
+		await workspace.clone({ remote: target.remote, branch: target.branch });
+		this.#setMeta('workspace', target.remote);
 		const tools = await workspace.toolchain();
 		this.#sql.exec(
 			'UPDATE attempt SET toolchain = ?, restored = ?',
@@ -354,7 +478,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				const row = { snapshotId: snapshot.id, key, image, createdAt: new Date() };
 				await db
 					.insert(toolchainSnapshots)
-					.values({ repo: attempt.repo, ...row })
+					.values({ repo: target.repo, ...row })
 					.onConflictDoUpdate({ target: toolchainSnapshots.repo, set: row });
 			} catch (error) {
 				console.warn('Could not snapshot the toolchain', error);

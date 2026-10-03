@@ -1,4 +1,4 @@
-import type { ModelClient, ToolSpec, Usage } from './types.ts';
+import type { ToolExecutor, ToolSpec } from './types.ts';
 
 export interface Intent {
 	headline: string;
@@ -11,52 +11,57 @@ export interface ConversationMessage {
 	text: string;
 }
 
-const instructions = `You turn a conversation about a change to a code repository into an intent for ReGit's coding agent.
-- headline: a conventional commit summary such as "fix(settings): load members lazily", at most 72 characters.
-- purpose: one or two plain sentences on why the change matters.
-- doneWhen: one to five concrete, checkable conditions that mean the work is finished.
-Later messages refine earlier ones. Call propose_intent exactly once.`;
-
-const proposeIntent: ToolSpec = {
-	name: 'propose_intent',
-	description: 'Propose the intent for this thread',
-	parameters: {
-		type: 'object',
-		properties: {
-			headline: { type: 'string' },
-			purpose: { type: 'string' },
-			doneWhen: { type: 'array', items: { type: 'string' } }
+const parameters = {
+	type: 'object',
+	properties: {
+		headline: {
+			type: 'string',
+			description:
+				'A conventional commit summary such as "fix(settings): load members lazily", at most 72 characters'
 		},
-		required: ['headline', 'purpose', 'doneWhen']
-	}
+		purpose: {
+			type: 'string',
+			description: 'One or two plain sentences on why the change matters'
+		},
+		doneWhen: {
+			type: 'array',
+			items: { type: 'string' },
+			description: 'One to five concrete, checkable conditions that mean the work is finished'
+		}
+	},
+	required: ['headline', 'purpose', 'doneWhen']
 };
 
-export async function draftIntent(
-	model: ModelClient,
-	conversation: ConversationMessage[],
-	signal?: AbortSignal
-) {
-	const transcript = conversation.map(({ author, text }) => `${author}: ${text}`).join('\n\n');
-	const stream = model.respond(
-		{ instructions, history: [{ role: 'user', text: transcript }], tools: [proposeIntent] },
-		signal
-	);
-	let intent: Intent | undefined;
-	let usage: Usage | undefined;
-	for await (const event of stream) {
-		if (event.type === 'call' && event.call.name === proposeIntent.name && !intent) {
-			const { headline, purpose, doneWhen } = JSON.parse(event.call.arguments) as Intent;
-			intent = {
+const specs: ToolSpec[] = [
+	{
+		name: 'propose_intent',
+		description:
+			'Propose the change this thread should make. The person reviews it and decides whether to start the work.',
+		parameters
+	},
+	{
+		name: 'update_intent',
+		description:
+			"Revise the thread's current intent after the person refines what they want. Replaces the whole intent.",
+		parameters
+	}
+];
+
+export function intentTools(onIntent: (intent: Intent) => void | Promise<void>): ToolExecutor {
+	return {
+		specs,
+		async execute(call) {
+			const { headline, purpose, doneWhen } = JSON.parse(call.arguments) as Intent;
+			await onIntent({
 				headline: headline.trim(),
 				purpose: purpose.trim(),
-				doneWhen: doneWhen.map((check) => check.trim())
-			};
-		} else if (event.type === 'done') {
-			usage = event.usage;
+				doneWhen: doneWhen.map((check) => check.trim()).filter(Boolean)
+			});
+			return call.name === 'propose_intent'
+				? 'Proposed. The person can now start the work or ask for changes.'
+				: 'Updated the intent.';
 		}
-	}
-	if (!intent) throw new Error('The model did not propose an intent');
-	return { intent, usage };
+	};
 }
 
 export function describeTask(intent: Intent, conversation: ConversationMessage[]) {

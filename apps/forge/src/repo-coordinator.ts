@@ -2,10 +2,9 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
 	describeTask,
-	draftIntent,
 	models,
 	modes,
-	openaiModel,
+	type Intent,
 	type Step,
 	type Usage
 } from '@regit/agent';
@@ -26,7 +25,9 @@ import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string } }
-	| { type: 'status'; status: AttemptStatus; error: string | null };
+	| { type: 'status'; status: AttemptStatus; error: string | null }
+	| { type: 'reply'; step: Step }
+	| { type: 'conversation-failed'; error: string };
 
 type ThreadRow = {
 	id: string;
@@ -72,6 +73,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				at INTEGER NOT NULL
 			);
 			CREATE INDEX IF NOT EXISTS usage_by_thread ON usage (thread, seq);
+			CREATE TABLE IF NOT EXISTS meta (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			);
 		`);
 		const columns = new Set(
 			this.#sql
@@ -89,30 +94,38 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	async openThread({
+		repo,
 		author,
 		text,
 		mode
 	}: {
+		repo: string;
 		author: Author;
 		text: string;
 		mode: Mode;
 	}): Promise<ThreadSummary> {
+		this.#sql.exec(
+			'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT DO NOTHING',
+			'repo',
+			repo
+		);
 		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 		this.#sql.exec(
-			`INSERT INTO threads (id, headline, status, mode, updated_at) VALUES (?, '', 'draft', ?, ?)`,
+			`INSERT INTO threads (id, headline, status, mode, updated_at) VALUES (?, ?, 'draft', ?, ?)`,
 			id,
+			headlineFrom(text),
 			mode,
 			Date.now()
 		);
 		this.#add(id, { type: 'message', author, text });
-		this.ctx.waitUntil(this.#redraft(id));
+		await this.#converse(id, mode, author, text);
 		return this.#summary(id)!;
 	}
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
 		this.#add(thread, { type: 'message', author, text });
-		if (summary.status === 'draft') this.ctx.waitUntil(this.#redraft(thread));
+		if (summary.status === 'draft') await this.#converse(thread, summary.mode, author, text);
 	}
 
 	async start(thread: string) {
@@ -125,7 +138,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.env.ATTEMPTS.getByName(thread).start({
 			task,
 			mode: summary.mode,
-			repo: this.ctx.id.name!
+			repo: this.#repo()
 		});
 		this.#add(thread, { type: 'event', text: 'Started the attempt' });
 		this.#setStatus(thread, 'running');
@@ -211,12 +224,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		};
 	}
 
+	intentProposed(thread: string, intent: Intent) {
+		const summary = this.#summary(thread);
+		if (!summary || summary.deleted || summary.status !== 'draft') return;
+		this.#add(thread, { type: 'intent', intent });
+		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
+		this.#touch(thread);
+	}
+
 	attemptUpdated(thread: string, update: AttemptUpdate) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
-		if (update.type === 'step') {
+		if (update.type === 'conversation-failed') {
+			this.#add(thread, { type: 'event', text: `Couldn't reply: ${update.error}` });
+			return;
+		}
+		if (update.type === 'step' || update.type === 'reply') {
+			const task = update.type === 'reply' ? 'conversation' : 'attempt';
 			if (update.step.usage) {
-				this.#recordUsage(thread, 'attempt', modes[summary.mode].model, update.step.usage);
+				this.#recordUsage(thread, task, modes[summary.mode].model, update.step.usage);
 				this.#touch(thread);
 			}
 			for (const turn of update.step.turns) {
@@ -224,7 +250,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 					this.#add(thread, { type: 'message', author: agent, text: turn.text.trim() });
 				}
 			}
-			if (update.step.checkpoint) {
+			if (update.type === 'step' && update.step.checkpoint) {
 				this.#add(thread, {
 					type: 'event',
 					text: `Checkpoint ${update.step.checkpoint.slice(0, 7)}`
@@ -253,37 +279,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
-	async #redraft(thread: string) {
-		const { model, effort } = modes.small;
-		const conversation = this.#conversation(thread);
-		const current = () =>
-			this.#summary(thread)?.status === 'draft' &&
-			this.#conversation(thread).length === conversation.length;
-		let intent;
-		try {
-			const draft = await draftIntent(
-				openaiModel({
-					gateway: { run: (request) => this.env.MODELS.run(request) },
-					model,
-					effort,
-					sessionId: `${this.ctx.id.name}/${thread}/intent`,
-					metadata: { thread, task: 'intent' }
-				}),
-				conversation
-			);
-			intent = draft.intent;
-			if (draft.usage) this.#recordUsage(thread, 'intent', model, draft.usage);
-		} catch (error) {
-			if (current()) {
-				const reason = error instanceof Error ? error.message : String(error);
-				this.#add(thread, { type: 'event', text: `Couldn't draft an intent: ${reason}` });
-			}
-			return;
-		}
-		if (!current()) return;
-		this.#add(thread, { type: 'intent', intent });
-		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
-		this.#touch(thread);
+	async #converse(thread: string, mode: Mode, author: Author, text: string) {
+		await this.env.ATTEMPTS.getByName(thread).converse({
+			repo: this.#repo(),
+			mode,
+			author: author.name,
+			text
+		});
 	}
 
 	#add(thread: string, entry: DistributiveOmit<Entry, 'id' | 'at'>) {
@@ -384,6 +386,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return summary;
 	}
 
+	#repo() {
+		const [row] = this.#sql
+			.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'repo'")
+			.toArray();
+		const repo = row?.value ?? this.ctx.id.name;
+		if (!repo) throw new Error("This coordinator doesn't know its repository yet");
+		return repo;
+	}
+
 	#active(id: string) {
 		const summary = this.#require(id);
 		if (summary.deleted) throw new Error(`Thread ${id} was deleted`);
@@ -414,6 +425,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 }
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+function headlineFrom(text: string) {
+	const line = text.trim().split('\n')[0]!.trim();
+	return line.length > 72 ? `${line.slice(0, 71)}…` : line;
+}
 
 function toSummary(row: ThreadRow): ThreadSummary {
 	return {

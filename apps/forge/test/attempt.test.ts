@@ -212,7 +212,8 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	expect(refreshed!.id).not.toBe(first!.id);
 });
 
-test('records a failed intent draft in the thread', async () => {
+test('records a failed reply in the thread', async () => {
+	await seed('drafts', { 'README.md': '# Drafts\n' });
 	await script([
 		[
 			{
@@ -224,6 +225,7 @@ test('records a failed intent draft in the thread', async () => {
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('drafts');
 	const opened = await repo.openThread({
+		repo: 'drafts',
 		author: { name: 'Sam', kind: 'person' },
 		text: 'Tidy things up.',
 		mode: 'small'
@@ -234,10 +236,7 @@ test('records a failed intent draft in the thread', async () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		entries = (await repo.thread(opened.id))!.entries;
 	}
-	expect(entries.at(-1)).toMatchObject({
-		type: 'event',
-		text: "Couldn't draft an intent: No credits"
-	});
+	expect(entries.at(-1)).toMatchObject({ type: 'event', text: "Couldn't reply: No credits" });
 });
 
 test('discards, reopens, deletes, restores and purges a thread', async () => {
@@ -246,7 +245,12 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('lifecycle');
 	const sam = { name: 'Sam', kind: 'person' as const };
-	const { id } = await repo.openThread({ author: sam, text: 'Try something.', mode: 'small' });
+	const { id } = await repo.openThread({
+		repo: 'lifecycle',
+		author: sam,
+		text: 'Try something.',
+		mode: 'small'
+	});
 
 	await repo.discard(id, sam);
 	expect((await repo.thread(id))!.summary.status).toBe('discarded');
@@ -273,7 +277,12 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	await repo.delete(id, sam);
 	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'lifecycle' });
 	await sql.exec('UPDATE threads SET deleted_at = deleted_at - ? WHERE id = ?', 8 * 86_400_000, id);
-	const later = await repo.openThread({ author: sam, text: 'Another try.', mode: 'small' });
+	const later = await repo.openThread({
+		repo: 'lifecycle',
+		author: sam,
+		text: 'Another try.',
+		mode: 'small'
+	});
 	await repo.delete(later.id, sam);
 
 	for (let i = 0; i < 50 && (await repo.thread(id)); i++) {
@@ -285,13 +294,13 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 
 test('coordinates a thread from conversation to a finished attempt, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
-	const propose = (headline: string) => [
+	const propose = (name: string, headline: string) => [
 		{
 			type: 'response.output_item.done',
 			item: {
 				type: 'function_call',
-				call_id: 'propose',
-				name: 'propose_intent',
+				call_id: name,
+				name,
 				arguments: JSON.stringify({
 					headline,
 					purpose: 'Readers need a title.',
@@ -301,8 +310,10 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		}
 	];
 	await script([
-		propose('docs: tidy the notes'),
-		propose('docs(notes): add a title'),
+		propose('propose_intent', 'docs: tidy the notes'),
+		[{ type: 'response.output_text.delta', delta: 'Proposed a tidy-up.' }],
+		propose('update_intent', 'docs(notes): add a title'),
+		[{ type: 'response.output_text.delta', delta: 'Updated it.' }],
 		[
 			{ type: 'response.output_text.delta', delta: 'Adding the title' },
 			{
@@ -329,11 +340,12 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 
 	const sam = { name: 'Sam', kind: 'person' as const };
 	const opened = await repo.openThread({
+		repo: 'notes',
 		author: sam,
 		text: 'The notes need a title.',
 		mode: 'small'
 	});
-	expect(opened).toMatchObject({ status: 'draft', headline: '' });
+	expect(opened).toMatchObject({ status: 'draft', headline: 'The notes need a title.' });
 	const drafted = async (count: number) => {
 		for (let i = 0; i < 100; i++) {
 			const detail = await repo.thread(opened.id);
@@ -347,6 +359,11 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 
 	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
 	await drafted(2);
+	for (let i = 0; i < 100; i++) {
+		const last = (await repo.thread(opened.id))!.entries.at(-1);
+		if (last?.type === 'message' && last.text === 'Updated it.') break;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
 	await repo.start(opened.id);
 
 	let detail = await repo.thread(opened.id);
@@ -371,8 +388,10 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	).toEqual([
 		'Sam: The notes need a title.',
 		'intent docs: tidy the notes',
+		'ReGit: Proposed a tidy-up.',
 		'Sam: Call it Notes.',
 		'intent docs(notes): add a title',
+		'ReGit: Updated it.',
 		'Started the attempt',
 		'ReGit: Adding the title',
 		'Checkpoint sha',
@@ -380,10 +399,30 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'The attempt finished'
 	]);
 	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
+	const requests = await modelRequests();
+	expect(
+		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)
+	).toEqual(['conversation', 'conversation', 'conversation', 'conversation', 'code', 'code']);
+	const tools = (request: (typeof requests)[number]) =>
+		(request.query as { tools: { name: string }[] }).tools.map((tool) => tool.name);
+	expect(tools(requests[0]!)).toEqual([
+		'read_file',
+		'find_files',
+		'search',
+		'run',
+		'propose_intent',
+		'update_intent'
+	]);
+	expect(tools(requests[4]!)).toContain('write_file');
 	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
 	expect(detail!.usage).toEqual({
 		rows: [
-			{ task: 'intent', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) },
+			{
+				task: 'conversation',
+				model: 'gpt-6-luna',
+				tokens: 240,
+				cost: expect.closeTo(4 * call, 10)
+			},
 			{ task: 'attempt', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) }
 		],
 		context: { used: 60, limit: 1_050_000 }
@@ -392,9 +431,4 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
 		'# Notes\n\nSome notes'
 	);
-
-	const requests = await modelRequests();
-	expect(
-		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)
-	).toEqual(['intent', 'intent', 'code', 'code']);
 });

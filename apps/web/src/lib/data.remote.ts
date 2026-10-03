@@ -49,7 +49,9 @@ export const createRepo = command(
 export const openThread = command(
 	v.object({ repo: name, text, mode: v.picklist(['small', 'medium', 'large']) }),
 	async ({ repo, text, mode }) => {
-		const summary = await (await coordinator(repo)).openThread({ author: author(), text, mode });
+		const summary = await (
+			await coordinator(repo)
+		).openThread({ repo, author: author(), text, mode });
 		getThreads(repo).refresh();
 		return summary;
 	}

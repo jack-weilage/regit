@@ -7,6 +7,7 @@ import type {
 	Fetch,
 	PushRequest,
 	ToolchainResponse,
+	ToolName,
 	ToolResponse
 } from './protocol.ts';
 import { toolSpecs } from './specs.ts';
@@ -25,9 +26,11 @@ async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortS
 	return result as T;
 }
 
-export function sandboxTools(fetch: Fetch): ToolExecutor {
+export const readOnlyTools: ToolName[] = ['read_file', 'find_files', 'search', 'run'];
+
+export function sandboxTools(fetch: Fetch, only?: ToolName[]): ToolExecutor {
 	return {
-		specs: toolSpecs,
+		specs: only ? toolSpecs.filter((spec) => only.includes(spec.name)) : toolSpecs,
 		async execute(call, signal) {
 			const { output } = await post<ToolResponse>(
 				fetch,

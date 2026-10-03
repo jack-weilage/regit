@@ -17,7 +17,7 @@
 	let threads = $derived<ThreadListItem[]>(
 		(await getThreads(repo)).map((thread) => ({
 			id: thread.id,
-			headline: thread.headline || 'Drafting an intent…',
+			headline: thread.headline || 'New thread',
 			status: thread.status,
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.id}`

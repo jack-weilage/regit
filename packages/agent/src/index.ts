@@ -1,6 +1,7 @@
 export { runAttempt, type AttemptEvent, type AttemptOptions, type Checkpoints } from './attempt.ts';
-export { codingInstructions } from './instructions.ts';
-export { describeTask, draftIntent, type ConversationMessage, type Intent } from './intent.ts';
+export { codingInstructions, threadInstructions } from './instructions.ts';
+export { describeTask, intentTools, type ConversationMessage, type Intent } from './intent.ts';
+export { combineTools } from './tools.ts';
 export { runAgent, type AgentOptions, type AgentOutcome } from './loop.ts';
 export { modes, type Mode } from './modes.ts';
 export { cost, models, type ModelInfo } from './pricing.ts';

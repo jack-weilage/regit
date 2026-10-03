@@ -30,7 +30,7 @@ export interface ThreadSummary {
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface UsageRow {
-	task: 'intent' | 'attempt';
+	task: 'intent' | 'conversation' | 'attempt';
 	model: string;
 	tokens: number;
 	cost: number | null;
@@ -51,7 +51,12 @@ export type LiveMessage =
 	{ type: 'entry'; thread: string; entry: Entry } | { type: 'thread'; summary: ThreadSummary };
 
 export interface RepoCoordinatorApi {
-	openThread(input: { author: Author; text: string; mode: Mode }): Promise<ThreadSummary>;
+	openThread(input: {
+		repo: string;
+		author: Author;
+		text: string;
+		mode: Mode;
+	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
 	start(thread: string): Promise<void>;
 	discard(thread: string, by: Author): Promise<void>;

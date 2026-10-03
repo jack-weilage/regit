@@ -1,57 +1,59 @@
 import { expect, test } from 'vitest';
-import { describeTask, draftIntent } from './intent.ts';
-import { scriptedModel } from './testing.ts';
+import { describeTask, intentTools, type Intent } from './intent.ts';
+import { fakeTools } from './testing.ts';
+import { combineTools } from './tools.ts';
 
-const usage = { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 5 };
 const proposal = {
 	headline: ' fix(settings): load members lazily ',
-	purpose: 'Settings load slowly.',
-	doneWhen: ['Settings render in under a second ']
+	purpose: 'Settings load slowly. ',
+	doneWhen: ['Settings render in under a second ', ' ']
 };
 
-test('drafts an intent from the conversation', async () => {
-	const { model, requests } = scriptedModel([
-		[
-			{
-				type: 'call',
-				call: { id: 'c1', name: 'propose_intent', arguments: JSON.stringify(proposal) }
-			},
-			{ type: 'done', usage }
-		]
-	]);
-	const { intent, usage: reported } = await draftIntent(model, [
-		{ author: 'Sam', text: 'Settings take forever.' },
-		{ author: 'Lin', text: 'Only for big orgs.' }
-	]);
+test('proposes and updates intents, trimming what the model wrote', async () => {
+	const intents: Intent[] = [];
+	const tools = intentTools((intent) => void intents.push(intent));
+	const args = JSON.stringify(proposal);
 
-	expect(intent).toEqual({
-		headline: 'fix(settings): load members lazily',
-		purpose: 'Settings load slowly.',
-		doneWhen: ['Settings render in under a second']
-	});
-	expect(reported).toEqual(usage);
-	expect(requests[0]!.history).toEqual([
-		{ role: 'user', text: 'Sam: Settings take forever.\n\nLin: Only for big orgs.' }
+	expect(await tools.execute({ id: 'c1', name: 'propose_intent', arguments: args })).toMatch(
+		'Proposed'
+	);
+	expect(await tools.execute({ id: 'c2', name: 'update_intent', arguments: args })).toBe(
+		'Updated the intent.'
+	);
+	expect(intents).toEqual([
+		{
+			headline: 'fix(settings): load members lazily',
+			purpose: 'Settings load slowly.',
+			doneWhen: ['Settings render in under a second']
+		},
+		expect.anything()
 	]);
-	expect(requests[0]!.tools.map((tool) => tool.name)).toEqual(['propose_intent']);
+	expect(tools.specs.map((spec) => spec.name)).toEqual(['propose_intent', 'update_intent']);
 });
 
-test('fails when the model does not propose an intent', async () => {
-	const { model } = scriptedModel([
-		[
-			{ type: 'text', delta: 'Sure!' },
-			{ type: 'done', usage }
-		]
+test('combines tool sets, routing each call to its owner', async () => {
+	const { tools: sandbox } = fakeTools({ read_file: () => 'contents' });
+	const tools = combineTools(
+		sandbox,
+		intentTools(() => {})
+	);
+
+	expect(tools.specs.map((spec) => spec.name)).toEqual([
+		'read_file',
+		'propose_intent',
+		'update_intent'
 	]);
-	await expect(draftIntent(model, [{ author: 'Sam', text: 'Hi' }])).rejects.toThrow(
-		'did not propose an intent'
+	expect(await tools.execute({ id: 'c1', name: 'read_file', arguments: '{}' })).toBe('contents');
+	expect(() => tools.execute({ id: 'c2', name: 'write_file', arguments: '{}' })).toThrow(
+		'Unknown tool write_file'
 	);
 });
 
 test('describes the task for the coding agent', () => {
-	expect(
-		describeTask({ headline: 'fix: x', purpose: 'Why.', doneWhen: ['A', 'B'] }, [
-			{ author: 'Sam', text: 'Do x' }
-		])
-	).toBe('fix: x\n\nWhy.\n\nDone when:\n- A\n- B\n\nConversation:\nSam: Do x');
+	const task = describeTask({ headline: 'fix: x', purpose: 'Because.', doneWhen: ['It works'] }, [
+		{ author: 'Sam', text: 'Please fix x' }
+	]);
+	expect(task).toBe(
+		'fix: x\n\nBecause.\n\nDone when:\n- It works\n\nConversation:\nSam: Please fix x'
+	);
 });
