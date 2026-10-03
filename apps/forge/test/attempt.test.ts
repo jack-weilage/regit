@@ -1,119 +1,9 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTestHarness } from 'wrangler';
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
-import type { GatewayRequest } from '@regit/agent';
-import type { AttemptInput } from '../src/attempt-sandbox.ts';
-import type FakeModels from './fake-models.ts';
-import { startGitServer } from './git-process.ts';
+import { expect, test } from 'vitest';
+import { setup } from './support.ts';
 
-const dir = await mkdtemp(join(tmpdir(), 'regit-forge-'));
-const git = await startGitServer(dir);
-
-const server = createTestHarness({
-	workers: [
-		{
-			configPath: './wrangler.jsonc',
-			bindingOverrides: { MODELS: 'fake-models', ARTIFACTS: 'fake-artifacts' }
-		},
-		{
-			config: {
-				name: 'fake-models',
-				main: './test/fake-models.ts',
-				compatibility_date: '2026-10-01'
-			}
-		},
-		{
-			config: {
-				name: 'fake-artifacts',
-				main: './test/fake-artifacts.ts',
-				compatibility_date: '2026-10-01',
-				vars: { GIT_REMOTE: `http://host.docker.internal:${git.port}` }
-			}
-		}
-	]
-});
-const worker = server.getWorker<Env>();
-const models = server.getWorker<unknown, { default: typeof FakeModels }>('fake-models');
-
-async function script(replies: object[][]) {
-	await (await models.getExport()).script(replies);
-}
-
-async function modelRequests() {
-	return JSON.parse(await (await models.getExport()).requests()) as GatewayRequest[];
-}
-
-function sh(cwd: string, ...args: string[]) {
-	return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-}
-
-async function seed(name: string, files: Record<string, string>) {
-	const work = join(dir, `${name}-work`);
-	sh(dir, 'init', '--quiet', '--initial-branch', 'main', work);
-	await commit(work, files, 'init');
-	sh(dir, 'clone', '--quiet', '--bare', work, `${name}.git`);
-	return work;
-}
-
-async function commit(work: string, files: Record<string, string>, message: string) {
-	for (const [path, content] of Object.entries(files)) await writeFile(join(work, path), content);
-	sh(work, 'add', '.');
-	sh(
-		work,
-		'-c',
-		'user.name=Sam',
-		'-c',
-		'user.email=sam@example.com',
-		'commit',
-		'--quiet',
-		'-m',
-		message
-	);
-}
-
-function start(thread: string, input: AttemptInput) {
-	return worker.getEnv().then((env) => env.ATTEMPTS.getByName(thread).start(input));
-}
-
-function submitReview(verdict: string, states: string[]) {
-	return [
-		{
-			type: 'response.output_item.done',
-			item: {
-				type: 'function_call',
-				call_id: 'review',
-				name: 'submit_review',
-				arguments: JSON.stringify({
-					checks: states.map((state) => ({ state, evidence: 'Checked notes.md' })),
-					findings: verdict === 'fail' ? ['The title is missing.'] : [],
-					verdict
-				})
-			}
-		}
-	];
-}
-
-async function settled(thread: string) {
-	const env = await worker.getEnv();
-	for (let i = 0; i < 600; i++) {
-		const snapshot = await env.ATTEMPTS.getByName(thread).snapshot();
-		if (snapshot && !['queued', 'running'].includes(snapshot.status)) return snapshot;
-		await new Promise((resolve) => setTimeout(resolve, 200));
-	}
-	throw new Error('The attempt did not settle');
-}
-
-beforeAll(() => server.listen());
-beforeEach(() => worker.applyD1Migrations('DB'));
-afterEach(() => server.reset());
-afterAll(async () => {
-	await server.close();
-	git.close();
-	await rm(dir, { recursive: true, force: true });
-});
+const { dir, git, worker, script, modelRequests, sh, seed, commit, start, submitReview, settled } =
+	await setup();
 
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
 	await seed('greeting', { 'greeting.ts': "export const greeting = 'hello';\n" });
@@ -184,50 +74,6 @@ test('fails the attempt when the model fails', async () => {
 		error: 'No credits',
 		steps: []
 	});
-});
-
-test('snapshots the toolchain, restores it, and refreshes it when the tools change', async () => {
-	const work = await seed('toolchain', { 'README.md': '# Toolchain\n' });
-	await script([
-		[{ type: 'response.output_text.delta', delta: 'Nothing to do.' }],
-		[{ type: 'response.output_text.delta', delta: 'Still nothing.' }],
-		[{ type: 'response.output_text.delta', delta: 'All set.' }]
-	]);
-	const env = await worker.getEnv();
-	const recorded = () =>
-		env.DB.prepare('SELECT snapshot_id AS id, key FROM toolchain_snapshots WHERE repo = ?')
-			.bind('toolchain')
-			.first<{ id: string; key: string }>();
-
-	await start('thread-3', { task: 'Look around', mode: 'small', repo: 'toolchain' });
-	expect(await settled('thread-3')).toMatchObject({
-		status: 'finished',
-		toolchain: { tools: { jq: [expect.any(String)] }, restored: false }
-	});
-	const first = await recorded();
-	expect(first).toMatchObject({ id: expect.any(String), key: expect.any(String) });
-
-	await start('thread-4', { task: 'Look again', mode: 'small', repo: 'toolchain' });
-	expect(await settled('thread-4')).toMatchObject({
-		status: 'finished',
-		toolchain: { restored: true }
-	});
-	expect(await recorded()).toEqual(first);
-
-	const pinned = 'path:/opt/mise/installs/jq/1.8.2';
-	await commit(work, { '.tool-versions': `jq ${pinned}\n` }, 'Pin jq');
-	sh(work, 'push', '--quiet', join(dir, 'toolchain.git'), 'main');
-
-	await start('thread-5', { task: 'Look once more', mode: 'small', repo: 'toolchain' });
-	const third = await settled('thread-5');
-	expect(third.error).toBeNull();
-	expect(third).toMatchObject({
-		status: 'finished',
-		toolchain: { tools: { jq: [pinned] }, restored: true }
-	});
-	const refreshed = await recorded();
-	expect(refreshed!.key).not.toBe(first!.key);
-	expect(refreshed!.id).not.toBe(first!.id);
 });
 
 test('records a failed reply in the thread', async () => {
@@ -681,4 +527,81 @@ test('stops a conversation turn mid tool call', async () => {
 	expect(
 		entries.some((entry) => entry.type === 'event' && entry.text.startsWith("Couldn't reply"))
 	).toBe(false);
+});
+
+test('resumes a finished attempt when someone replies, updating the intent', async () => {
+	await seed('resume', { 'notes.md': 'Some notes\n' });
+	const intent = {
+		headline: 'docs: add a title and footer',
+		purpose: 'Readers need a title and a footer.',
+		doneWhen: ['notes.md starts with a title', 'notes.md ends with a footer']
+	};
+	await script([
+		[{ type: 'response.output_text.delta', delta: 'Sure.' }],
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met']),
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'update',
+					name: 'update_intent',
+					arguments: JSON.stringify(intent)
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Added the footer too.' }],
+		submitReview('pass', ['met', 'met'])
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('resume');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'resume',
+		author: sam,
+		text: 'Add a title.',
+		mode: 'small'
+	});
+	const waitFor = async (
+		check: (detail: NonNullable<Awaited<ReturnType<typeof repo.thread>>>) => boolean
+	) => {
+		for (let i = 0; i < 600; i++) {
+			const detail = (await repo.thread(id))!;
+			if (check(detail)) return detail;
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		}
+		throw new Error('The thread never got there');
+	};
+	await waitFor((detail) => detail.entries.at(-1)?.type === 'message');
+	await repo.intentProposed(id, {
+		headline: 'docs: add a title',
+		purpose: 'Readers need a title.',
+		doneWhen: ['notes.md starts with a title']
+	});
+	await repo.start(id);
+	await waitFor((detail) => detail.summary.status === 'needs-you');
+
+	await repo.reply(id, { author: sam, text: 'Also add a footer.' });
+	const detail = await waitFor(
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.filter((entry) => entry.type === 'review').length === 2
+	);
+
+	expect(detail.summary.headline).toBe('docs: add a title and footer');
+	expect(detail.entries.flatMap((entry) => (entry.type === 'review' ? [entry] : []))).toMatchObject(
+		[
+			{ round: 1, verdict: 'pass', checks: ['met'] },
+			{ round: 1, verdict: 'pass', checks: ['met', 'met'] }
+		]
+	);
+	const coding = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
+	);
+	expect(JSON.stringify(coding[1]!.query)).toContain('Added the title.');
+	expect(JSON.stringify(coding[1]!.query)).toContain('Sam: Also add a footer.');
+	expect(
+		(coding[1]!.query as { tools: { name: string }[] }).tools.map((tool) => tool.name)
+	).toContain('update_intent');
 });

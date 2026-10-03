@@ -178,7 +178,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#setMeta('mode', mode);
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
-		if (!attempt || !isActive(attempt.status)) await this.ctx.storage.setAlarm(Date.now());
+		if (attempt && !isActive(attempt.status) && attempt.status !== 'cancelled') {
+			this.#setMeta('cycle', String(this.#reviewCount()));
+			this.#setStatus('queued');
+		}
+		const current = this.#attempt();
+		if (!current || current.status === 'queued' || !isActive(current.status)) {
+			await this.ctx.storage.setAlarm(Date.now());
+		}
 	}
 
 	async start({ task, mode, repo, intent }: AttemptInput) {
@@ -339,7 +346,20 @@ export class AttemptSandbox extends DurableObject<Env> {
 						task: 'code'
 					}
 				}),
-				tools: sandboxTools(fetch),
+				tools: combineTools(
+					sandboxTools(fetch),
+					intentTools(
+						async (intent) => {
+							attempt.intent = JSON.stringify(intent);
+							this.#sql.exec('UPDATE attempt SET intent = ?', attempt.intent);
+							await this.env.REPOS.getByName(attempt.repo).intentProposed(
+								this.ctx.id.name!,
+								intent
+							);
+						},
+						['update_intent']
+					)
+				),
 				checkpoints: {
 					commit: (request) => workspace.commit(request),
 					push: (request) => this.#push(fork, token, () => workspace.push(request))
@@ -383,7 +403,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.#report(attempt.repo, { type: 'status', status: 'reviewing', error: null });
 
 		const intent = JSON.parse(attempt.intent!) as Intent;
-		const round = this.#sql.exec('SELECT round FROM reviews').toArray().length + 1;
+		const total = this.#reviewCount() + 1;
+		const round = total - Number(this.#meta('cycle') ?? 0);
 		const { model, effort } = reviewers[attempt.mode];
 		const thread = this.ctx.id.name ?? this.ctx.id.toString();
 		const { review, usage } = await reviewIntent({
@@ -402,7 +423,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		});
 		this.#sql.exec(
 			'INSERT INTO reviews (round, verdict, checks, findings) VALUES (?, ?, ?, ?)',
-			round,
+			total,
 			review.verdict,
 			JSON.stringify(review.checks),
 			JSON.stringify(review.findings)
@@ -459,6 +480,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		} catch (error) {
 			console.warn('Could not report the attempt to its repository', error);
 		}
+	}
+
+	#reviewCount() {
+		return this.#sql.exec('SELECT round FROM reviews').toArray().length;
 	}
 
 	#meta(key: string) {
@@ -568,6 +593,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	// TODO: size the instance per mode
 	async #sandbox(target: Target, token: string): Promise<Fetch> {
+		if (this.env.SANDBOX_URL) return this.#localSandbox(target);
 		const container = this.ctx.container!;
 		const fetch: Fetch = (url, init) => container.getTcpPort(sandboxPort).fetch(url, init);
 		const workspace = sandboxWorkspace(fetch);
@@ -621,6 +647,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 			} catch (error) {
 				console.warn('Could not snapshot the toolchain', error);
 			}
+		}
+		return fetch;
+	}
+
+	async #localSandbox(target: Target): Promise<Fetch> {
+		const base = `${this.env.SANDBOX_URL}/${this.ctx.id.name ?? this.ctx.id.toString()}`;
+		const fetch: Fetch = (url, init) =>
+			globalThis.fetch(`${base}${new URL(String(url)).pathname}`, init);
+		if (this.#meta('workspace') !== target.remote) {
+			await sandboxWorkspace(fetch).clone({ remote: target.remote, branch: target.branch });
+			this.#setMeta('workspace', target.remote);
 		}
 		return fetch;
 	}

@@ -78,7 +78,12 @@
 				};
 			}
 			if (status === 'running') {
-				if (!review) return { status: 'working', note: 'The agent is working' };
+				const resumed = detail!.entries
+					.slice(review ? detail!.entries.indexOf(review) : 0)
+					.some((entry) => entry.type === 'message' && entry.author.kind === 'person');
+				if (!review || review.verdict !== 'fail' || resumed) {
+					return { status: 'working', note: 'The agent is working' };
+				}
 				const gaps = review.checks.filter((check) => check !== 'met').length;
 				return {
 					status: 'working',

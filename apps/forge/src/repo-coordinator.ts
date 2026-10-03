@@ -142,9 +142,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text,
 			...(steering && { steering: { read: false } })
 		});
-		if (steering || summary.status === 'draft') {
+		if (steering || summary.status === 'draft' || summary.status === 'needs-you') {
 			await this.#converse(thread, summary.mode, author, text, entry);
 		}
+		if (summary.status === 'needs-you') this.#setStatus(thread, 'running');
 	}
 
 	async start(thread: string) {
@@ -268,7 +269,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	intentProposed(thread: string, intent: Intent) {
 		const summary = this.#summary(thread);
-		if (!summary || summary.deleted || summary.status !== 'draft') return;
+		if (!summary || summary.deleted || summary.status === 'discarded') return;
 		this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);

@@ -47,9 +47,12 @@ const specs: ToolSpec[] = [
 	}
 ];
 
-export function intentTools(onIntent: (intent: Intent) => void | Promise<void>): ToolExecutor {
+export function intentTools(
+	onIntent: (intent: Intent) => void | Promise<void>,
+	only?: ('propose_intent' | 'update_intent')[]
+): ToolExecutor {
 	return {
-		specs,
+		specs: only ? specs.filter((spec) => only.includes(spec.name as 'update_intent')) : specs,
 		async execute(call) {
 			const { headline, purpose, doneWhen } = JSON.parse(call.arguments) as Intent;
 			await onIntent({

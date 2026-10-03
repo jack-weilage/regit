@@ -29,6 +29,9 @@ test('proposes and updates intents, trimming what the model wrote', async () => 
 		expect.anything()
 	]);
 	expect(tools.specs.map((spec) => spec.name)).toEqual(['propose_intent', 'update_intent']);
+	expect(intentTools(() => {}, ['update_intent']).specs.map((spec) => spec.name)).toEqual([
+		'update_intent'
+	]);
 });
 
 test('combines tool sets, routing each call to its owner', async () => {

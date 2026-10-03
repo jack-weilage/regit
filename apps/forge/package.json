@@ -9,7 +9,8 @@
 		"check": "wrangler types && tsc && tsc -p test",
 		"gen": "wrangler types",
 		"prepare": "wrangler types || true",
-		"test": "vitest run"
+		"test": "vitest run --exclude test/containers.test.ts",
+		"test:containers": "vitest run test/containers.test.ts"
 	},
 	"dependencies": {
 		"@regit/agent": "workspace:*",
