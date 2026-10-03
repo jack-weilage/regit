@@ -168,7 +168,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		for (const [table, column] of [
 			['inbox', 'entry'],
 			['attempt', 'intent'],
-			['attempt', 'base']
+			['attempt', 'base'],
+			['reviews', 'head'],
+			['reviews', 'intent']
 		] as const) {
 			const columns = this.#sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
 			if (!columns.some(({ name }) => name === column)) {
@@ -183,7 +185,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
-		if (attempt && !isActive(attempt.status) && attempt.status !== 'cancelled') {
+		if (attempt && !isActive(attempt.status)) {
 			this.#setMeta('cycle', String(this.#reviewCount()));
 			this.#setStatus('queued');
 		}
@@ -406,6 +408,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #review(attempt: AttemptRow, fetch: Fetch) {
+		const head = await this.#head(fetch);
+		const [last] = this.#sql
+			.exec<{ head: string | null; intent: string | null }>(
+				'SELECT head, intent FROM reviews ORDER BY round DESC LIMIT 1'
+			)
+			.toArray();
+		if (last && head && last.head === head && last.intent === attempt.intent) {
+			return await this.#settle(attempt, null);
+		}
+
 		this.#setStatus('reviewing');
 		await this.#report(attempt.repo, { type: 'status', status: 'reviewing', error: null });
 
@@ -429,11 +441,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 			signal: this.#controller?.signal
 		});
 		this.#sql.exec(
-			'INSERT INTO reviews (round, verdict, checks, findings) VALUES (?, ?, ?, ?)',
+			'INSERT INTO reviews (round, verdict, checks, findings, head, intent) VALUES (?, ?, ?, ?, ?, ?)',
 			total,
 			review.verdict,
 			JSON.stringify(review.checks),
-			JSON.stringify(review.findings)
+			JSON.stringify(review.findings),
+			head,
+			attempt.intent
 		);
 		await this.#report(attempt.repo, {
 			type: 'review',
@@ -445,10 +459,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		});
 
 		const sendBack = review.verdict === 'fail' && round < maxReviewRounds;
+		await this.#settle(attempt, sendBack ? reviewFeedback(intent, review) : null);
+	}
+
+	async #settle(attempt: AttemptRow, feedback: string | null) {
 		const queued = this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0;
-		if (!sendBack && !queued) return await this.#finish(attempt, 'finished');
-		if (sendBack) {
-			this.#saveStep({ turns: [{ role: 'user', text: reviewFeedback(intent, review) }] });
+		if (!feedback && !queued) return await this.#finish(attempt, 'finished');
+		if (feedback) {
+			this.#saveStep({ turns: [{ role: 'user', text: feedback }] });
 		} else {
 			this.#setMeta('cycle', String(this.#reviewCount()));
 		}

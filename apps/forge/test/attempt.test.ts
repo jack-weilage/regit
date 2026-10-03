@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import type { ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
 const { dir, git, worker, script, modelRequests, sh, seed, commit, start, submitReview, settled } =
@@ -639,6 +640,17 @@ test('reads messages sent during a review and resumes the work after it', async 
 			}
 		],
 		submitReview('pass', ['met']),
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'shorten',
+					name: 'run',
+					arguments: JSON.stringify({ command: "printf '# Notes\\n' > notes.md" })
+				}
+			}
+		],
 		[{ type: 'response.output_text.delta', delta: 'Made it shorter.' }],
 		submitReview('pass', ['met'])
 	]);
@@ -687,6 +699,102 @@ test('reads messages sent during a review and resumes the work after it', async 
 	const coding = (await modelRequests()).filter(
 		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
 	);
-	expect(coding).toHaveLength(2);
+	expect(coding).toHaveLength(3);
 	expect(JSON.stringify(coding[1]!.query)).toContain('Sam: Keep it short.');
+});
+
+async function untilThread(
+	repo: ReturnType<Env['REPOS']['getByName']>,
+	id: string,
+	check: (detail: ThreadDetail) => boolean
+) {
+	for (let i = 0; i < 300; i++) {
+		const detail = (await repo.thread(id)) as ThreadDetail;
+		if (check(detail)) return detail;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	const detail = (await repo.thread(id)) as ThreadDetail;
+	throw new Error(
+		`The thread never got there: ${detail.summary.status} ${JSON.stringify(detail.entries.slice(-4))}`
+	);
+}
+
+async function startedThread(name: string, steps: object[][]) {
+	await seed(name, { 'notes.md': 'Some notes\n' });
+	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], ...steps]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName(name);
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: name,
+		author: sam,
+		text: 'Add a title.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await untilThread(repo, id, (detail) => detail.entries.at(-1)?.type === 'message');
+	await repo.intentProposed(id, {
+		headline: 'docs: add a title',
+		purpose: 'Readers need a title.',
+		doneWhen: ['notes.md starts with a title']
+	});
+	await repo.start(id);
+	return { env, repo, sam, id };
+}
+
+const reviews = (detail: ThreadDetail) => detail.entries.filter((entry) => entry.type === 'review');
+
+test('resumes a discarded attempt once the thread is reopened', async () => {
+	const { env, repo, sam, id } = await startedThread('reopened', [
+		sleepCall,
+		[{ type: 'response.output_text.delta', delta: 'Carried on.' }],
+		submitReview('pass', ['met'])
+	]);
+	await untilRequests('code', 1);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	await repo.discard(id, sam);
+	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('cancelled');
+
+	repo.reopen(id, sam);
+	await repo.reply(id, { author: sam, text: 'Carry on.' });
+	const detail = await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 1
+	);
+
+	expect(reviews(detail)).toMatchObject([{ verdict: 'pass' }]);
+	const requests = await modelRequests();
+	const tasks = requests.map(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task
+	);
+	expect(tasks).toEqual(['conversation', 'code', 'code', 'review']);
+	expect(JSON.stringify(requests[2]!.query)).toContain('Sam: Carry on.');
+});
+
+test('keeps the last verdict when a reply leads to no changes', async () => {
+	const { repo, sam, id } = await startedThread('unchanged', [
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met']),
+		[{ type: 'response.output_text.delta', delta: 'Because readers asked for one.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+
+	await repo.reply(id, { author: sam, text: 'Why a title?' });
+	const detail = await untilThread(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some(
+				(entry) => entry.type === 'message' && entry.text === 'Because readers asked for one.'
+			)
+	);
+
+	expect(reviews(detail)).toHaveLength(1);
+	expect(detail.entries.at(-1)).toMatchObject({ type: 'event', text: 'The attempt finished' });
+	const tasks = (await modelRequests()).map(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task
+	);
+	expect(tasks).toEqual(['conversation', 'code', 'review', 'code']);
 });
