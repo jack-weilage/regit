@@ -31,23 +31,13 @@ export interface ThreadDetail {
 	entries: Entry[];
 }
 
-export interface RepoInfo {
-	name: string;
-	remote: string;
-	defaultBranch: string;
-}
-
 export type LiveMessage =
 	{ type: 'entry'; thread: string; entry: Entry } | { type: 'thread'; summary: ThreadSummary };
 
-export interface ForgeApi {
-	createRepo(input: { name: string; source?: string; createdBy: string }): Promise<RepoInfo>;
-	openThread(
-		repo: string,
-		input: { author: Author; text: string; mode: Mode }
-	): Promise<ThreadSummary>;
-	reply(repo: string, thread: string, input: { author: Author; text: string }): Promise<void>;
-	startThread(repo: string, thread: string): Promise<void>;
-	threads(repo: string): Promise<ThreadSummary[]>;
-	thread(repo: string, id: string): Promise<ThreadDetail | null>;
+export interface RepoCoordinatorApi {
+	openThread(input: { author: Author; text: string; mode: Mode }): Promise<ThreadSummary>;
+	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
+	start(thread: string): Promise<void>;
+	threads(): ThreadSummary[];
+	thread(id: string): ThreadDetail | null;
 }

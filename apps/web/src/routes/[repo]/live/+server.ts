@@ -1,12 +1,13 @@
 import { error } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
+import { repoExists } from '#lib/server/repos.ts';
 import type { RequestHandler } from './$types';
 
 const heartbeat = 25_000;
 
 export const GET: RequestHandler = async ({ params, request }) => {
-	if (!/^[A-Za-z0-9._-]+$/.test(params.repo)) error(404);
-	const response = await env.FORGE.fetch(`https://forge/repos/${params.repo}/live`, {
+	if (!(await repoExists(params.repo))) error(404);
+	const response = await env.REPOS.getByName(params.repo).fetch('https://repo/live', {
 		headers: { Upgrade: 'websocket' }
 	});
 	const socket = response.webSocket;

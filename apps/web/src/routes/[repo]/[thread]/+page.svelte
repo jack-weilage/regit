@@ -12,7 +12,7 @@
 		ThreadView
 	} from '@regit/ui';
 	import type { Author, Entry } from '@regit/core';
-	import { getThread, getUser, reply, startThread } from '#lib/forge.remote.ts';
+	import { getThread, getUser, reply, startThread } from '#lib/data.remote.ts';
 
 	type Block =
 		| {

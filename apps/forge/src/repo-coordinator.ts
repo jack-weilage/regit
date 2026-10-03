@@ -5,6 +5,7 @@ import type {
 	Entry,
 	LiveMessage,
 	Mode,
+	RepoCoordinatorApi,
 	ThreadDetail,
 	ThreadStatus,
 	ThreadSummary
@@ -25,7 +26,7 @@ type ThreadRow = {
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
 
-export class RepoCoordinator extends DurableObject<Env> {
+export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinatorApi {
 	#sql = this.ctx.storage.sql;
 
 	constructor(ctx: DurableObjectState, env: Env) {

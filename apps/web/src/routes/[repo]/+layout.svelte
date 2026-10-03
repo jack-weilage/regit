@@ -4,7 +4,7 @@
 	import { AppShell, type Mode, type ThreadListItem } from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
 	import type { LiveMessage } from '@regit/core';
-	import { getRepos, getThread, getThreads, getUser, openThread } from '#lib/forge.remote.ts';
+	import { getRepos, getThread, getThreads, getUser, openThread } from '#lib/data.remote.ts';
 	import { createAndOpen } from '#lib/repos.ts';
 
 	let { children, params } = $props();

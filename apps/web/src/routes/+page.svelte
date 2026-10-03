@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, NewRepoPalette } from '@regit/ui';
-	import { getRepos } from '#lib/forge.remote.ts';
+	import { getRepos } from '#lib/data.remote.ts';
 	import { createAndOpen } from '#lib/repos.ts';
 
 	let repos = $derived(await getRepos());

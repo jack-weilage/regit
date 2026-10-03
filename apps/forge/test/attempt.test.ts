@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createTestHarness } from 'wrangler';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 import type { GatewayRequest } from '@regit/agent';
-import type Forge from '../src/index.ts';
+import type { AttemptInput } from '../src/attempt-sandbox.ts';
 import type FakeModels from './fake-models.ts';
 import { startGitServer } from './git-process.ts';
 
@@ -35,7 +35,7 @@ const server = createTestHarness({
 		}
 	]
 });
-const worker = server.getWorker<Env, { default: typeof Forge }>();
+const worker = server.getWorker<Env>();
 const models = server.getWorker<unknown, { default: typeof FakeModels }>('fake-models');
 
 async function script(replies: object[][]) {
@@ -74,9 +74,14 @@ async function commit(work: string, files: Record<string, string>, message: stri
 	);
 }
 
-async function settled(api: Awaited<ReturnType<typeof worker.getExport>>, thread: string) {
+function start(thread: string, input: AttemptInput) {
+	return worker.getEnv().then((env) => env.ATTEMPTS.getByName(thread).start(input));
+}
+
+async function settled(thread: string) {
+	const env = await worker.getEnv();
 	for (let i = 0; i < 300; i++) {
-		const snapshot = await api.attempt(thread);
+		const snapshot = await env.ATTEMPTS.getByName(thread).snapshot();
 		if (snapshot && !['queued', 'running'].includes(snapshot.status)) return snapshot;
 		await new Promise((resolve) => setTimeout(resolve, 200));
 	}
@@ -90,30 +95,6 @@ afterAll(async () => {
 	await server.close();
 	git.close();
 	await rm(dir, { recursive: true, force: true });
-});
-
-test('creates repositories', async () => {
-	const api = await worker.getExport();
-	expect(await api.createRepo({ name: 'fresh', createdBy: 'sam@regit.dev' })).toEqual({
-		name: 'fresh',
-		remote: `http://host.docker.internal:${git.port}/fresh.git`,
-		defaultBranch: 'main'
-	});
-	const env = await worker.getEnv();
-	expect(await env.DB.prepare('SELECT name, source, created_by FROM repos').all()).toMatchObject({
-		results: [{ name: 'fresh', source: null, created_by: 'sam@regit.dev' }]
-	});
-	await expect(
-		Promise.resolve().then(() => api.createRepo({ name: 'fresh', createdBy: 'lin@regit.dev' }))
-	).rejects.toThrow('fresh already exists.');
-	await expect(
-		Promise.resolve().then(() => api.createRepo({ name: 'no/slashes', createdBy: 'sam@regit.dev' }))
-	).rejects.toThrow('may only use letters');
-	await expect(
-		Promise.resolve().then(() =>
-			api.createRepo({ name: 'looks--like-a-fork', createdBy: 'sam@regit.dev' })
-		)
-	).rejects.toThrow('without a double hyphen');
 });
 
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
@@ -133,14 +114,13 @@ test('runs the agent on a fork of the repository, checkpointing its work', async
 		],
 		[{ type: 'response.output_text.delta', delta: 'Changed the greeting to hi.' }]
 	]);
-	const api = await worker.getExport();
-	await api.startAttempt('thread-1', {
+	await start('thread-1', {
 		task: 'Make the greeting say hi',
 		mode: 'small',
 		repo: 'greeting'
 	});
 
-	const snapshot = await settled(api, 'thread-1');
+	const snapshot = await settled('thread-1');
 	expect(snapshot).toMatchObject({ status: 'finished', error: null });
 	expect(snapshot.steps).toHaveLength(2);
 
@@ -179,10 +159,9 @@ test('fails the attempt when the model fails', async () => {
 			}
 		]
 	]);
-	const api = await worker.getExport();
-	await api.startAttempt('thread-2', { task: 'Anything', mode: 'medium', repo: 'failing' });
+	await start('thread-2', { task: 'Anything', mode: 'medium', repo: 'failing' });
 
-	expect(await settled(api, 'thread-2')).toMatchObject({
+	expect(await settled('thread-2')).toMatchObject({
 		status: 'failed',
 		error: 'No credits',
 		steps: []
@@ -196,23 +175,22 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 		[{ type: 'response.output_text.delta', delta: 'Still nothing.' }],
 		[{ type: 'response.output_text.delta', delta: 'All set.' }]
 	]);
-	const api = await worker.getExport();
 	const env = await worker.getEnv();
 	const recorded = () =>
 		env.DB.prepare('SELECT snapshot_id AS id, key FROM toolchain_snapshots WHERE repo = ?')
 			.bind('toolchain')
 			.first<{ id: string; key: string }>();
 
-	await api.startAttempt('thread-3', { task: 'Look around', mode: 'small', repo: 'toolchain' });
-	expect(await settled(api, 'thread-3')).toMatchObject({
+	await start('thread-3', { task: 'Look around', mode: 'small', repo: 'toolchain' });
+	expect(await settled('thread-3')).toMatchObject({
 		status: 'finished',
 		toolchain: { tools: { jq: [expect.any(String)] }, restored: false }
 	});
 	const first = await recorded();
 	expect(first).toMatchObject({ id: expect.any(String), key: expect.any(String) });
 
-	await api.startAttempt('thread-4', { task: 'Look again', mode: 'small', repo: 'toolchain' });
-	expect(await settled(api, 'thread-4')).toMatchObject({
+	await start('thread-4', { task: 'Look again', mode: 'small', repo: 'toolchain' });
+	expect(await settled('thread-4')).toMatchObject({
 		status: 'finished',
 		toolchain: { restored: true }
 	});
@@ -222,8 +200,8 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	await commit(work, { '.tool-versions': `jq ${pinned}\n` }, 'Pin jq');
 	sh(work, 'push', '--quiet', join(dir, 'toolchain.git'), 'main');
 
-	await api.startAttempt('thread-5', { task: 'Look once more', mode: 'small', repo: 'toolchain' });
-	const third = await settled(api, 'thread-5');
+	await start('thread-5', { task: 'Look once more', mode: 'small', repo: 'toolchain' });
+	const third = await settled('thread-5');
 	expect(third.error).toBeNull();
 	expect(third).toMatchObject({
 		status: 'finished',
@@ -269,30 +247,32 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
 
-	const { url } = await server.listen();
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('notes');
 	const live: { type: string; entry?: { type: string } }[] = [];
-	const socket = new WebSocket(new URL('/repos/notes/live', url.href.replace(/^http/, 'ws')).href);
-	socket.addEventListener('message', (event) => live.push(JSON.parse(String(event.data))));
-	await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
+	const { webSocket: socket } = await repo.fetch('https://repo/live', {
+		headers: { Upgrade: 'websocket' }
+	});
+	socket!.accept();
+	socket!.addEventListener('message', (event) => live.push(JSON.parse(String(event.data))));
 
-	const api = await worker.getExport();
 	const sam = { name: 'Sam', kind: 'person' as const };
-	const opened = await api.openThread('notes', {
+	const opened = await repo.openThread({
 		author: sam,
 		text: 'The notes need a title.',
 		mode: 'small'
 	});
 	expect(opened).toMatchObject({ status: 'draft', headline: 'docs: tidy the notes' });
 
-	await api.reply('notes', opened.id, { author: sam, text: 'Call it Notes.' });
-	await api.startThread('notes', opened.id);
+	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
+	await repo.start(opened.id);
 
-	let detail = await api.thread('notes', opened.id);
+	let detail = await repo.thread(opened.id);
 	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
-		detail = await api.thread('notes', opened.id);
+		detail = await repo.thread(opened.id);
 	}
-	socket.close();
+	socket!.close();
 
 	expect(detail!.summary).toMatchObject({
 		status: 'needs-you',
@@ -318,7 +298,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'The attempt finished'
 	]);
 	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
-	expect(await api.threads('notes')).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
+	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
 	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
 		'# Notes\n\nSome notes'
 	);

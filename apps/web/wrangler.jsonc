@@ -8,7 +8,10 @@
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
 	},
-	"services": [{ "binding": "FORGE", "service": "regit-forge" }],
+	"durable_objects": {
+		"bindings": [{ "name": "REPOS", "class_name": "RepoCoordinator", "script_name": "regit-forge" }]
+	},
+	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"d1_databases": [
 		{
 			"binding": "DB",
