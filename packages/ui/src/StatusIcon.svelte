@@ -2,7 +2,7 @@
 	import type { SVGAttributes } from 'svelte/elements';
 
 	interface Props extends SVGAttributes<SVGSVGElement> {
-		state: 'pending' | 'running' | 'shipping' | 'attention' | 'passed' | 'failed';
+		state: 'pending' | 'running' | 'reviewing' | 'shipping' | 'attention' | 'passed' | 'failed';
 	}
 
 	let { state, ...rest }: Props = $props();
@@ -11,6 +11,11 @@
 <svg class={['status', state]} viewBox="0 0 16 16" aria-hidden="true" {...rest}>
 	{#if state === 'attention'}
 		<circle cx="8" cy="8" r="4.5" />
+	{:else if state === 'reviewing'}
+		<g class="lens">
+			<circle cx="7" cy="7" r="4.25" />
+			<path d="m10.2 10.2 3.3 3.3" />
+		</g>
 	{:else if state === 'shipping'}
 		<path
 			class="water"
@@ -69,6 +74,10 @@
 		}
 	}
 
+	.reviewing {
+		stroke: var(--color-accent);
+	}
+
 	.attention {
 		fill: var(--color-accent);
 		stroke: none;
@@ -77,6 +86,10 @@
 	@media (prefers-reduced-motion: no-preference) {
 		.running {
 			animation: spin 0.9s linear infinite;
+		}
+
+		.reviewing .lens {
+			animation: scan 1.6s ease-in-out infinite;
 		}
 
 		.shipping {
@@ -99,6 +112,16 @@
 	@keyframes bob {
 		50% {
 			translate: 0 -0.6px;
+		}
+	}
+
+	@keyframes scan {
+		25% {
+			translate: 0.8px -0.4px;
+		}
+
+		75% {
+			translate: -0.8px 0.4px;
 		}
 	}
 

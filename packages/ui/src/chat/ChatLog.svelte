@@ -17,7 +17,8 @@
 	};
 </script>
 
-<div class="log" role="log" aria-label={label} {@attach enableEntrances}>
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="log" role="log" aria-label={label} tabindex="0" {@attach enableEntrances}>
 	<div class="content">
 		{@render children()}
 	</div>
@@ -33,6 +34,11 @@
 		overflow-y: auto;
 		overscroll-behavior: contain;
 		scrollbar-gutter: stable;
+
+		&:focus-visible {
+			outline: 2px solid var(--color-accent);
+			outline-offset: -2px;
+		}
 	}
 
 	.content {

@@ -1,6 +1,24 @@
+<script module lang="ts">
+	import type { StatusIconState } from './status.ts';
+
+	export type IntentStatus = 'working' | 'reviewing' | 'needs-you' | 'ready';
+
+	const icons: Record<IntentStatus, StatusIconState> = {
+		working: 'running',
+		reviewing: 'reviewing',
+		'needs-you': 'attention',
+		ready: 'passed'
+	};
+
+	const stickyTop = 8;
+	const rowHeight = 48;
+</script>
+
 <script lang="ts">
+	import type { Attachment } from 'svelte/attachments';
 	import Button from '../Button.svelte';
-	import ChatChecks from './ChatChecks.svelte';
+	import StatusIcon from '../StatusIcon.svelte';
+	import ChatChecks, { type CheckState } from './ChatChecks.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
 	import type { Mentionable } from './types.ts';
@@ -9,10 +27,15 @@
 		headline: string;
 		purpose: string;
 		doneWhen: string[];
+		status?: IntentStatus;
+		checks?: CheckState[];
+		note?: string;
+		sticky?: boolean;
 		similar?: Mentionable[];
 		handoff?: boolean;
 		superseded?: boolean;
 		onstart?: () => void;
+		onship?: () => void;
 		ondismiss?: () => void;
 	}
 
@@ -20,19 +43,48 @@
 		headline,
 		purpose,
 		doneWhen,
+		status,
+		checks = [],
+		note,
+		sticky = false,
 		similar = [],
 		handoff = false,
 		superseded = false,
 		onstart,
+		onship,
 		ondismiss
 	}: Props = $props();
+
+	let stuck = $state(false);
+	let open = $state(false);
+	let toggling = $state(false);
+	let bodyHeight = $state(0);
+
+	let minimized = $derived(stuck && !open);
+	let met = $derived(checks.filter((check) => check === 'met').length);
+
+	const watch: Attachment<HTMLElement> = (marker) => {
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				stuck = !entry!.isIntersecting && entry!.boundingClientRect.top < entry!.rootBounds!.top;
+				toggling = false;
+				if (!stuck) open = false;
+			},
+			{
+				root: marker.closest<HTMLElement>('[role=log]'),
+				rootMargin: `-${stickyTop + rowHeight}px 0px 0px 0px`
+			}
+		);
+		observer.observe(marker);
+		return () => observer.disconnect();
+	};
 </script>
 
 {#snippet details()}
 	<p class="purpose">{purpose}</p>
 	<div class="section">
 		<p class="heading">Done when</p>
-		<ChatChecks checks={doneWhen} />
+		<ChatChecks checks={doneWhen} states={checks} />
 	</div>
 {/snippet}
 
@@ -65,35 +117,84 @@
 		</div>
 	</section>
 {:else}
-	<section class="intent" aria-label="Suggested intent">
-		<div class="card chat-enter">
-			<p class="headline">{headline}</p>
-
-			{@render details()}
-
-			{#if similar.length}
-				<div class="section">
-					<p class="heading">Similar threads</p>
-					<ul class="similar">
-						{#each similar as item (item.handle)}
-							<li>
-								<ChatMention mention={item} />
-								{#if item.detail}
-									<span>{item.detail}</span>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				</div>
+	<section
+		class={['intent', 'card', 'chat-enter', { stuck, minimized, toggling }]}
+		style:--top="{stickyTop}px"
+		style:--collapsed="{bodyHeight}px"
+		aria-label={status ? 'Intent' : 'Suggested intent'}
+	>
+		{#snippet title()}
+			{#if status}<StatusIcon state={icons[status]} />{/if}
+			<span class="headline">{headline}</span>
+			{#if minimized && checks.length}
+				<span class="progress">
+					<span class="segments" aria-hidden="true">
+						{#each checks as check, index (index)}<span class={['segment', check]}></span>{/each}
+					</span>
+					<span class="count">{met}/{checks.length}</span>
+				</span>
 			{/if}
-
-			{#if onstart}
-				<div class="actions">
-					<Button variant="primary" onclick={onstart}>Start</Button>
-				</div>
+			{#if stuck}
+				<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"
+					><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg
+				>
 			{/if}
+		{/snippet}
+
+		{#if stuck}
+			<button
+				type="button"
+				class="head"
+				aria-expanded={open}
+				onclick={() => {
+					toggling = true;
+					open = !open;
+				}}>{@render title()}</button
+			>
+		{:else}
+			<p class="head">{@render title()}</p>
+		{/if}
+
+		<div class="body">
+			<div class="clip">
+				<div class="content" bind:offsetHeight={bodyHeight}>
+					{@render details()}
+
+					{#if similar.length}
+						<div class="section">
+							<p class="heading">Similar threads</p>
+							<ul class="similar">
+								{#each similar as item (item.handle)}
+									<li>
+										<ChatMention mention={item} />
+										{#if item.detail}
+											<span>{item.detail}</span>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+
+					{#if onstart}
+						<div class="actions">
+							<Button variant="primary" onclick={onstart}>Start</Button>
+						</div>
+					{/if}
+
+					{#if note || onship}
+						<div class="footer">
+							{#if note}<p class="note">{note}</p>{/if}
+							{#if onship}<Button variant="primary" size="sm" onclick={onship}>Ship</Button>{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
 		</div>
 	</section>
+	{#if sticky}
+		<div class="marker" {@attach watch}></div>
+	{/if}
 {/if}
 
 <style>
@@ -113,6 +214,196 @@
 
 		p {
 			margin: 0;
+		}
+	}
+
+	section.card {
+		--pad: var(--space-6);
+
+		position: relative;
+		z-index: 1;
+		gap: 0;
+		padding: 0;
+
+		&.stuck {
+			position: sticky;
+			inset-block-start: var(--top);
+			background: color-mix(in oklab, var(--color-bg) 92%, transparent);
+			box-shadow: var(--shadow-floating);
+			backdrop-filter: blur(8px);
+		}
+
+		&.minimized {
+			--pad: var(--space-4);
+
+			margin-block-end: var(--collapsed);
+		}
+	}
+
+	.head {
+		--icon-size: 1em;
+
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-4);
+		min-inline-size: 0;
+		margin: 0;
+		padding: var(--pad) var(--space-6) 0;
+		border: 0;
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-align: start;
+
+		> :global(svg:first-child) {
+			translate: 0 calc((var(--icon-size) - 1cap) / 2);
+		}
+
+		.headline {
+			flex: 1;
+			min-inline-size: 0;
+		}
+	}
+
+	button.head {
+		cursor: pointer;
+
+		&:focus-visible {
+			outline: 2px solid var(--color-accent);
+			outline-offset: -2px;
+			border-radius: var(--radius-lg);
+		}
+	}
+
+	.minimized .head {
+		padding-block-end: var(--pad);
+
+		.headline {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+	}
+
+	.progress,
+	.chevron {
+		align-self: center;
+	}
+
+	.progress {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-4);
+	}
+
+	.segments {
+		display: flex;
+		gap: 3px;
+	}
+
+	.segment {
+		inline-size: 1rem;
+		block-size: 4px;
+		border-radius: 2px;
+		background: var(--color-border);
+
+		&.met {
+			background: var(--color-accent);
+		}
+
+		&.unmet {
+			background: var(--color-danger-text);
+		}
+
+		&.unverified {
+			background: color-mix(in oklab, var(--color-accent) 45%, var(--color-border));
+		}
+	}
+
+	.count {
+		color: var(--color-muted);
+		font-size: var(--text-meta);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.chevron {
+		flex: none;
+		inline-size: 1em;
+		block-size: 1em;
+		fill: none;
+		stroke: var(--color-muted);
+		stroke-width: 1.5;
+	}
+
+	.stuck:not(.minimized) .chevron {
+		rotate: 180deg;
+		align-self: start;
+		margin-block-start: 0.25em;
+	}
+
+	.body {
+		display: grid;
+		grid-template-rows: 1fr;
+	}
+
+	.minimized .body {
+		grid-template-rows: 0fr;
+	}
+
+	.clip {
+		overflow: hidden;
+		min-block-size: 0;
+	}
+
+	.content {
+		display: grid;
+		gap: var(--space-4);
+		padding: var(--space-4) var(--space-6) var(--space-6);
+	}
+
+	.footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-4);
+		margin-block-start: var(--space-2);
+		padding-block-start: var(--space-4);
+		border-block-start: 1px solid var(--color-border);
+	}
+
+	.note {
+		color: var(--color-muted);
+		font-size: var(--text-meta);
+	}
+
+	.marker {
+		block-size: 1px;
+		margin-block-start: -1px;
+	}
+
+	@keyframes arrive {
+		from {
+			opacity: 0;
+			translate: 0 -0.75rem;
+		}
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.minimized:not(.toggling) {
+			animation: arrive 0.2s ease;
+		}
+
+		.toggling {
+			&,
+			.head,
+			.body,
+			.chevron {
+				transition:
+					grid-template-rows 0.25s ease,
+					margin 0.25s ease,
+					padding 0.25s ease,
+					rotate 0.2s ease;
+			}
 		}
 	}
 

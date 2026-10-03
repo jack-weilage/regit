@@ -13,7 +13,7 @@
 
 	const groups: { title: string; statuses: ThreadStatus[] }[] = [
 		{ title: 'Needs you', statuses: ['needs-you'] },
-		{ title: 'Running', statuses: ['running', 'landing'] },
+		{ title: 'Running', statuses: ['running', 'reviewing', 'landing'] },
 		{ title: 'Recent', statuses: ['draft', 'shipped', 'discarded'] }
 	];
 

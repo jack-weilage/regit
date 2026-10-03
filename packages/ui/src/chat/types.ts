@@ -16,7 +16,8 @@ export interface Mentionable {
 	deleted?: boolean;
 }
 
-export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'landing' | 'shipped' | 'discarded';
+export type ThreadStatus =
+	'draft' | 'running' | 'reviewing' | 'needs-you' | 'landing' | 'shipped' | 'discarded';
 
 export interface ThreadAction {
 	label: string;

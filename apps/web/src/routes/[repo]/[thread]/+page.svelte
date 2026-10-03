@@ -135,6 +135,10 @@
 					<ChatIntent
 						{...block.intent}
 						superseded={block.id !== latestIntent}
+						sticky={block.id === latestIntent}
+						status={block.id === latestIntent && summary.status === 'running'
+							? 'working'
+							: undefined}
 						onstart={block.id === latestIntent && summary.status === 'draft' && !drafting
 							? () => startThread({ repo: params.repo, id: params.thread })
 							: undefined}
