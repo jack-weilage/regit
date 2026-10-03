@@ -3,6 +3,7 @@
 	import Avatar from './Avatar.svelte';
 	import Button from './Button.svelte';
 	import Menu from './Menu.svelte';
+	import NewRepoPalette, { type NewRepo } from './NewRepoPalette.svelte';
 	import NewThreadPalette, { type Mode } from './chat/NewThreadPalette.svelte';
 	import ThreadIcon from './chat/ThreadIcon.svelte';
 	import ThreadList, { type ThreadListItem } from './chat/ThreadList.svelte';
@@ -18,6 +19,7 @@
 		similar?: Mentionable[];
 		now?: number;
 		onswitchrepo?: (repo: string) => void;
+		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onquery?: (text: string) => void;
 		onstart: (thread: { text: string; mode: Mode }) => void;
 		onopenthread?: (thread: Mentionable) => void;
@@ -34,6 +36,7 @@
 		similar,
 		now,
 		onswitchrepo,
+		oncreaterepo,
 		onquery,
 		onstart,
 		onopenthread,
@@ -51,11 +54,22 @@
 			<Menu
 				label="Repositories"
 				align="start"
-				items={repos.map((name) => ({
-					label: name,
-					checked: name === repo,
-					onselect: () => onswitchrepo?.(name)
-				}))}
+				items={[
+					...repos.map((name) => ({
+						label: name,
+						checked: name === repo,
+						onselect: () => onswitchrepo?.(name)
+					})),
+					...(oncreaterepo
+						? [
+								{
+									label: 'New repository…',
+									separated: true,
+									onselect: () => document.getElementById(`${id}-new-repo`)?.showPopover()
+								}
+							]
+						: [])
+				]}
 			>
 				{#snippet trigger(props)}
 					<button type="button" class="switcher" aria-label="Repository: {repo}" {...props}>
@@ -116,6 +130,9 @@
 		{onstart}
 		{onopenthread}
 	/>
+	{#if oncreaterepo}
+		<NewRepoPalette id="{id}-new-repo" {repos} oncreate={oncreaterepo} />
+	{/if}
 </div>
 
 <style>

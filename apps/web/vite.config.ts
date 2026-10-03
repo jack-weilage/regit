@@ -5,7 +5,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [
 		sveltekit({
-			adapter: adapter(),
+			adapter: adapter({ platformProxy: { persist: { path: '../../.wrangler/state/v3' } } }),
 			compilerOptions: {
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true,

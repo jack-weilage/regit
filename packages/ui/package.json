@@ -12,6 +12,9 @@
 		"check": "svelte-check --tsconfig ./tsconfig.json",
 		"test": "vitest run"
 	},
+	"dependencies": {
+		"@regit/core": "workspace:*"
+	},
 	"devDependencies": {
 		"@storybook/addon-a11y": "^10.6.1",
 		"@storybook/addon-docs": "^10.6.1",

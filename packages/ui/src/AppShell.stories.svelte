@@ -67,6 +67,7 @@
 			now,
 			account: { name: 'Jack Weilage', email: 'jack@regit.dev' },
 			onswitchrepo: fn(),
+			oncreaterepo: fn(async () => {}),
 			onstart: fn()
 		}
 	});
@@ -113,6 +114,19 @@
 		await userEvent.click(canvas.getByRole('button', { name: 'Repository: regit/web' }));
 		await userEvent.click(await canvas.findByRole('menuitemradio', { name: 'regit/forge' }));
 		await expect(args.onswitchrepo).toHaveBeenCalledWith('regit/forge');
+	}}
+	template={page}
+/>
+
+<Story
+	name="New repository"
+	play={async ({ args, canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'Repository: regit/web' }));
+		await userEvent.click(await canvas.findByRole('menuitem', { name: 'New repository…' }));
+		const input = canvas.getByRole('textbox', { name: 'Name or git URL' });
+		await waitFor(() => expect(input).toHaveFocus());
+		await userEvent.keyboard('billing{Enter}');
+		await expect(args.oncreaterepo).toHaveBeenCalledWith({ name: 'billing' });
 	}}
 	template={page}
 />

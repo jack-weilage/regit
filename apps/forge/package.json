@@ -3,9 +3,9 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "wrangler dev",
+		"dev": "wrangler d1 migrations apply regit --local --persist-to ../../.wrangler/state && wrangler dev --persist-to ../../.wrangler/state",
 		"build": "wrangler deploy --dry-run --outdir dist",
-		"deploy": "wrangler deploy",
+		"deploy": "wrangler deploy && wrangler d1 migrations apply regit --remote",
 		"check": "wrangler types && tsc && tsc -p test",
 		"gen": "wrangler types",
 		"prepare": "wrangler types || true",
@@ -13,7 +13,9 @@
 	},
 	"dependencies": {
 		"@regit/agent": "workspace:*",
-		"@regit/core": "workspace:*"
+		"@regit/core": "workspace:*",
+		"@regit/db": "workspace:*",
+		"drizzle-orm": "catalog:"
 	},
 	"devDependencies": {
 		"@types/node": "catalog:",

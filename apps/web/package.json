@@ -16,7 +16,10 @@
 	},
 	"dependencies": {
 		"@regit/core": "workspace:*",
-		"@regit/ui": "workspace:*"
+		"@regit/db": "workspace:*",
+		"@regit/ui": "workspace:*",
+		"drizzle-orm": "catalog:",
+		"valibot": "^1.5.0"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-cloudflare": "catalog:",

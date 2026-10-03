@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from 'wrangler';
-import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 import type { GatewayRequest } from '@regit/agent';
 import type Forge from '../src/index.ts';
 import type FakeModels from './fake-models.ts';
@@ -84,6 +84,7 @@ async function settled(api: Awaited<ReturnType<typeof worker.getExport>>, thread
 }
 
 beforeAll(() => server.listen());
+beforeEach(() => worker.applyD1Migrations('DB'));
 afterEach(() => server.reset());
 afterAll(async () => {
 	await server.close();
@@ -93,14 +94,26 @@ afterAll(async () => {
 
 test('creates repositories', async () => {
 	const api = await worker.getExport();
-	expect(await api.createRepo('fresh')).toEqual({
+	expect(await api.createRepo({ name: 'fresh', createdBy: 'sam@regit.dev' })).toEqual({
 		name: 'fresh',
 		remote: `http://host.docker.internal:${git.port}/fresh.git`,
 		defaultBranch: 'main'
 	});
-	await expect(Promise.resolve().then(() => api.createRepo('no/slashes'))).rejects.toThrow(
-		'may only use letters'
-	);
+	const env = await worker.getEnv();
+	expect(await env.DB.prepare('SELECT name, source, created_by FROM repos').all()).toMatchObject({
+		results: [{ name: 'fresh', source: null, created_by: 'sam@regit.dev' }]
+	});
+	await expect(
+		Promise.resolve().then(() => api.createRepo({ name: 'fresh', createdBy: 'lin@regit.dev' }))
+	).rejects.toThrow('fresh already exists.');
+	await expect(
+		Promise.resolve().then(() => api.createRepo({ name: 'no/slashes', createdBy: 'sam@regit.dev' }))
+	).rejects.toThrow('may only use letters');
+	await expect(
+		Promise.resolve().then(() =>
+			api.createRepo({ name: 'looks--like-a-fork', createdBy: 'sam@regit.dev' })
+		)
+	).rejects.toThrow('without a double hyphen');
 });
 
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
@@ -185,7 +198,10 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	]);
 	const api = await worker.getExport();
 	const env = await worker.getEnv();
-	const recorded = () => env.TOOLCHAINS.get<{ id: string; key: string }>('toolchain', 'json');
+	const recorded = () =>
+		env.DB.prepare('SELECT snapshot_id AS id, key FROM toolchain_snapshots WHERE repo = ?')
+			.bind('toolchain')
+			.first<{ id: string; key: string }>();
 
 	await api.startAttempt('thread-3', { task: 'Look around', mode: 'small', repo: 'toolchain' });
 	expect(await settled(api, 'thread-3')).toMatchObject({

@@ -1,0 +1,19 @@
+{
+	"name": "@regit/db",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"check": "tsc",
+		"generate": "drizzle-kit generate"
+	},
+	"dependencies": {
+		"drizzle-orm": "catalog:"
+	},
+	"devDependencies": {
+		"drizzle-kit": "catalog:",
+		"typescript": "catalog:"
+	}
+}

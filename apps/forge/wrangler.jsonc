@@ -10,7 +10,15 @@
 	"vars": { "AI_GATEWAY": "regit" },
 	"ai": { "binding": "AI", "remote": true },
 	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],
-	"kv_namespaces": [{ "binding": "TOOLCHAINS" }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "regit",
+			"database_id": "42902469-4868-49b8-8155-f952e93d8a4f",
+			"migrations_dir": "../../packages/db/drizzle",
+			"migrations_pattern": "../../packages/db/drizzle/*/migration.sql"
+		}
+	],
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"durable_objects": {
 		"bindings": [

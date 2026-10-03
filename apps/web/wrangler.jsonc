@@ -9,6 +9,13 @@
 		"directory": ".svelte-kit/cloudflare"
 	},
 	"services": [{ "binding": "FORGE", "service": "regit-forge" }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "regit",
+			"database_id": "42902469-4868-49b8-8155-f952e93d8a4f"
+		}
+	],
 	"observability": { "enabled": true },
 	"workers_dev": true,
 	"preview_urls": true

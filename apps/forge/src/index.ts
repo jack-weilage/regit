@@ -1,30 +1,34 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { Mode } from '@regit/agent';
+import { eq } from 'drizzle-orm';
+import {
+	repoNamePattern,
+	type Author,
+	type ForgeApi,
+	type Mode,
+	type RepoInfo,
+	type ThreadDetail,
+	type ThreadSummary
+} from '@regit/core';
 import type { AttemptInput, AttemptSnapshot } from './attempt-sandbox.ts';
-import type { Author, ThreadDetail, ThreadSummary } from './repo-coordinator.ts';
+import { repos } from '@regit/db';
+import { db } from './db.ts';
 
 export { AttemptSandbox } from './attempt-sandbox.ts';
 export { GitProxy } from './git-proxy.ts';
 export { RepoCoordinator } from './repo-coordinator.ts';
 export { Models } from './models.ts';
 
-export interface RepoInfo {
-	name: string;
-	remote: string;
-	defaultBranch: string;
-}
-
-const validName = /^[A-Za-z0-9._-]+$/;
-
 function assertName(kind: string, name: string) {
-	if (!validName.test(name))
-		throw new Error(`${kind} names may only use letters, digits, dots, hyphens and underscores`);
+	if (!repoNamePattern.test(name))
+		throw new Error(
+			`${kind} names may only use letters, digits, dots, hyphens and underscores, without a double hyphen`
+		);
 }
 
-export default class Forge extends WorkerEntrypoint<Env> {
+export default class Forge extends WorkerEntrypoint<Env> implements ForgeApi {
 	override async fetch(request: Request) {
 		const [, kind, repo, action] = new URL(request.url).pathname.split('/');
-		if (kind === 'repos' && repo && action === 'live' && validName.test(repo)) {
+		if (kind === 'repos' && repo && action === 'live' && repoNamePattern.test(repo)) {
 			return this.env.REPOS.getByName(repo).fetch(request);
 		}
 		return new Response(null, { status: 404 });
@@ -54,12 +58,33 @@ export default class Forge extends WorkerEntrypoint<Env> {
 		return this.env.REPOS.getByName(repo).thread(id);
 	}
 
-	async createRepo(name: string, source?: string): Promise<RepoInfo> {
+	async createRepo({
+		name,
+		source,
+		createdBy
+	}: {
+		name: string;
+		source?: string;
+		createdBy: string;
+	}): Promise<RepoInfo> {
 		assertName('Repository', name);
-		const repo = source
-			? await this.env.ARTIFACTS.import({ source: { url: source }, target: { name } })
-			: await this.env.ARTIFACTS.create(name);
-		return { name: repo.name, remote: repo.remote, defaultBranch: repo.defaultBranch };
+		const [claimed] = await db
+			.insert(repos)
+			.values({ name, source, createdBy, createdAt: new Date() })
+			.onConflictDoNothing()
+			.returning();
+		if (!claimed) throw new Error(`${name} already exists.`);
+		try {
+			const repo = await (source
+				? this.env.ARTIFACTS.import({ source: { url: source }, target: { name } })
+				: this.env.ARTIFACTS.create(name));
+			return { name: repo.name, remote: repo.remote, defaultBranch: repo.defaultBranch };
+		} catch (error) {
+			await db.delete(repos).where(eq(repos.name, name));
+			if ((error as ArtifactsError).code === 'ALREADY_EXISTS')
+				throw new Error(`${name} already exists.`);
+			throw error;
+		}
 	}
 
 	async startAttempt(thread: string, input: AttemptInput) {

@@ -1,4 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
+import { eq } from 'drizzle-orm';
+import { toolchainSnapshots } from '@regit/db';
+import { db } from './db.ts';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	codingInstructions,
@@ -34,12 +37,6 @@ interface Fork {
 	name: string;
 	remote: string;
 	branch: string;
-}
-
-interface ToolchainSnapshot {
-	id: string;
-	key: string;
-	image: string;
 }
 
 type AttemptRow = {
@@ -316,14 +313,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 
 		const image = container.images.sandbox!;
-		const cached = await this.env.TOOLCHAINS.get<ToolchainSnapshot>(attempt.repo, 'json');
+		const forRepo = eq(toolchainSnapshots.repo, attempt.repo);
+		const [cached] = await db.select().from(toolchainSnapshots).where(forRepo);
 		let restored = cached?.image === image ? cached : null;
 		try {
-			await this.#start(restored ? { containerSnapshot: { id: restored.id } } : { image }, fetch);
+			await this.#start(
+				restored ? { containerSnapshot: { id: restored.snapshotId } } : { image },
+				fetch
+			);
 		} catch (error) {
 			if (!restored) throw error;
 			restored = null;
-			await this.env.TOOLCHAINS.delete(attempt.repo);
+			await db.delete(toolchainSnapshots).where(forRepo);
 			await this.#start({ image }, fetch);
 		}
 
@@ -342,10 +343,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 				const snapshot = await container.snapshotContainer({
 					name: `toolchain-${key.slice(0, 12)}`
 				});
-				await this.env.TOOLCHAINS.put(
-					attempt.repo,
-					JSON.stringify({ id: snapshot.id, key, image })
-				);
+				const row = { snapshotId: snapshot.id, key, image, createdAt: new Date() };
+				await db
+					.insert(toolchainSnapshots)
+					.values({ repo: attempt.repo, ...row })
+					.onConflictDoUpdate({ target: toolchainSnapshots.repo, set: row });
 			} catch (error) {
 				console.warn('Could not snapshot the toolchain', error);
 			}

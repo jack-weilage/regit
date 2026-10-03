@@ -1,46 +1,19 @@
 import { DurableObject } from 'cloudflare:workers';
-import {
-	describeTask,
-	draftIntent,
-	modes,
-	openaiModel,
-	type Intent,
-	type Mode,
-	type Step
-} from '@regit/agent';
+import { describeTask, draftIntent, modes, openaiModel, type Step } from '@regit/agent';
+import type {
+	Author,
+	Entry,
+	LiveMessage,
+	Mode,
+	ThreadDetail,
+	ThreadStatus,
+	ThreadSummary
+} from '@regit/core';
 import type { AttemptStatus } from './attempt-sandbox.ts';
-
-export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'discarded';
-
-export interface Author {
-	name: string;
-	kind: 'person' | 'agent';
-}
-
-export type Entry =
-	| { type: 'message'; id: string; at: number; author: Author; text: string }
-	| { type: 'intent'; id: string; at: number; intent: Intent }
-	| { type: 'event'; id: string; at: number; text: string };
-
-export interface ThreadSummary {
-	id: string;
-	headline: string;
-	status: ThreadStatus;
-	mode: Mode;
-	updatedAt: number;
-}
-
-export interface ThreadDetail {
-	summary: ThreadSummary;
-	entries: Entry[];
-}
 
 export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string } }
 	| { type: 'status'; status: AttemptStatus; error: string | null };
-
-export type LiveMessage =
-	{ type: 'entry'; thread: string; entry: Entry } | { type: 'thread'; summary: ThreadSummary };
 
 type ThreadRow = {
 	id: string;

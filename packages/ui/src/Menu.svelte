@@ -3,6 +3,7 @@
 		label: string;
 		detail?: string;
 		checked?: boolean;
+		separated?: boolean;
 		onselect: () => void;
 	}
 </script>
@@ -65,6 +66,9 @@
 <Popover id="{id}-menu" {anchor} {align} ontoggle={focusFirst}>
 	<div bind:this={menu} class="menu" role="menu" aria-label={label} tabindex="-1" {onkeydown}>
 		{#each items as item (item.label)}
+			{#if item.separated}
+				<div role="separator" class="separator"></div>
+			{/if}
 			<button
 				type="button"
 				role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
@@ -113,6 +117,11 @@
 				outline: 0;
 			}
 		}
+	}
+
+	.separator {
+		margin: var(--space-2) calc(-1 * var(--space-2));
+		border-block-start: 1px solid var(--color-border);
 	}
 
 	.detail {
