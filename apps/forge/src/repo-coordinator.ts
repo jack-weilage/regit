@@ -10,6 +10,8 @@ import {
 } from '@regit/agent';
 import type {
 	Author,
+	CheckVerdict,
+	ReviewVerdict,
 	Entry,
 	LiveMessage,
 	Mode,
@@ -28,7 +30,15 @@ export type AttemptUpdate =
 	| { type: 'status'; status: AttemptStatus; error: string | null }
 	| { type: 'reply'; step: Step }
 	| { type: 'conversation-failed'; error: string }
-	| { type: 'read'; entries: string[] };
+	| { type: 'read'; entries: string[] }
+	| {
+			type: 'review';
+			round: number;
+			verdict: ReviewVerdict;
+			checks: CheckVerdict[];
+			model: string;
+			usage: Usage[];
+	  };
 
 type ThreadRow = {
 	id: string;
@@ -147,7 +157,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.env.ATTEMPTS.getByName(thread).start({
 			task,
 			mode: summary.mode,
-			repo: this.#repo()
+			repo: this.#repo(),
+			intent
 		});
 		this.#add(thread, { type: 'event', text: 'Started the attempt' });
 		this.#setStatus(thread, 'running');
@@ -156,11 +167,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async discard(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		if (summary.status === 'discarded') return;
-		const reopen = summary.status === 'running' ? 'needs-you' : summary.status;
+		const reopen =
+			summary.status === 'running' || summary.status === 'reviewing' ? 'needs-you' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
-		if (summary.status === 'running') await this.env.ATTEMPTS.getByName(thread).cancel();
+		if (summary.status === 'running' || summary.status === 'reviewing') {
+			await this.env.ATTEMPTS.getByName(thread).cancel();
+		}
 	}
 
 	reopen(thread: string, by: Author) {
@@ -187,7 +201,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		this.#touch(thread);
 		await this.#schedulePurge();
-		if (summary.status === 'running') await this.env.ATTEMPTS.getByName(thread).cancel();
+		if (summary.status === 'running' || summary.status === 'reviewing') {
+			await this.env.ATTEMPTS.getByName(thread).cancel();
+		}
 	}
 
 	restore(thread: string) {
@@ -244,6 +260,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	attemptUpdated(thread: string, update: AttemptUpdate) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
+		if (update.type === 'review') {
+			for (const usage of update.usage) this.#recordUsage(thread, 'review', update.model, usage);
+			const { round, verdict, checks } = update;
+			this.#add(thread, { type: 'review', round, verdict, checks });
+			return;
+		}
 		if (update.type === 'read') {
 			for (const id of update.entries) this.#markRead(thread, id);
 			return;
@@ -278,6 +300,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			failed: ['needs-you', `The attempt failed: ${update.error}`],
 			cancelled: ['discarded', 'The attempt was cancelled']
 		};
+		if (update.status === 'reviewing' || update.status === 'running') {
+			if (summary.status === 'running' || summary.status === 'reviewing') {
+				this.#setStatus(thread, update.status);
+			}
+			return;
+		}
 		const outcome = outcomes[update.status];
 		if (!outcome) return;
 		this.#add(thread, { type: 'event', text: outcome[1] });

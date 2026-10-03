@@ -78,9 +78,27 @@ function start(thread: string, input: AttemptInput) {
 	return worker.getEnv().then((env) => env.ATTEMPTS.getByName(thread).start(input));
 }
 
+function submitReview(verdict: string, states: string[]) {
+	return [
+		{
+			type: 'response.output_item.done',
+			item: {
+				type: 'function_call',
+				call_id: 'review',
+				name: 'submit_review',
+				arguments: JSON.stringify({
+					checks: states.map((state) => ({ state, evidence: 'Checked notes.md' })),
+					findings: verdict === 'fail' ? ['The title is missing.'] : [],
+					verdict
+				})
+			}
+		}
+	];
+}
+
 async function settled(thread: string) {
 	const env = await worker.getEnv();
-	for (let i = 0; i < 300; i++) {
+	for (let i = 0; i < 600; i++) {
 		const snapshot = await env.ATTEMPTS.getByName(thread).snapshot();
 		if (snapshot && !['queued', 'running'].includes(snapshot.status)) return snapshot;
 		await new Promise((resolve) => setTimeout(resolve, 200));
@@ -326,7 +344,8 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 				}
 			}
 		],
-		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met'])
 	]);
 
 	const env = await worker.getEnv();
@@ -367,7 +386,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	await repo.start(opened.id);
 
 	let detail = await repo.thread(opened.id);
-	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
+	for (let i = 0; i < 300 && ['running', 'reviewing'].includes(detail?.summary.status ?? ''); i++) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		detail = await repo.thread(opened.id);
 	}
@@ -383,7 +402,9 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 				? `${entry.author.name}: ${entry.text}`
 				: entry.type === 'event'
 					? entry.text.replace(/[0-9a-f]{7}$/, 'sha')
-					: `intent ${entry.intent.headline}`
+					: entry.type === 'review'
+						? `review ${entry.verdict}`
+						: `intent ${entry.intent.headline}`
 		)
 	).toEqual([
 		'Sam: The notes need a title.',
@@ -396,13 +417,22 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'ReGit: Adding the title',
 		'Checkpoint sha',
 		'ReGit: Added the title.',
+		'review pass',
 		'The attempt finished'
 	]);
 	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
 	const requests = await modelRequests();
 	expect(
 		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)
-	).toEqual(['conversation', 'conversation', 'conversation', 'conversation', 'code', 'code']);
+	).toEqual([
+		'conversation',
+		'conversation',
+		'conversation',
+		'conversation',
+		'code',
+		'code',
+		'review'
+	]);
 	const tools = (request: (typeof requests)[number]) =>
 		(request.query as { tools: { name: string }[] }).tools.map((tool) => tool.name);
 	expect(tools(requests[0]!)).toEqual([
@@ -423,7 +453,13 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 				tokens: 240,
 				cost: expect.closeTo(4 * call, 10)
 			},
-			{ task: 'attempt', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) }
+			{ task: 'attempt', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) },
+			{
+				task: 'review',
+				model: 'gpt-6.1-sol',
+				tokens: 60,
+				cost: expect.closeTo((50 * 2 + 10 * 10) / 1_000_000, 10)
+			}
 		],
 		context: { used: 60, limit: 1_050_000 }
 	});
@@ -463,7 +499,8 @@ test('steers a running attempt with messages read after the current step', async
 				}
 			}
 		],
-		[{ type: 'response.output_text.delta', delta: 'Kept it short.' }]
+		[{ type: 'response.output_text.delta', delta: 'Kept it short.' }],
+		submitReview('pass', ['met'])
 	]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('steer');
@@ -483,7 +520,7 @@ test('steers a running attempt with messages read after the current step', async
 	await repo.start(id);
 	await repo.reply(id, { author: sam, text: 'Keep the title short.' });
 	let detail = await repo.thread(id);
-	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
+	for (let i = 0; i < 300 && ['running', 'reviewing'].includes(detail?.summary.status ?? ''); i++) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		detail = await repo.thread(id);
 	}
@@ -496,4 +533,68 @@ test('steers a running attempt with messages read after the current step', async
 		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
 	);
 	expect(JSON.stringify(coding.at(-1)!.query)).toContain('Sam: Keep the title short.');
+});
+
+test('sends work that fails review back to the agent, then finishes when it passes', async () => {
+	await seed('reviewed', { 'notes.md': 'Some notes\n' });
+	await script([
+		[{ type: 'response.output_text.delta', delta: 'Sure.' }],
+		[{ type: 'response.output_text.delta', delta: 'Done, I think.' }],
+		submitReview('fail', ['unmet']),
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'call_1',
+					name: 'write_file',
+					arguments: JSON.stringify({ path: 'notes.md', content: '# Notes\n\nSome notes\n' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met'])
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('reviewed');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'reviewed',
+		author: sam,
+		text: 'Add a title.',
+		mode: 'small'
+	});
+	for (let i = 0; i < 100; i++) {
+		const last = (await repo.thread(id))!.entries.at(-1);
+		if (last?.type === 'message' && last.text === 'Sure.') break;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	await repo.intentProposed(id, {
+		headline: 'docs: add a title',
+		purpose: 'Readers need a title.',
+		doneWhen: ['notes.md starts with a title']
+	});
+	await repo.start(id);
+
+	let detail = await repo.thread(id);
+	for (let i = 0; i < 300 && ['running', 'reviewing'].includes(detail?.summary.status ?? ''); i++) {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		detail = await repo.thread(id);
+	}
+
+	expect(detail!.summary.status).toBe('needs-you');
+	expect(
+		detail!.entries.flatMap((entry) => (entry.type === 'review' ? [entry] : []))
+	).toMatchObject([
+		{ round: 1, verdict: 'fail', checks: ['unmet'] },
+		{ round: 2, verdict: 'pass', checks: ['met'] }
+	]);
+	const coding = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
+	);
+	expect(JSON.stringify(coding[1]!.query)).toContain('A reviewer checked your work');
+	expect(JSON.stringify(coding[1]!.query)).toContain('The title is missing.');
+	expect(
+		detail!.entries.some((entry) => entry.type === 'message' && entry.text.includes('reviewer'))
+	).toBe(false);
 });

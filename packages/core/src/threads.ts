@@ -1,6 +1,12 @@
 export type Mode = 'small' | 'medium' | 'large';
 
-export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'discarded';
+export type ThreadStatus = 'draft' | 'running' | 'reviewing' | 'needs-you' | 'discarded';
+
+export type ReviewVerdict = 'pass' | 'fail' | 'needs-human';
+
+export type CheckVerdict = 'met' | 'unmet' | 'unverified';
+
+export const maxReviewRounds = 3;
 
 export interface Author {
 	name: string;
@@ -14,6 +20,14 @@ export interface Intent {
 }
 
 export type Entry =
+	| {
+			type: 'review';
+			id: string;
+			at: number;
+			round: number;
+			verdict: ReviewVerdict;
+			checks: CheckVerdict[];
+	  }
 	| {
 			type: 'message';
 			id: string;
@@ -37,7 +51,7 @@ export interface ThreadSummary {
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface UsageRow {
-	task: 'intent' | 'conversation' | 'attempt';
+	task: 'intent' | 'conversation' | 'attempt' | 'review';
 	model: string;
 	tokens: number;
 	cost: number | null;

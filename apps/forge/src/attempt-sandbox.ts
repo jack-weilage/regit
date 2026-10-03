@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
 import { toolchainSnapshots } from '@regit/db';
 import { db } from './db.ts';
+import { maxReviewRounds } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	codingInstructions,
@@ -10,6 +11,9 @@ import {
 	modes,
 	openaiModel,
 	readOnlyTools,
+	reviewers,
+	reviewFeedback,
+	reviewIntent,
 	runAgent,
 	runAttempt,
 	sandboxTools,
@@ -17,6 +21,7 @@ import {
 	threadInstructions,
 	type AgentOutcome,
 	type Fetch,
+	type Intent,
 	type Mode,
 	type Step,
 	type Toolchain,
@@ -27,6 +32,7 @@ export interface AttemptInput {
 	task: string;
 	mode: Mode;
 	repo: string;
+	intent?: Intent;
 }
 
 export interface ConverseInput {
@@ -37,7 +43,8 @@ export interface ConverseInput {
 	entry: string;
 }
 
-export type AttemptStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'failed' | 'cancelled';
+export type AttemptStatus =
+	'queued' | 'running' | 'reviewing' | 'finished' | 'stopped' | 'failed' | 'cancelled';
 
 export interface AttemptSnapshot {
 	status: AttemptStatus;
@@ -69,6 +76,8 @@ type AttemptRow = {
 	error: string | null;
 	toolchain: string | null;
 	restored: number | null;
+	intent: string | null;
+	base: string | null;
 };
 
 type StepRow = {
@@ -115,6 +124,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 				toolchain TEXT,
 				restored INTEGER
 			);
+			CREATE TABLE IF NOT EXISTS reviews (
+				round INTEGER PRIMARY KEY,
+				verdict TEXT NOT NULL,
+				checks TEXT NOT NULL,
+				findings TEXT NOT NULL
+			);
 			CREATE TABLE IF NOT EXISTS conversation (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
 				turns TEXT NOT NULL
@@ -138,9 +153,15 @@ export class AttemptSandbox extends DurableObject<Env> {
 				checkpoint TEXT
 			);
 		`);
-		const inbox = this.#sql.exec<{ name: string }>('PRAGMA table_info(inbox)').toArray();
-		if (!inbox.some((column) => column.name === 'entry')) {
-			this.#sql.exec('ALTER TABLE inbox ADD COLUMN entry TEXT');
+		for (const [table, column] of [
+			['inbox', 'entry'],
+			['attempt', 'intent'],
+			['attempt', 'base']
+		] as const) {
+			const columns = this.#sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
+			if (!columns.some(({ name }) => name === column)) {
+				this.#sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+			}
 		}
 	}
 
@@ -152,13 +173,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (!attempt || !isActive(attempt.status)) await this.ctx.storage.setAlarm(Date.now());
 	}
 
-	async start({ task, mode, repo }: AttemptInput) {
+	async start({ task, mode, repo, intent }: AttemptInput) {
 		if (this.#attempt()) throw new Error('This attempt has already started');
 		this.#sql.exec(
-			`INSERT INTO attempt (id, task, mode, repo, status) VALUES (1, ?, ?, ?, 'queued')`,
+			`INSERT INTO attempt (id, task, mode, repo, status, intent) VALUES (1, ?, ?, ?, 'queued', ?)`,
 			task,
 			mode,
-			repo
+			repo,
+			intent ? JSON.stringify(intent) : null
 		);
 		await this.ctx.storage.setAlarm(Date.now());
 	}
@@ -264,16 +286,23 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #runAttempt(attempt: AttemptRow) {
-		this.#setStatus('running');
+		const resumingReview = attempt.status === 'reviewing';
+		if (!resumingReview) this.#setStatus('running');
 
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
 		try {
-			const pending = await this.#drain(attempt.repo);
-			if (pending.length) this.#saveStep({ turns: pending });
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+			if (!attempt.base) {
+				attempt.base = await this.#head(fetch);
+				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
+			}
+			if (resumingReview) return await this.#review(attempt, fetch);
+
+			const pending = await this.#drain(attempt.repo);
+			if (pending.length) this.#saveStep({ turns: pending });
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
 			const run = runAttempt({
@@ -314,14 +343,86 @@ export class AttemptSandbox extends DurableObject<Env> {
 				}
 				next = await run.next();
 			}
-			if (this.#attempt()?.status === 'running') await this.#finish(attempt, outcomes[next.value]);
-		} catch (error) {
 			if (this.#attempt()?.status !== 'running') return;
+			if (next.value === 'finished' && attempt.intent) await this.#review(attempt, fetch);
+			else await this.#finish(attempt, outcomes[next.value]);
+		} catch (error) {
+			const status = this.#attempt()?.status;
+			if (status !== 'running' && status !== 'reviewing') return;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
 			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
 		} finally {
 			this.#controller = undefined;
 		}
+	}
+
+	async #review(attempt: AttemptRow, fetch: Fetch) {
+		this.#setStatus('reviewing');
+		await this.#report(attempt.repo, { type: 'status', status: 'reviewing', error: null });
+
+		const intent = JSON.parse(attempt.intent!) as Intent;
+		const round = this.#sql.exec('SELECT round FROM reviews').toArray().length + 1;
+		const { model, effort } = reviewers[attempt.mode];
+		const thread = this.ctx.id.name ?? this.ctx.id.toString();
+		const { review, usage } = await reviewIntent({
+			model: openaiModel({
+				gateway: { run: (request) => this.env.MODELS.run(request) },
+				model,
+				effort,
+				sessionId: `${thread}/review`,
+				metadata: { thread, mode: attempt.mode, task: 'review' }
+			}),
+			tools: sandboxTools(fetch, readOnlyTools),
+			intent,
+			base: attempt.base,
+			summary: this.#summary()
+		});
+		this.#sql.exec(
+			'INSERT INTO reviews (round, verdict, checks, findings) VALUES (?, ?, ?, ?)',
+			round,
+			review.verdict,
+			JSON.stringify(review.checks),
+			JSON.stringify(review.findings)
+		);
+		await this.#report(attempt.repo, {
+			type: 'review',
+			round,
+			verdict: review.verdict,
+			checks: review.checks.map((check) => check.state),
+			model,
+			usage
+		});
+
+		if (review.verdict === 'fail' && round < maxReviewRounds) {
+			this.#saveStep({ turns: [{ role: 'user', text: reviewFeedback(intent, review) }] });
+			this.#setStatus('running');
+			await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
+			await this.ctx.storage.setAlarm(Date.now());
+			return;
+		}
+		await this.#finish(attempt, 'finished');
+	}
+
+	async #head(fetch: Fetch) {
+		const output = await sandboxTools(fetch).execute({
+			id: 'base',
+			name: 'run',
+			arguments: JSON.stringify({ command: 'git rev-parse HEAD' })
+		});
+		return output.split('\n')[1]?.trim() || null;
+	}
+
+	#summary() {
+		const steps = this.#sql
+			.exec<{ turns: string }>('SELECT turns FROM steps ORDER BY seq DESC')
+			.toArray();
+		for (const row of steps) {
+			const reply = (JSON.parse(row.turns) as Turn[]).findLast(
+				(turn) => turn.role === 'assistant' && turn.text.trim()
+			);
+			if (reply?.role === 'assistant') return reply.text.trim();
+		}
+		return '';
 	}
 
 	async #finish(attempt: AttemptRow, status: AttemptStatus, error: string | null = null) {
@@ -523,7 +624,7 @@ async function digest(value: unknown) {
 }
 
 function isActive(status: AttemptStatus) {
-	return status === 'queued' || status === 'running';
+	return status === 'queued' || status === 'running' || status === 'reviewing';
 }
 
 async function waitUntilHealthy(fetch: Fetch) {

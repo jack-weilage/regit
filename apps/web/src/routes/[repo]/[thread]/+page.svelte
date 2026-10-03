@@ -10,14 +10,17 @@
 		ChatIntent,
 		ChatLog,
 		ChatMessage,
+		ChatReview,
 		DeletedThread,
 		Markdown,
 		DeleteThreadDialog,
 		ThreadView,
 		Button,
+		type CheckState,
+		type IntentStatus,
 		type ThreadAction
 	} from '@regit/ui';
-	import { threadPurgeDelayMs, type Author, type Entry } from '@regit/core';
+	import { maxReviewRounds, threadPurgeDelayMs, type Author, type Entry } from '@regit/core';
 	import {
 		deleteThread,
 		discardThread,
@@ -40,7 +43,12 @@
 		| Exclude<Entry, { type: 'message' }>;
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
-	const tasks = { intent: 'Drafting intents', conversation: 'Conversation', attempt: 'Agent' };
+	const tasks = {
+		intent: 'Drafting intents',
+		conversation: 'Conversation',
+		attempt: 'Agent',
+		review: 'Review'
+	};
 
 	let { params } = $props();
 
@@ -50,6 +58,51 @@
 	let user = $derived(await getUser());
 
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
+	let latestReview = $derived(
+		detail?.entries.findLast(
+			(entry): entry is Extract<Entry, { type: 'review' }> => entry.type === 'review'
+		)
+	);
+	let progress = $derived.by(
+		(): { status?: IntentStatus; checks?: CheckState[]; note?: string } => {
+			const status = detail?.summary.status;
+			const intent = detail?.entries.findLast((entry) => entry.type === 'intent');
+			const review = latestReview;
+			const count = intent?.type === 'intent' ? intent.intent.doneWhen.length : 0;
+			if (status === 'reviewing') {
+				return {
+					status: 'reviewing',
+					checks: Array(count).fill('checking'),
+					note: 'Reviewing against the intent'
+				};
+			}
+			if (status === 'running') {
+				if (!review) return { status: 'working', note: 'The agent is working' };
+				const gaps = review.checks.filter((check) => check !== 'met').length;
+				return {
+					status: 'working',
+					checks: review.checks,
+					note: `Round ${review.round + 1} of ${maxReviewRounds} · fixing ${gaps} ${gaps === 1 ? 'gap' : 'gaps'}`
+				};
+			}
+			if (status !== 'needs-you') return {};
+			if (!review) return { status: 'needs-you' };
+			if (review.verdict === 'pass') {
+				return { status: 'ready', checks: review.checks, note: 'Reviewed · ready to ship' };
+			}
+			const unchecked = review.checks.filter((check) => check === 'unverified').length;
+			return {
+				status: 'needs-you',
+				checks: review.checks,
+				note:
+					review.verdict === 'needs-human' && unchecked
+						? `${unchecked} ${unchecked === 1 ? "item couldn't" : "items couldn't"} be checked`
+						: review.verdict === 'needs-human'
+							? 'The reviewer needs you to decide'
+							: `Still has gaps after ${maxReviewRounds} rounds`
+			};
+		}
+	);
 	let thinking = $derived.by(() => {
 		const last = detail?.entries.at(-1);
 		return (
@@ -135,12 +188,22 @@
 						{...block.intent}
 						superseded={block.id !== latestIntent}
 						sticky={block.id === latestIntent}
-						status={block.id === latestIntent && summary.status === 'running'
-							? 'working'
-							: undefined}
+						{...block.id === latestIntent ? progress : {}}
 						onstart={block.id === latestIntent && summary.status === 'draft' && !thinking
 							? () => startThread({ repo: params.repo, id: params.thread })
 							: undefined}
+					/>
+				{:else if block.type === 'review'}
+					<ChatReview
+						verdict={block.verdict === 'pass'
+							? 'passed'
+							: block.verdict === 'fail' && block.round < maxReviewRounds
+								? 'sent-back'
+								: 'needs-you'}
+						round={block.round}
+						doneWhen={detail.entries.findLast((entry) => entry.type === 'intent')?.intent
+							.doneWhen ?? []}
+						checks={block.checks}
 					/>
 				{:else}
 					<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
@@ -150,6 +213,8 @@
 				<ChatActivity>ReGit is thinking</ChatActivity>
 			{:else if summary.status === 'running'}
 				<ChatActivity>ReGit is working</ChatActivity>
+			{:else if summary.status === 'reviewing'}
+				<ChatActivity>ReGit is reviewing the work</ChatActivity>
 			{/if}
 		</ChatLog>
 		{#snippet bottom()}
