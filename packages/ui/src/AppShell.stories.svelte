@@ -154,6 +154,8 @@
 		const sidebar = canvasElement.querySelector('aside')!;
 		canvasElement.addEventListener('click', (event) => event.preventDefault());
 		await waitFor(() => expect(sidebar).not.toBeVisible());
+		const main = canvasElement.querySelector('main')!;
+		await expect(main.offsetWidth).toBe(main.parentElement!.offsetWidth);
 		await userEvent.click(toggle);
 		await waitFor(() => expect(sidebar).toBeVisible());
 		await expect(toggle).toHaveAttribute('aria-expanded', 'true');

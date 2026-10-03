@@ -252,8 +252,8 @@
 	}
 
 	@container shell (width < 48rem) {
-		.shell {
-			grid-template-columns: minmax(0, 1fr);
+		.main {
+			grid-column: 1 / -1;
 		}
 
 		.sidebar {
