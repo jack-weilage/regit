@@ -34,6 +34,7 @@ export interface ConverseInput {
 	mode: Mode;
 	author: string;
 	text: string;
+	entry: string;
 }
 
 export type AttemptStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'failed' | 'cancelled';
@@ -137,12 +138,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 				checkpoint TEXT
 			);
 		`);
+		const inbox = this.#sql.exec<{ name: string }>('PRAGMA table_info(inbox)').toArray();
+		if (!inbox.some((column) => column.name === 'entry')) {
+			this.#sql.exec('ALTER TABLE inbox ADD COLUMN entry TEXT');
+		}
 	}
 
-	async converse({ repo, mode, author, text }: ConverseInput) {
+	async converse({ repo, mode, author, text, entry }: ConverseInput) {
 		this.#setMeta('repo', repo);
 		this.#setMeta('mode', mode);
-		this.#sql.exec('INSERT INTO inbox (author, text) VALUES (?, ?)', author, text);
+		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
 		if (!attempt || !isActive(attempt.status)) await this.ctx.storage.setAlarm(Date.now());
 	}
@@ -226,10 +231,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 				intentTools((intent) => coordinator.intentProposed(thread, intent))
 			);
 
-			for (let messages = this.#takeInbox(); messages.length; messages = this.#takeInbox()) {
-				this.#saveConversation(
-					messages.map(({ author, text }) => ({ role: 'user', text: `${author}: ${text}` }))
-				);
+			for (let turns = await this.#drain(repo); turns.length; turns = await this.#drain(repo)) {
+				this.#saveConversation(turns);
 				const history = this.#sql
 					.exec<{ turns: string }>('SELECT turns FROM conversation ORDER BY seq')
 					.toArray()
@@ -239,12 +242,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 						gateway: { run: (request) => this.env.MODELS.run(request) },
 						model,
 						effort,
-						sessionId: `${this.ctx.id.toString()}/conversation`,
+						sessionId: `${thread}/conversation`,
 						metadata: { thread, mode, task: 'conversation' }
 					}),
 					tools,
 					instructions: threadInstructions,
-					history
+					history,
+					steer: () => this.#drain(repo)
 				});
 				for await (const event of run) {
 					if (event.type !== 'step') continue;
@@ -265,6 +269,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
 		try {
+			const pending = await this.#drain(attempt.repo);
+			if (pending.length) this.#saveStep({ turns: pending });
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
@@ -291,7 +297,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 				push: { ref: fork.branch },
 				instructions: codingInstructions,
 				history: this.#history(attempt),
-				signal: controller.signal
+				signal: controller.signal,
+				steer: () => this.#drain(attempt.repo)
 			});
 
 			let next = await run.next();
@@ -344,10 +351,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 		);
 	}
 
-	#takeInbox() {
-		return this.#sql
-			.exec<{ author: string; text: string }>('DELETE FROM inbox RETURNING author, text')
+	async #drain(repo: string): Promise<Turn[]> {
+		const messages = this.#sql
+			.exec<{
+				author: string;
+				text: string;
+				entry: string | null;
+			}>('DELETE FROM inbox RETURNING author, text, entry')
 			.toArray();
+		const entries = messages.flatMap((message) => (message.entry ? [message.entry] : []));
+		if (entries.length) await this.#report(repo, { type: 'read', entries });
+		return messages.map(({ author, text }) => ({ role: 'user', text: `${author}: ${text}` }));
 	}
 
 	#saveConversation(turns: Turn[]) {

@@ -1,16 +1,22 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import StatusIcon from '../StatusIcon.svelte';
 
 	interface Props {
+		steering?: boolean;
+		pending?: boolean;
 		children: Snippet;
 	}
 
-	let { children }: Props = $props();
+	let { steering = false, pending = false, children }: Props = $props();
 </script>
 
-<div class="message chat-enter">
+<div class={['message', 'chat-enter', { steering }]}>
 	{@render children()}
 </div>
+{#if steering && pending}
+	<p class="pending"><StatusIcon state="running" />Steering</p>
+{/if}
 
 <style>
 	.message {
@@ -34,7 +40,7 @@
 		.message {
 			border-start-start-radius: var(--tight);
 
-			&:not(:last-child) {
+			&:not(:last-of-type) {
 				border-end-start-radius: var(--tight);
 			}
 		}
@@ -45,10 +51,32 @@
 			max-inline-size: min(36rem, 85%);
 			border-start-end-radius: var(--tight);
 
-			&:not(:last-child) {
+			&:not(:last-of-type) {
 				border-end-end-radius: var(--tight);
 			}
 		}
+	}
+
+	.steering {
+		outline: 1px dashed color-mix(in oklab, var(--color-accent) 60%, var(--color-border));
+		outline-offset: -1px;
+	}
+
+	@container style(--chat-role: person) or style(--chat-role: own) {
+		.steering {
+			background: none;
+		}
+	}
+
+	.pending {
+		--icon-size: 1em;
+
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-3);
+		margin: 0;
+		color: var(--color-muted);
+		font-size: var(--text-meta);
 	}
 
 	.message :global {

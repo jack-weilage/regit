@@ -14,7 +14,14 @@ export interface Intent {
 }
 
 export type Entry =
-	| { type: 'message'; id: string; at: number; author: Author; text: string }
+	| {
+			type: 'message';
+			id: string;
+			at: number;
+			author: Author;
+			text: string;
+			steering?: { read: boolean };
+	  }
 	| { type: 'intent'; id: string; at: number; intent: Intent }
 	| { type: 'event'; id: string; at: number; text: string };
 

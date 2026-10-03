@@ -123,4 +123,63 @@ describe('runAgent', () => {
 
 		expect(outcome).toBe('aborted');
 	});
+
+	test('reads steering messages after each tool call', async () => {
+		const { model, requests } = scriptedModel([
+			[call('c1', 'read_file', { path: 'a.ts' }), { type: 'done', usage }],
+			[
+				{ type: 'text', delta: 'Done.' },
+				{ type: 'done', usage }
+			]
+		]);
+		const { tools } = fakeTools({ read_file: () => 'contents' });
+		const inbox = [[{ role: 'user', text: 'Sam: use b.ts instead' }] as const];
+
+		const { events, outcome } = await collect(
+			runAgent({
+				model,
+				tools,
+				instructions: '',
+				history: [{ role: 'user', text: 'Fix a.ts' }],
+				steer: () => [...(inbox.shift() ?? [])]
+			})
+		);
+
+		expect(outcome).toBe('finished');
+		expect(requests[1]!.history.at(-1)).toEqual({ role: 'user', text: 'Sam: use b.ts instead' });
+		const steps = events.filter((event) => event.type === 'step');
+		expect(steps[0]!.turns.map((turn) => turn.role)).toEqual(['assistant', 'tool', 'user']);
+	});
+
+	test('keeps going when a steering message arrives as the agent finishes', async () => {
+		const { model, requests } = scriptedModel([
+			[
+				{ type: 'text', delta: 'All done.' },
+				{ type: 'done', usage }
+			],
+			[
+				{ type: 'text', delta: 'Renamed it too.' },
+				{ type: 'done', usage }
+			]
+		]);
+		const { tools } = fakeTools({});
+		const inbox = [[{ role: 'user', text: 'Sam: also rename it' }] as const];
+
+		const { outcome } = await collect(
+			runAgent({
+				model,
+				tools,
+				instructions: '',
+				history: [{ role: 'user', text: 'Fix it' }],
+				steer: () => [...(inbox.shift() ?? [])]
+			})
+		);
+
+		expect(outcome).toBe('finished');
+		expect(requests).toHaveLength(2);
+		expect(requests[1]!.history.slice(-2)).toEqual([
+			{ role: 'assistant', text: 'All done.', calls: [] },
+			{ role: 'user', text: 'Sam: also rename it' }
+		]);
+	});
 });

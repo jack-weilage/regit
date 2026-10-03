@@ -176,3 +176,9 @@ describe('openaiModel', () => {
 		});
 	});
 });
+
+test('rejects session ids longer than prompt caching allows', () => {
+	expect(() =>
+		openaiModel({ gateway: { run: () => Promise.reject() }, model: 'm', sessionId: 'x'.repeat(65) })
+	).toThrow('at most 64 characters');
+});

@@ -27,7 +27,8 @@ export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string } }
 	| { type: 'status'; status: AttemptStatus; error: string | null }
 	| { type: 'reply'; step: Step }
-	| { type: 'conversation-failed'; error: string };
+	| { type: 'conversation-failed'; error: string }
+	| { type: 'read'; entries: string[] };
 
 type ThreadRow = {
 	id: string;
@@ -117,15 +118,23 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			mode,
 			Date.now()
 		);
-		this.#add(id, { type: 'message', author, text });
-		await this.#converse(id, mode, author, text);
+		const entry = this.#add(id, { type: 'message', author, text });
+		await this.#converse(id, mode, author, text, entry);
 		return this.#summary(id)!;
 	}
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
-		this.#add(thread, { type: 'message', author, text });
-		if (summary.status === 'draft') await this.#converse(thread, summary.mode, author, text);
+		const steering = summary.status === 'running';
+		const entry = this.#add(thread, {
+			type: 'message',
+			author,
+			text,
+			...(steering && { steering: { read: false } })
+		});
+		if (steering || summary.status === 'draft') {
+			await this.#converse(thread, summary.mode, author, text, entry);
+		}
 	}
 
 	async start(thread: string) {
@@ -235,6 +244,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	attemptUpdated(thread: string, update: AttemptUpdate) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
+		if (update.type === 'read') {
+			for (const id of update.entries) this.#markRead(thread, id);
+			return;
+		}
 		if (update.type === 'conversation-failed') {
 			this.#add(thread, { type: 'event', text: `Couldn't reply: ${update.error}` });
 			return;
@@ -279,13 +292,27 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
-	async #converse(thread: string, mode: Mode, author: Author, text: string) {
+	async #converse(thread: string, mode: Mode, author: Author, text: string, entry: string) {
 		await this.env.ATTEMPTS.getByName(thread).converse({
 			repo: this.#repo(),
 			mode,
 			author: author.name,
-			text
+			text,
+			entry
 		});
+	}
+
+	#markRead(thread: string, id: string) {
+		const seq = Number(id.slice(1));
+		const [row] = this.#sql
+			.exec<{ body: string }>('SELECT body FROM entries WHERE seq = ? AND thread = ?', seq, thread)
+			.toArray();
+		if (!row) return;
+		const entry = JSON.parse(row.body) as Entry;
+		if (entry.type !== 'message' || !entry.steering || entry.steering.read) return;
+		const read = { ...entry, steering: { read: true } };
+		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(read), seq);
+		this.#broadcast({ type: 'entry', thread, entry: read });
 	}
 
 	#add(thread: string, entry: DistributiveOmit<Entry, 'id' | 'at'>) {
@@ -300,6 +327,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(full), seq);
 		this.#broadcast({ type: 'entry', thread, entry: full });
 		this.#touch(thread);
+		return full.id;
 	}
 
 	#recordUsage(thread: string, task: UsageRow['task'], model: string, usage: Usage) {

@@ -40,6 +40,7 @@ export function openaiModel({
 	metadata,
 	maxRetries
 }: OpenAIModelOptions): ModelClient {
+	if (sessionId.length > 64) throw new Error(`Session ids are at most 64 characters: ${sessionId}`);
 	const client = new OpenAI({
 		apiKey: 'ai-gateway',
 		baseURL: 'https://ai-gateway.invalid/v1',

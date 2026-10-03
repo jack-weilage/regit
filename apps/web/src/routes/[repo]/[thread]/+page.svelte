@@ -34,7 +34,7 @@
 				id: string;
 				at: number;
 				author: Author;
-				messages: { id: string; text: string }[];
+				messages: { id: string; text: string; steering?: { read: boolean } }[];
 		  }
 		| Exclude<Entry, { type: 'message' }>;
 
@@ -124,7 +124,9 @@
 						own={block.author.kind === 'person' && block.author.name === user.name}
 					>
 						{#each block.messages as message (message.id)}
-							<ChatMessage>{message.text}</ChatMessage>
+							<ChatMessage steering={!!message.steering} pending={message.steering?.read === false}
+								>{message.text}</ChatMessage
+							>
 						{/each}
 					</ChatGroup>
 				{:else if block.type === 'intent'}

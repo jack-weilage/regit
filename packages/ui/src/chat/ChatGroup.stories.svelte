@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import ChatGroup from './ChatGroup.svelte';
+	import { expect, waitFor } from 'storybook/test';
 	import ChatMessage from './ChatMessage.svelte';
 
 	const time = new Date('2026-10-02T14:02:00');
@@ -42,4 +43,15 @@
 ]);</code
 			></pre>
 	</ChatMessage>
+</Story>
+
+<Story
+	name="Steering"
+	args={{ author: { name: 'Sam Rivera', kind: 'person' }, time, own: true }}
+	play={async ({ canvas }) => {
+		await waitFor(() => expect(canvas.getAllByText('Steering')).toHaveLength(1));
+	}}
+>
+	<ChatMessage steering><p>Use the existing <code>usePager</code> hook instead.</p></ChatMessage>
+	<ChatMessage steering pending><p>And keep the old endpoint working.</p></ChatMessage>
 </Story>

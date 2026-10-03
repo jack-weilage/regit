@@ -432,3 +432,68 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'# Notes\n\nSome notes'
 	);
 });
+
+test('steers a running attempt with messages read after the current step', async () => {
+	await seed('steer', { 'notes.md': 'Some notes\n' });
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'propose',
+					name: 'propose_intent',
+					arguments: JSON.stringify({
+						headline: 'docs: add a title',
+						purpose: 'Readers need a title.',
+						doneWhen: ['notes.md starts with a title']
+					})
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }],
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'call_1',
+					name: 'write_file',
+					arguments: JSON.stringify({ path: 'notes.md', content: '# Notes\n\nSome notes\n' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Kept it short.' }]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('steer');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'steer',
+		author: sam,
+		text: 'Add a title.',
+		mode: 'small'
+	});
+	for (let i = 0; i < 100; i++) {
+		const last = (await repo.thread(id))!.entries.at(-1);
+		if (last?.type === 'message' && last.text === 'Proposed.') break;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+
+	await repo.start(id);
+	await repo.reply(id, { author: sam, text: 'Keep the title short.' });
+	let detail = await repo.thread(id);
+	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		detail = await repo.thread(id);
+	}
+
+	expect(detail!.summary.status).toBe('needs-you');
+	expect(detail!.entries.find((entry) => entry.type === 'message' && entry.steering)).toMatchObject(
+		{ text: 'Keep the title short.', steering: { read: true } }
+	);
+	const coding = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
+	);
+	expect(JSON.stringify(coding.at(-1)!.query)).toContain('Sam: Keep the title short.');
+});

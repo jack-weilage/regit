@@ -15,6 +15,7 @@ export interface AgentOptions {
 	history: Turn[];
 	maxSteps?: number;
 	signal?: AbortSignal;
+	steer?: () => Turn[] | Promise<Turn[]>;
 }
 
 export type AgentOutcome = 'finished' | 'step-limit' | 'aborted';
@@ -25,7 +26,8 @@ export async function* runAgent({
 	instructions,
 	history,
 	maxSteps = 50,
-	signal
+	signal,
+	steer
 }: AgentOptions): AsyncGenerator<AgentEvent, AgentOutcome> {
 	const turns = [...history];
 
@@ -57,8 +59,11 @@ export async function* runAgent({
 		const reply: Turn = { role: 'assistant', text, calls, ...(reasoning.length && { reasoning }) };
 
 		if (calls.length === 0) {
-			yield { type: 'step', turns: [reply], usage };
-			return 'finished';
+			const steered = (await steer?.()) ?? [];
+			yield { type: 'step', turns: [reply, ...steered], usage };
+			if (!steered.length) return 'finished';
+			turns.push(reply, ...steered);
+			continue;
 		}
 
 		const results: ToolResult[] = [];
@@ -72,7 +77,7 @@ export async function* runAgent({
 			yield { type: 'result', result };
 		}
 
-		const step: Turn[] = [reply, { role: 'tool', results }];
+		const step: Turn[] = [reply, { role: 'tool', results }, ...((await steer?.()) ?? [])];
 		turns.push(...step);
 		yield { type: 'step', turns: step, usage };
 	}
