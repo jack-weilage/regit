@@ -20,7 +20,12 @@
 			actions: [
 				{ label: 'Copy link', onselect: fn() },
 				{ label: 'Try another approach', onselect: fn() },
-				{ label: 'Discard', onselect: discard }
+				{
+					label: 'Discard thread',
+					detail: 'Stops the attempt, keeps the conversation',
+					onselect: discard
+				},
+				{ label: 'Delete thread…', separated: true, danger: true, onselect: fn() }
 			],
 			onpreview: fn()
 		}
@@ -35,7 +40,10 @@
 		await userEvent.click(canvas.getByRole('button', { name: 'Thread actions' }));
 		await waitFor(() => expect(canvas.getByRole('menuitem', { name: 'Copy link' })).toHaveFocus());
 		await userEvent.keyboard('{ArrowUp}');
-		await expect(canvas.getByRole('menuitem', { name: 'Discard' })).toHaveFocus();
+		await expect(canvas.getByRole('menuitem', { name: 'Delete thread…' })).toHaveFocus();
+		await expect(canvas.getByRole('separator')).toBeInTheDocument();
+		await userEvent.keyboard('{ArrowUp}');
+		await expect(canvas.getByRole('menuitem', { name: /Discard thread/ })).toHaveFocus();
 		await userEvent.keyboard('{Enter}');
 		await expect(discard).toHaveBeenCalledOnce();
 		await waitFor(() => expect(canvas.getByRole('menu')).not.toBeVisible());

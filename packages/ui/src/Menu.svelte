@@ -4,6 +4,7 @@
 		detail?: string;
 		checked?: boolean;
 		separated?: boolean;
+		danger?: boolean;
 		onselect: () => void;
 	}
 </script>
@@ -72,6 +73,7 @@
 			<button
 				type="button"
 				role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+				class={{ danger: item.danger }}
 				aria-checked={item.checked}
 				onclick={() => select(item)}
 			>
@@ -117,6 +119,10 @@
 				outline: 0;
 			}
 		}
+	}
+
+	.danger {
+		color: var(--color-danger-text);
 	}
 
 	.separator {

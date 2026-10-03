@@ -240,6 +240,49 @@ test('records a failed intent draft in the thread', async () => {
 	});
 });
 
+test('discards, reopens, deletes, restores and purges a thread', async () => {
+	const offline = [{ type: 'response.failed', response: { error: { message: 'Offline' } } }];
+	await script([offline, offline]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('lifecycle');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({ author: sam, text: 'Try something.', mode: 'small' });
+
+	await repo.discard(id, sam);
+	expect((await repo.thread(id))!.summary.status).toBe('discarded');
+	await repo.reopen(id, sam);
+	const reopened = await repo.thread(id);
+	expect(reopened!.summary.status).toBe('draft');
+	expect(reopened!.entries.map((entry) => entry.type === 'event' && entry.text)).toEqual(
+		expect.arrayContaining(['Discarded by Sam', 'Reopened by Sam'])
+	);
+
+	await repo.delete(id, sam);
+	expect(await repo.threads()).toEqual([]);
+	expect(await repo.thread(id)).toMatchObject({
+		summary: { deleted: { by: 'Sam' } },
+		entries: []
+	});
+	await expect(
+		Promise.resolve().then(() => repo.reply(id, { author: sam, text: 'Hello?' }))
+	).rejects.toThrow();
+
+	await repo.restore(id);
+	expect(await repo.threads()).toMatchObject([{ id, deleted: null }]);
+
+	await repo.delete(id, sam);
+	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'lifecycle' });
+	await sql.exec('UPDATE threads SET deleted_at = deleted_at - ? WHERE id = ?', 8 * 86_400_000, id);
+	const later = await repo.openThread({ author: sam, text: 'Another try.', mode: 'small' });
+	await repo.delete(later.id, sam);
+
+	for (let i = 0; i < 50 && (await repo.thread(id)); i++) {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	expect(await repo.thread(id)).toBeNull();
+	expect(await repo.thread(later.id)).toMatchObject({ summary: { deleted: { by: 'Sam' } } });
+});
+
 test('coordinates a thread from conversation to a finished attempt, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
 	const propose = (headline: string) => [

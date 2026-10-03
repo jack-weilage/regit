@@ -18,6 +18,7 @@
 		await expect(args.onclick).toHaveBeenCalledOnce();
 	}}>Start</Story
 >
+<Story name="Danger" args={{ variant: 'danger' }}>Delete thread</Story>
 <Story name="Quiet">Dismiss</Story>
 <Story name="Ghost" args={{ variant: 'ghost' }}>24% context</Story>
 <Story name="Small" args={{ variant: 'primary', size: 'sm' }}>Spin off</Story>

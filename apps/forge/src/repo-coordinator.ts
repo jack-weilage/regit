@@ -10,6 +10,7 @@ import type {
 	ThreadStatus,
 	ThreadSummary
 } from '@regit/core';
+import { threadPurgeDelayMs } from '@regit/core';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
@@ -22,6 +23,9 @@ type ThreadRow = {
 	status: ThreadStatus;
 	mode: Mode;
 	updated_at: number;
+	reopen_status: ThreadStatus | null;
+	deleted_at: number | null;
+	deleted_by: string | null;
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
@@ -46,6 +50,19 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			);
 			CREATE INDEX IF NOT EXISTS entries_by_thread ON entries (thread, seq);
 		`);
+		const columns = new Set(
+			this.#sql
+				.exec<{ name: string }>('PRAGMA table_info(threads)')
+				.toArray()
+				.map((column) => column.name)
+		);
+		for (const [name, type] of [
+			['reopen_status', 'TEXT'],
+			['deleted_at', 'INTEGER'],
+			['deleted_by', 'TEXT']
+		]) {
+			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
+		}
 	}
 
 	async openThread({
@@ -70,13 +87,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
-		const summary = this.#require(thread);
+		const summary = this.#active(thread);
 		this.#add(thread, { type: 'message', author, text });
 		if (summary.status === 'draft') this.ctx.waitUntil(this.#redraft(thread));
 	}
 
 	async start(thread: string) {
-		const summary = this.#require(thread);
+		const summary = this.#active(thread);
 		if (summary.status !== 'draft') throw new Error('This thread has already started');
 		const intent = this.#latestIntent(thread);
 		if (!intent) throw new Error('This thread has no intent to start');
@@ -91,9 +108,67 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setStatus(thread, 'running');
 	}
 
+	async discard(thread: string, by: Author) {
+		const summary = this.#active(thread);
+		if (summary.status === 'discarded') return;
+		const reopen = summary.status === 'running' ? 'needs-you' : summary.status;
+		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
+		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
+		this.#setStatus(thread, 'discarded');
+		if (summary.status === 'running') await this.env.ATTEMPTS.getByName(thread).cancel();
+	}
+
+	reopen(thread: string, by: Author) {
+		const summary = this.#active(thread);
+		if (summary.status !== 'discarded') return;
+		const [row] = this.#sql
+			.exec<Pick<ThreadRow, 'reopen_status'>>(
+				'SELECT reopen_status FROM threads WHERE id = ?',
+				thread
+			)
+			.toArray();
+		this.#add(thread, { type: 'event', text: `Reopened by ${by.name}` });
+		this.#setStatus(thread, row?.reopen_status ?? 'needs-you');
+	}
+
+	// TODO: once threads ship, keep a tombstone (headline, author, commit) instead of purging shipped threads
+	async delete(thread: string, by: Author) {
+		const summary = this.#active(thread);
+		this.#sql.exec(
+			'UPDATE threads SET deleted_at = ?, deleted_by = ? WHERE id = ?',
+			Date.now(),
+			by.name,
+			thread
+		);
+		this.#touch(thread);
+		await this.#schedulePurge();
+		if (summary.status === 'running') await this.env.ATTEMPTS.getByName(thread).cancel();
+	}
+
+	restore(thread: string) {
+		this.#require(thread);
+		this.#sql.exec('UPDATE threads SET deleted_at = NULL, deleted_by = NULL WHERE id = ?', thread);
+		this.#touch(thread);
+	}
+
+	override async alarm() {
+		const due = this.#sql
+			.exec<{ id: string }>(
+				'SELECT id FROM threads WHERE deleted_at IS NOT NULL AND deleted_at <= ?',
+				Date.now() - threadPurgeDelayMs
+			)
+			.toArray();
+		for (const { id } of due) {
+			await this.env.ATTEMPTS.getByName(id).destroy();
+			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
+			this.#sql.exec('DELETE FROM threads WHERE id = ?', id);
+		}
+		await this.#schedulePurge();
+	}
+
 	threads(): ThreadSummary[] {
 		return this.#sql
-			.exec<ThreadRow>('SELECT * FROM threads ORDER BY updated_at DESC')
+			.exec<ThreadRow>('SELECT * FROM threads WHERE deleted_at IS NULL ORDER BY updated_at DESC')
 			.toArray()
 			.map(toSummary);
 	}
@@ -101,6 +176,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	thread(id: string): ThreadDetail | null {
 		const summary = this.#summary(id);
 		if (!summary) return null;
+		if (summary.deleted) return { summary, entries: [] };
 		const rows = this.#sql
 			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq', id)
 			.toArray();
@@ -219,6 +295,22 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return summary;
 	}
 
+	#active(id: string) {
+		const summary = this.#require(id);
+		if (summary.deleted) throw new Error(`Thread ${id} was deleted`);
+		return summary;
+	}
+
+	async #schedulePurge() {
+		const [next] = this.#sql
+			.exec<{ at: number | null }>(
+				'SELECT MIN(deleted_at) AS at FROM threads WHERE deleted_at IS NOT NULL'
+			)
+			.toArray();
+		if (next?.at) await this.ctx.storage.setAlarm(next.at + threadPurgeDelayMs);
+		else await this.ctx.storage.deleteAlarm();
+	}
+
 	#latestIntent(thread: string) {
 		return this.thread(thread)
 			?.entries.filter((entry) => entry.type === 'intent')
@@ -240,6 +332,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		headline: row.headline,
 		status: row.status,
 		mode: row.mode,
-		updatedAt: row.updated_at
+		updatedAt: row.updated_at,
+		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' }
 	};
 }

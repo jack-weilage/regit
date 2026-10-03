@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		ChatActivity,
+		ChatBanner,
 		ChatComposer,
 		ChatEvent,
 		ChatFooter,
@@ -9,10 +10,25 @@
 		ChatIntent,
 		ChatLog,
 		ChatMessage,
-		ThreadView
+		DeletedThread,
+		DeleteThreadDialog,
+		ThreadView,
+		Button,
+		type ThreadAction
 	} from '@regit/ui';
-	import type { Author, Entry } from '@regit/core';
-	import { getThread, getUser, reply, startThread } from '#lib/data.remote.ts';
+	import { goto } from '$app/navigation';
+	import { threadPurgeDelayMs, type Author, type Entry } from '@regit/core';
+	import {
+		deleteThread,
+		discardThread,
+		getThread,
+		getUser,
+		reopenThread,
+		reply,
+		restoreThread,
+		startThread
+	} from '#lib/data.remote.ts';
+	import { getToasts } from '#lib/toasts.svelte.ts';
 
 	type Block =
 		| {
@@ -28,6 +44,10 @@
 
 	let { params } = $props();
 
+	const toasts = getToasts();
+
+	let deleting = $state(false);
+
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
 	let user = $derived(await getUser());
 
@@ -40,6 +60,44 @@
 			last.author.kind === 'person'
 		);
 	});
+	let ref = $derived({ repo: params.repo, id: params.thread });
+	let actions = $derived.by<ThreadAction[]>(() => {
+		const status = detail?.summary.status;
+		return [
+			{ label: 'Copy link', onselect: () => navigator.clipboard.writeText(location.href) },
+			status === 'discarded'
+				? { label: 'Reopen thread', detail: 'Pick up where it left off', onselect: reopen }
+				: {
+						label: 'Discard thread',
+						detail: 'Stops the attempt, keeps the conversation',
+						onselect: () => discardThread(ref)
+					},
+			{ label: 'Delete thread…', separated: true, danger: true, onselect: () => (deleting = true) }
+		];
+	});
+
+	function reopen() {
+		reopenThread(ref);
+	}
+
+	async function remove() {
+		const { repo, id } = ref;
+		const headline = detail?.summary.headline;
+		await deleteThread({ repo, id });
+		await goto(`/${repo}`);
+		toasts.show({
+			text: 'Deleted',
+			code: headline || 'the thread',
+			action: {
+				label: 'Undo',
+				onclick: async () => {
+					await restoreThread({ repo, id });
+					await goto(`/${repo}/${id}`);
+				}
+			}
+		});
+	}
+
 	let blocks = $derived(
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
 			const last = blocks.at(-1);
@@ -63,11 +121,24 @@
 	<title>{detail?.summary.headline || 'Thread'} · ReGit</title>
 </svelte:head>
 
-{#if detail}
+{#if detail?.summary.deleted}
+	{@const { deleted } = detail.summary}
+	<DeletedThread
+		deletedBy={deleted.by}
+		deletedAt={deleted.at}
+		purgeAt={deleted.at + threadPurgeDelayMs}
+		back="/{params.repo}"
+		onrestore={() => restoreThread(ref)}
+	/>
+{:else if detail}
 	{@const { summary } = detail}
 	<ThreadView>
 		{#snippet header()}
-			<ChatHeader headline={summary.headline || 'Drafting an intent…'} status={summary.status} />
+			<ChatHeader
+				headline={summary.headline || 'Drafting an intent…'}
+				status={summary.status}
+				{actions}
+			/>
 		{/snippet}
 		<ChatLog label="Thread messages">
 			{#each blocks as block (block.id)}
@@ -100,14 +171,34 @@
 			{/if}
 		</ChatLog>
 		{#snippet bottom()}
-			<ChatComposer
-				placeholder={summary.status === 'draft' ? 'Refine the intent' : 'Reply to ReGit'}
-				onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
-			/>
+			{#if summary.status === 'discarded'}
+				<ChatBanner>
+					This thread was discarded. The conversation is read-only.
+					{#snippet actions()}
+						<Button size="sm" onclick={reopen}>Reopen</Button>
+					{/snippet}
+				</ChatBanner>
+			{:else}
+				<ChatComposer
+					placeholder={summary.status === 'draft' ? 'Refine the intent' : 'Reply to ReGit'}
+					onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
+				/>
+			{/if}
 			<!-- TODO: show real context and usage once the coordinator keeps a usage ledger -->
 			<ChatFooter mode={modes[summary.mode]} context={{ used: 0, limit: 272_000 }} usage={[]} />
 		{/snippet}
 	</ThreadView>
+	<DeleteThreadDialog
+		bind:open={deleting}
+		headline={summary.headline || 'This thread'}
+		messages={detail.entries.filter((entry) => entry.type === 'message').length}
+		checkpoints={detail.entries.filter(
+			(entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint')
+		).length}
+		running={summary.status === 'running'}
+		restoreDays={threadPurgeDelayMs / 86_400_000}
+		onconfirm={remove}
+	/>
 {:else}
 	<p class="missing">This thread doesn't exist.</p>
 {/if}

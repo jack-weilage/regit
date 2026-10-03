@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { env } from 'cloudflare:workers';
+import { coordinatorFor } from '#lib/server/coordinators.ts';
 import { repoExists } from '#lib/server/repos.ts';
 import type { RequestHandler } from './$types';
 
@@ -7,7 +7,7 @@ const heartbeat = 25_000;
 
 export const GET: RequestHandler = async ({ params, request }) => {
 	if (!(await repoExists(params.repo))) error(404);
-	const response = await env.REPOS.getByName(params.repo).fetch('https://repo/live', {
+	const response = await coordinatorFor(params.repo).fetch('https://repo/live', {
 		headers: { Upgrade: 'websocket' }
 	});
 	const socket = response.webSocket;
@@ -16,18 +16,29 @@ export const GET: RequestHandler = async ({ params, request }) => {
 
 	const encoder = new TextEncoder();
 	let timer: ReturnType<typeof setInterval> | undefined;
+	let closed = false;
+
+	function stop() {
+		closed = true;
+		clearInterval(timer);
+		socket!.close();
+	}
+
 	const stream = new ReadableStream<Uint8Array>({
 		start(controller) {
-			const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
+			const send = (chunk: string) => {
+				if (!closed) controller.enqueue(encoder.encode(chunk));
+			};
 			socket.addEventListener('message', (event) => send(`data: ${event.data}\n\n`));
-			socket.addEventListener('close', () => controller.close());
+			socket.addEventListener('close', () => {
+				if (closed) return;
+				stop();
+				controller.close();
+			});
 			timer = setInterval(() => send(': ping\n\n'), heartbeat);
-			request.signal.addEventListener('abort', () => socket.close());
+			request.signal.addEventListener('abort', stop);
 		},
-		cancel() {
-			clearInterval(timer);
-			socket.close();
-		}
+		cancel: stop
 	});
 
 	return new Response(stream, {

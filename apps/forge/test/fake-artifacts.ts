@@ -52,4 +52,8 @@ export default class FakeArtifacts extends WorkerEntrypoint<FakeEnv> {
 	get(name: string) {
 		return new FakeRepo(this.env, name);
 	}
+
+	delete() {
+		return true;
+	}
 }

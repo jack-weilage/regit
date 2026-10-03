@@ -26,6 +26,8 @@
 	--color-border: light-dark(#e4e4e7, #27272a);
 	--color-accent: light-dark(#ea580c, #fb923c);
 	--color-accent-fg: #0e0e10;
+	--color-danger: #dc2626;
+	--color-danger-text: light-dark(#b91c1c, #f87171);
 }
 
 body {

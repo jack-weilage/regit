@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { AppShell, type Mode, type ThreadListItem } from '@regit/ui';
+	import { AppShell, Toast, type Mode, type ThreadListItem } from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
 	import type { LiveMessage } from '@regit/core';
 	import { getRepos, getThread, getThreads, getUser, openThread } from '#lib/data.remote.ts';
 	import { createAndOpen } from '#lib/repos.ts';
+	import { setToasts, Toasts } from '#lib/toasts.svelte.ts';
 
 	let { children, params } = $props();
 
 	let mode = $state<Mode>('medium');
+
+	const toasts = setToasts(new Toasts());
 
 	let repo = $derived(params.repo);
 	let user = $derived(await getUser());
@@ -59,6 +62,15 @@
 	>
 		{@render children()}
 	</AppShell>
+	{#if toasts.current}
+		{@const toast = toasts.current}
+		{#key toast.id}
+			<Toast action={toast.action} ondismiss={() => toasts.dismiss()}>
+				{toast.text}
+				{#if toast.code}<code>{toast.code}</code>{/if}
+			</Toast>
+		{/key}
+	{/if}
 </div>
 
 <style>

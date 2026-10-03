@@ -154,6 +154,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
 	}
 
+	async destroy() {
+		await this.cancel();
+		const fork = this.#attempt()?.fork;
+		if (fork) await this.env.ARTIFACTS.delete(fork);
+		await this.ctx.storage.deleteAlarm();
+		await this.ctx.storage.deleteAll();
+	}
+
 	override async alarm() {
 		const attempt = this.#attempt();
 		if (!attempt || !isActive(attempt.status)) return;

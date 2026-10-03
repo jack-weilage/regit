@@ -263,7 +263,7 @@
 		margin: 0;
 		padding: var(--space-5) var(--space-6);
 		border-block-start: 1px solid var(--color-border);
-		color: light-dark(#b91c1c, #f87171);
+		color: var(--color-danger-text);
 	}
 
 	.options {

@@ -10,7 +10,11 @@
 	let { mention }: Props = $props();
 </script>
 
-<svelte:element this={mention.href ? 'a' : 'span'} class="mention" href={mention.href}>
+<svelte:element
+	this={mention.href && !mention.deleted ? 'a' : 'span'}
+	class={['mention', { deleted: mention.deleted }]}
+	href={mention.deleted ? undefined : mention.href}
+>
 	{#if mention.kind === 'thread'}
 		<ThreadIcon />
 	{:else}
@@ -49,6 +53,14 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.deleted {
+		color: var(--color-muted);
+
+		.label {
+			text-decoration: line-through;
+		}
 	}
 
 	a.mention:hover {

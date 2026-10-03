@@ -66,3 +66,27 @@ export const startThread = command(thread, async ({ repo, id }) => {
 	getThread({ repo, id }).refresh();
 	getThreads(repo).refresh();
 });
+
+export const discardThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo)).discard(id, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});
+
+export const reopenThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo)).reopen(id, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});
+
+export const deleteThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo)).delete(id, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});
+
+export const restoreThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo)).restore(id);
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});

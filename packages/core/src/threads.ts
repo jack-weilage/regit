@@ -24,7 +24,10 @@ export interface ThreadSummary {
 	status: ThreadStatus;
 	mode: Mode;
 	updatedAt: number;
+	deleted: { at: number; by: string } | null;
 }
+
+export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface ThreadDetail {
 	summary: ThreadSummary;
@@ -38,6 +41,10 @@ export interface RepoCoordinatorApi {
 	openThread(input: { author: Author; text: string; mode: Mode }): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
 	start(thread: string): Promise<void>;
+	discard(thread: string, by: Author): Promise<void>;
+	reopen(thread: string, by: Author): void;
+	delete(thread: string, by: Author): Promise<void>;
+	restore(thread: string): void;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;
 }

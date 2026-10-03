@@ -2,7 +2,7 @@
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
 	interface Props extends HTMLButtonAttributes {
-		variant?: 'primary' | 'quiet' | 'ghost';
+		variant?: 'primary' | 'danger' | 'quiet' | 'ghost';
 		size?: 'md' | 'sm' | 'xs';
 		icon?: boolean;
 		element?: HTMLButtonElement;
@@ -77,6 +77,16 @@
 		&:disabled {
 			background: var(--color-surface);
 			color: var(--color-muted);
+		}
+	}
+
+	.danger {
+		background: var(--color-danger);
+		color: white;
+		font-weight: 500;
+
+		&:hover:not(:disabled) {
+			background: color-mix(in oklab, var(--color-danger) 85%, black);
 		}
 	}
 

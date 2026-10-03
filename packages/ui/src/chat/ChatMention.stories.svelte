@@ -16,6 +16,17 @@
 
 <Story name="Thread" args={{ mention: threads[0]! }} />
 
+<Story
+	name="Deleted thread"
+	args={{
+		mention: { kind: 'thread', handle: 'gone', label: 'Deleted thread', href: '#', deleted: true }
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.queryByRole('link')).toBeNull();
+		await expect(canvas.getByText('Deleted thread')).toBeVisible();
+	}}
+/>
+
 <Story name="In a message" asChild>
 	<ChatGroup author={{ name: 'Lin Wei', kind: 'person' }}>
 		<ChatMessage>

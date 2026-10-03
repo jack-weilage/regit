@@ -13,11 +13,15 @@ export interface Mentionable {
 	detail?: string;
 	avatar?: string;
 	href?: string;
+	deleted?: boolean;
 }
 
 export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'landing' | 'shipped' | 'discarded';
 
 export interface ThreadAction {
 	label: string;
+	detail?: string;
+	separated?: boolean;
+	danger?: boolean;
 	onselect: () => void;
 }

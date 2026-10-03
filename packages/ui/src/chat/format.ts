@@ -13,3 +13,15 @@ export function formatAge(at: number, now = Date.now()) {
 	if (minutes < 60 * 24 * 7) return `${Math.floor(minutes / 60 / 24)}d`;
 	return shortDate.format(at);
 }
+
+export const formatDate = shortDate.format;
+
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
+export function formatAgo(at: number, now = Date.now()) {
+	const minutes = Math.round((at - now) / 60_000);
+	if (Math.abs(minutes) < 1) return 'just now';
+	if (Math.abs(minutes) < 60) return relative.format(minutes, 'minute');
+	if (Math.abs(minutes) < 60 * 24) return relative.format(Math.round(minutes / 60), 'hour');
+	return relative.format(Math.round(minutes / 60 / 24), 'day');
+}
