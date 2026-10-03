@@ -65,14 +65,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			Date.now()
 		);
 		this.#add(id, { type: 'message', author, text });
-		await this.#redraft(id);
+		this.ctx.waitUntil(this.#redraft(id));
 		return this.#summary(id)!;
 	}
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#require(thread);
 		this.#add(thread, { type: 'message', author, text });
-		if (summary.status === 'draft') await this.#redraft(thread);
+		if (summary.status === 'draft') this.ctx.waitUntil(this.#redraft(thread));
 	}
 
 	async start(thread: string) {
@@ -146,16 +146,30 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async #redraft(thread: string) {
 		const { model, effort } = modes.small;
-		const intent = await draftIntent(
-			openaiModel({
-				gateway: { run: (request) => this.env.MODELS.run(request) },
-				model,
-				effort,
-				sessionId: `${this.ctx.id.name}/${thread}/intent`,
-				metadata: { thread, task: 'intent' }
-			}),
-			this.#conversation(thread)
-		);
+		const conversation = this.#conversation(thread);
+		const current = () =>
+			this.#summary(thread)?.status === 'draft' &&
+			this.#conversation(thread).length === conversation.length;
+		let intent;
+		try {
+			intent = await draftIntent(
+				openaiModel({
+					gateway: { run: (request) => this.env.MODELS.run(request) },
+					model,
+					effort,
+					sessionId: `${this.ctx.id.name}/${thread}/intent`,
+					metadata: { thread, task: 'intent' }
+				}),
+				conversation
+			);
+		} catch (error) {
+			if (current()) {
+				const reason = error instanceof Error ? error.message : String(error);
+				this.#add(thread, { type: 'event', text: `Couldn't draft an intent: ${reason}` });
+			}
+			return;
+		}
+		if (!current()) return;
 		this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);

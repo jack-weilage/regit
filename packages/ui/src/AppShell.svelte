@@ -127,7 +127,10 @@
 		bind:mode
 		{similar}
 		{onquery}
-		{onstart}
+		onstart={(thread) => {
+			open = false;
+			onstart(thread);
+		}}
 		{onopenthread}
 	/>
 	{#if oncreaterepo}

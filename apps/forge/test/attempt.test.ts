@@ -212,6 +212,34 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	expect(refreshed!.id).not.toBe(first!.id);
 });
 
+test('records a failed intent draft in the thread', async () => {
+	await script([
+		[
+			{
+				type: 'response.failed',
+				response: { error: { code: 'credit_balance_exhausted', message: 'No credits' } }
+			}
+		]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('drafts');
+	const opened = await repo.openThread({
+		author: { name: 'Sam', kind: 'person' },
+		text: 'Tidy things up.',
+		mode: 'small'
+	});
+
+	let entries = (await repo.thread(opened.id))!.entries;
+	for (let i = 0; i < 100 && entries.length < 2; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		entries = (await repo.thread(opened.id))!.entries;
+	}
+	expect(entries.at(-1)).toMatchObject({
+		type: 'event',
+		text: "Couldn't draft an intent: No credits"
+	});
+});
+
 test('coordinates a thread from conversation to a finished attempt, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
 	const propose = (headline: string) => [
@@ -262,9 +290,20 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		text: 'The notes need a title.',
 		mode: 'small'
 	});
-	expect(opened).toMatchObject({ status: 'draft', headline: 'docs: tidy the notes' });
+	expect(opened).toMatchObject({ status: 'draft', headline: '' });
+	const drafted = async (count: number) => {
+		for (let i = 0; i < 100; i++) {
+			const detail = await repo.thread(opened.id);
+			const intents = detail!.entries.filter((entry) => entry.type === 'intent');
+			if (intents.length === count) return detail!;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		throw new Error(`The thread never had ${count} intents`);
+	};
+	expect((await drafted(1)).summary.headline).toBe('docs: tidy the notes');
 
 	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
+	await drafted(2);
 	await repo.start(opened.id);
 
 	let detail = await repo.thread(opened.id);

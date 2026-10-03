@@ -32,6 +32,14 @@
 	let user = $derived(await getUser());
 
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
+	let drafting = $derived.by(() => {
+		const last = detail?.entries.at(-1);
+		return (
+			detail?.summary.status === 'draft' &&
+			last?.type === 'message' &&
+			last.author.kind === 'person'
+		);
+	});
 	let blocks = $derived(
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
 			const last = blocks.at(-1);
@@ -77,7 +85,7 @@
 					<ChatIntent
 						{...block.intent}
 						superseded={block.id !== latestIntent}
-						onstart={block.id === latestIntent && summary.status === 'draft'
+						onstart={block.id === latestIntent && summary.status === 'draft' && !drafting
 							? () => startThread({ repo: params.repo, id: params.thread })
 							: undefined}
 					/>
@@ -85,7 +93,9 @@
 					<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 				{/if}
 			{/each}
-			{#if summary.status === 'running'}
+			{#if drafting}
+				<ChatActivity>Drafting an intent</ChatActivity>
+			{:else if summary.status === 'running'}
 				<ChatActivity>ReGit is working</ChatActivity>
 			{/if}
 		</ChatLog>
