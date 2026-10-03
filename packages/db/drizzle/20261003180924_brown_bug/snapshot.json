@@ -1,0 +1,141 @@
+{
+	"version": "7",
+	"dialect": "sqlite",
+	"id": "202fc306-8a52-4bb4-a69e-f0d2c9247a6b",
+	"prevIds": ["d3f70128-cf90-4deb-9a14-2901d2f5b1ea"],
+	"ddl": [
+		{
+			"name": "repos",
+			"entityType": "tables"
+		},
+		{
+			"name": "toolchain_snapshots",
+			"entityType": "tables"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "name",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "source",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_by",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "'standard-1'",
+			"generated": null,
+			"name": "machine",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "repo",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "snapshot_id",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "key",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "image",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "size",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"columns": ["name"],
+			"nameExplicit": false,
+			"name": "repos_pk",
+			"table": "repos",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["repo"],
+			"nameExplicit": false,
+			"name": "toolchain_snapshots_pk",
+			"table": "toolchain_snapshots",
+			"entityType": "pks"
+		}
+	],
+	"renames": []
+}

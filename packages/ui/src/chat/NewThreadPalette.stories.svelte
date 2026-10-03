@@ -47,7 +47,8 @@
 		await userEvent.keyboard('Settings are slow{Shift>}{Enter}{/Shift}for big orgs{Enter}');
 		await expect(args.onstart).toHaveBeenCalledWith({
 			text: 'Settings are slow\nfor big orgs',
-			mode: 'medium'
+			mode: 'medium',
+			machine: 'standard-1'
 		});
 		await waitFor(() => expect(input).not.toBeVisible());
 	}}
@@ -66,7 +67,35 @@
 			canvas.getByRole('textbox', { name: 'What should change?' }),
 			'Rewrite the router{Enter}'
 		);
-		await expect(args.onstart).toHaveBeenCalledWith({ text: 'Rewrite the router', mode: 'large' });
+		await expect(args.onstart).toHaveBeenCalledWith({
+			text: 'Rewrite the router',
+			mode: 'large',
+			machine: 'standard-1'
+		});
+	}}
+	template={page}
+/>
+
+<Story
+	name="Choose a machine"
+	args={{ machine: 'standard-3' }}
+	play={async ({ args, canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'New thread' }));
+		await userEvent.click(canvas.getByRole('button', { name: 'Machine: 2 vCPU · 8 GiB' }));
+		await userEvent.click(await canvas.findByRole('menuitemradio', { name: /4 vCPU/ }));
+		await waitFor(() =>
+			expect(canvas.getByRole('button', { name: 'Machine: 4 vCPU · 12 GiB' })).toBeVisible()
+		);
+
+		await userEvent.type(
+			canvas.getByRole('textbox', { name: 'What should change?' }),
+			'Upgrade the build toolchain{Enter}'
+		);
+		await expect(args.onstart).toHaveBeenCalledWith({
+			text: 'Upgrade the build toolchain',
+			mode: 'medium',
+			machine: 'standard-4'
+		});
 	}}
 	template={page}
 />

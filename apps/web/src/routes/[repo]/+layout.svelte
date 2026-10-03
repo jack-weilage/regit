@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { AppShell, type Mode, type ThreadListItem } from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
-	import type { LiveMessage } from '@regit/core';
+	import { defaultMachine, type LiveMessage, type Machine } from '@regit/core';
 	import { getRepos, getThread, getThreads, getUser, openThread } from '#lib/data.remote.ts';
 	import { createAndOpen } from '#lib/repos.ts';
 
@@ -13,7 +13,11 @@
 
 	let repo = $derived(params.repo);
 	let user = $derived(await getUser());
-	let repos = $derived((await getRepos()).map((repo) => repo.name));
+	let known = $derived(await getRepos());
+	let repos = $derived(known.map((repo) => repo.name));
+	let machine = $derived(
+		(known.find((known) => known.name === repo)?.machine as Machine | undefined) ?? defaultMachine
+	);
 	let threads = $derived<ThreadListItem[]>(
 		(await getThreads(repo)).map((thread) => ({
 			id: thread.id,
@@ -35,7 +39,7 @@
 		return () => source.close();
 	};
 
-	async function start(thread: { text: string; mode: Mode }) {
+	async function start(thread: { text: string; mode: Mode; machine: Machine }) {
 		const summary = await openThread({ repo, ...thread });
 		await goto(`/${repo}/${summary.id}`);
 	}
@@ -53,6 +57,7 @@
 		current={page.params.thread}
 		account={user}
 		bind:mode
+		bind:machine
 		onswitchrepo={(name) => goto(`/${name}`)}
 		oncreaterepo={createAndOpen}
 		onstart={start}

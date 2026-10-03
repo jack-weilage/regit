@@ -1,5 +1,16 @@
 export type Mode = 'small' | 'medium' | 'large';
 
+export const machines = {
+	'standard-1': { vcpu: 0.5, memoryGib: 4, diskGb: 8 },
+	'standard-2': { vcpu: 1, memoryGib: 6, diskGb: 12 },
+	'standard-3': { vcpu: 2, memoryGib: 8, diskGb: 16 },
+	'standard-4': { vcpu: 4, memoryGib: 12, diskGb: 20 }
+} as const;
+
+export type Machine = keyof typeof machines;
+
+export const defaultMachine: Machine = 'standard-1';
+
 export type ThreadStatus = 'draft' | 'running' | 'reviewing' | 'needs-you' | 'discarded';
 
 export type ReviewVerdict = 'pass' | 'fail' | 'needs-human';
@@ -44,6 +55,7 @@ export interface ThreadSummary {
 	headline: string;
 	status: ThreadStatus;
 	mode: Mode;
+	machine: Machine;
 	updatedAt: number;
 	deleted: { at: number; by: string } | null;
 }
@@ -77,6 +89,7 @@ export interface RepoCoordinatorApi {
 		author: Author;
 		text: string;
 		mode: Mode;
+		machine: Machine;
 	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
 	start(thread: string): Promise<void>;

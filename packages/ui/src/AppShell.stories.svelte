@@ -140,7 +140,8 @@
 		await userEvent.keyboard('Speed up the settings page{Enter}');
 		await expect(args.onstart).toHaveBeenCalledWith({
 			text: 'Speed up the settings page',
-			mode: 'medium'
+			mode: 'medium',
+			machine: 'standard-1'
 		});
 	}}
 	template={page}

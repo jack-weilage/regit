@@ -1,10 +1,19 @@
 <script module lang="ts">
+	import type { Machine } from '@regit/core';
+
 	export type Mode = 'small' | 'medium' | 'large';
 
 	const modes: { id: Mode; label: string; detail: string }[] = [
 		{ id: 'small', label: 'Small', detail: 'Quick fixes' },
 		{ id: 'medium', label: 'Medium', detail: 'Most work' },
 		{ id: 'large', label: 'Large', detail: 'Hard problems' }
+	];
+
+	const machines: { id: Machine; label: string; detail: string }[] = [
+		{ id: 'standard-1', label: '½ vCPU · 4 GiB', detail: 'Small repos · up to $0.07/h' },
+		{ id: 'standard-2', label: '1 vCPU · 6 GiB', detail: 'Most repos · up to $0.13/h' },
+		{ id: 'standard-3', label: '2 vCPU · 8 GiB', detail: 'Large builds · up to $0.22/h' },
+		{ id: 'standard-4', label: '4 vCPU · 12 GiB', detail: 'Monorepos · up to $0.40/h' }
 	];
 </script>
 
@@ -20,8 +29,9 @@
 		repo: string;
 		similar?: Mentionable[];
 		mode?: Mode;
+		machine?: Machine;
 		onquery?: (text: string) => void;
-		onstart: (thread: { text: string; mode: Mode }) => void;
+		onstart: (thread: { text: string; mode: Mode; machine: Machine }) => void;
 		onopenthread?: (thread: Mentionable) => void;
 	}
 
@@ -30,6 +40,7 @@
 		repo,
 		similar = [],
 		mode = $bindable('medium'),
+		machine = $bindable('standard-1'),
 		onquery,
 		onstart,
 		onopenthread
@@ -42,13 +53,14 @@
 
 	let options = $derived([null, ...similar]);
 	let current = $derived(modes.find((option) => option.id === mode)!);
+	let currentMachine = $derived(machines.find((option) => option.id === machine)!);
 
 	function choose(option: Mentionable | null) {
 		if (option) {
 			onopenthread?.(option);
 		} else {
 			if (!text.trim()) return;
-			onstart({ text: text.trim(), mode });
+			onstart({ text: text.trim(), mode, machine });
 			text = '';
 		}
 		palette?.hidePopover();
@@ -132,6 +144,30 @@
 			{#snippet trigger(props)}
 				<Button variant="ghost" size="xs" aria-label="Mode: {current.label}" {...props}>
 					{current.label}
+					<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"
+						><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg
+					>
+				</Button>
+			{/snippet}
+		</Menu>
+		<Menu
+			label="Machine"
+			align="start"
+			items={machines.map((option) => ({
+				label: option.label,
+				detail: option.detail,
+				checked: option.id === machine,
+				onselect: () => (machine = option.id)
+			}))}
+		>
+			{#snippet trigger(props)}
+				<Button variant="ghost" size="xs" aria-label="Machine: {currentMachine.label}" {...props}>
+					<svg class="chip" viewBox="0 0 16 16" aria-hidden="true"
+						><rect x="4" y="4" width="8" height="8" rx="1.5" /><path
+							d="M6.5 2v2M9.5 2v2M6.5 12v2M9.5 12v2M2 6.5h2M2 9.5h2M12 6.5h2M12 9.5h2"
+						/></svg
+					>
+					{currentMachine.label}
 					<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"
 						><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg
 					>
@@ -239,8 +275,19 @@
 
 	footer {
 		display: flex;
+		gap: var(--space-2);
 		padding: var(--space-3) var(--space-4);
 		border-block-start: 1px solid var(--color-border);
+	}
+
+	.chip {
+		inline-size: 1.1em;
+		block-size: 1.1em;
+		align-self: center;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.3;
+		stroke-linecap: round;
 	}
 
 	.chevron {

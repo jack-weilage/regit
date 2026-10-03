@@ -92,7 +92,8 @@ test('records a failed reply in the thread', async () => {
 		repo: 'drafts',
 		author: { name: 'Sam', kind: 'person' },
 		text: 'Tidy things up.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 
 	let entries = (await repo.thread(opened.id))!.entries;
@@ -113,7 +114,8 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 		repo: 'lifecycle',
 		author: sam,
 		text: 'Try something.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 
 	await repo.discard(id, sam);
@@ -145,7 +147,8 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 		repo: 'lifecycle',
 		author: sam,
 		text: 'Another try.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	await repo.delete(later.id, sam);
 
@@ -208,9 +211,14 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		repo: 'notes',
 		author: sam,
 		text: 'The notes need a title.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-3'
 	});
-	expect(opened).toMatchObject({ status: 'draft', headline: 'The notes need a title.' });
+	expect(opened).toMatchObject({
+		status: 'draft',
+		headline: 'The notes need a title.',
+		machine: 'standard-3'
+	});
 	const drafted = async (count: number) => {
 		for (let i = 0; i < 100; i++) {
 			const detail = await repo.thread(opened.id);
@@ -241,6 +249,9 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	expect(detail!.summary).toMatchObject({
 		status: 'needs-you',
 		headline: 'docs(notes): add a title'
+	});
+	expect(await env.ATTEMPTS.getByName(opened.id).snapshot()).toMatchObject({
+		machine: 'standard-3'
 	});
 	expect(
 		detail!.entries.map((entry) =>
@@ -355,7 +366,8 @@ test('steers a running attempt with messages read after the current step', async
 		repo: 'steer',
 		author: sam,
 		text: 'Add a title.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	for (let i = 0; i < 100; i++) {
 		const last = (await repo.thread(id))!.entries.at(-1);
@@ -408,7 +420,8 @@ test('sends work that fails review back to the agent, then finishes when it pass
 		repo: 'reviewed',
 		author: sam,
 		text: 'Add a title.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	for (let i = 0; i < 100; i++) {
 		const last = (await repo.thread(id))!.entries.at(-1);
@@ -479,7 +492,8 @@ test('stops a running attempt mid tool call', async () => {
 		repo: 'stopping',
 		author: sam,
 		text: 'Go.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	await untilRequests('conversation', 1);
 	for (let i = 0; i < 100; i++) {
@@ -515,7 +529,8 @@ test('stops a conversation turn mid tool call', async () => {
 		repo: 'quiet',
 		author: sam,
 		text: 'Look around.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	await untilRequests('conversation', 1);
 	await new Promise((resolve) => setTimeout(resolve, 500));
@@ -561,7 +576,8 @@ test('resumes a finished attempt when someone replies, updating the intent', asy
 		repo: 'resume',
 		author: sam,
 		text: 'Add a title.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	const waitFor = async (
 		check: (detail: NonNullable<Awaited<ReturnType<typeof repo.thread>>>) => boolean
@@ -633,7 +649,8 @@ test('reads messages sent during a review and resumes the work after it', async 
 		repo: 'midreview',
 		author: sam,
 		text: 'Add a title.',
-		mode: 'small'
+		mode: 'small',
+		machine: 'standard-1'
 	});
 	const until = async (
 		check: (detail: NonNullable<Awaited<ReturnType<typeof repo.thread>>>) => boolean

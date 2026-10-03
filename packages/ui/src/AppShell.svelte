@@ -4,6 +4,7 @@
 	import Button from './Button.svelte';
 	import Menu from './Menu.svelte';
 	import NewRepoPalette, { type NewRepo } from './NewRepoPalette.svelte';
+	import type { Machine } from '@regit/core';
 	import NewThreadPalette, { type Mode } from './chat/NewThreadPalette.svelte';
 	import ThreadIcon from './chat/ThreadIcon.svelte';
 	import ThreadList, { type ThreadListItem } from './chat/ThreadList.svelte';
@@ -16,12 +17,13 @@
 		current?: string;
 		account?: { name: string; email: string; avatar?: string };
 		mode?: Mode;
+		machine?: Machine;
 		similar?: Mentionable[];
 		now?: number;
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onquery?: (text: string) => void;
-		onstart: (thread: { text: string; mode: Mode }) => void;
+		onstart: (thread: { text: string; mode: Mode; machine: Machine }) => void;
 		onopenthread?: (thread: Mentionable) => void;
 		children: Snippet;
 	}
@@ -33,6 +35,7 @@
 		current,
 		account,
 		mode = $bindable('medium'),
+		machine = $bindable('standard-1'),
 		similar,
 		now,
 		onswitchrepo,
@@ -125,6 +128,7 @@
 		id="{id}-new-thread"
 		{repo}
 		bind:mode
+		bind:machine
 		{similar}
 		{onquery}
 		onstart={(thread) => {

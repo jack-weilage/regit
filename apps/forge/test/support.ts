@@ -105,12 +105,13 @@ export async function setup({ containers = false } = {}) {
 
 	async function settled(thread: string) {
 		const env = await worker.getEnv();
+		let snapshot = null;
 		for (let i = 0; i < 600; i++) {
-			const snapshot = await env.ATTEMPTS.getByName(thread).snapshot();
+			snapshot = await env.ATTEMPTS.getByName(thread).snapshot();
 			if (snapshot && !['queued', 'running'].includes(snapshot.status)) return snapshot;
 			await new Promise((resolve) => setTimeout(resolve, 200));
 		}
-		throw new Error('The attempt did not settle');
+		throw new Error(`The attempt did not settle: ${JSON.stringify(snapshot)}`);
 	}
 
 	beforeAll(async () => {

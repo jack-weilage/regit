@@ -14,6 +14,7 @@ import type {
 	ReviewVerdict,
 	Entry,
 	LiveMessage,
+	Machine,
 	Mode,
 	RepoCoordinatorApi,
 	ThreadDetail,
@@ -22,7 +23,7 @@ import type {
 	ThreadUsage,
 	UsageRow
 } from '@regit/core';
-import { threadPurgeDelayMs } from '@regit/core';
+import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
@@ -45,6 +46,7 @@ type ThreadRow = {
 	headline: string;
 	status: ThreadStatus;
 	mode: Mode;
+	machine: Machine | null;
 	updated_at: number;
 	reopen_status: ThreadStatus | null;
 	deleted_at: number | null;
@@ -98,7 +100,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		for (const [name, type] of [
 			['reopen_status', 'TEXT'],
 			['deleted_at', 'INTEGER'],
-			['deleted_by', 'TEXT']
+			['deleted_by', 'TEXT'],
+			['machine', 'TEXT']
 		]) {
 			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
 		}
@@ -108,12 +111,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		repo,
 		author,
 		text,
-		mode
+		mode,
+		machine
 	}: {
 		repo: string;
 		author: Author;
 		text: string;
 		mode: Mode;
+		machine: Machine;
 	}): Promise<ThreadSummary> {
 		this.#sql.exec(
 			'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT DO NOTHING',
@@ -122,14 +127,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 		this.#sql.exec(
-			`INSERT INTO threads (id, headline, status, mode, updated_at) VALUES (?, ?, 'draft', ?, ?)`,
+			`INSERT INTO threads (id, headline, status, mode, machine, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)`,
 			id,
 			headlineFrom(text),
 			mode,
+			machine,
 			Date.now()
 		);
 		const entry = this.#add(id, { type: 'message', author, text });
-		await this.#converse(id, mode, author, text, entry);
+		await this.#converse(id, author, text, entry);
 		return this.#summary(id)!;
 	}
 
@@ -143,7 +149,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			...(steering && { steering: { read: false } })
 		});
 		if (steering || summary.status === 'draft' || summary.status === 'needs-you') {
-			await this.#converse(thread, summary.mode, author, text, entry);
+			await this.#converse(thread, author, text, entry);
 		}
 		if (summary.status === 'needs-you') this.#setStatus(thread, 'running');
 	}
@@ -158,6 +164,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.env.ATTEMPTS.getByName(thread).start({
 			task,
 			mode: summary.mode,
+			machine: summary.machine,
 			repo: this.#repo(),
 			intent
 		});
@@ -338,10 +345,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
-	async #converse(thread: string, mode: Mode, author: Author, text: string, entry: string) {
+	async #converse(thread: string, author: Author, text: string, entry: string) {
+		const { mode, machine } = this.#summary(thread)!;
 		await this.env.ATTEMPTS.getByName(thread).converse({
 			repo: this.#repo(),
 			mode,
+			machine,
 			author: author.name,
 			text,
 			entry
@@ -511,6 +520,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		headline: row.headline,
 		status: row.status,
 		mode: row.mode,
+		machine: row.machine ?? defaultMachine,
 		updatedAt: row.updated_at,
 		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' }
 	};

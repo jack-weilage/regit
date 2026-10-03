@@ -1,8 +1,8 @@
 import { command, getRequestEvent, query } from '$app/server';
 import { error } from '@sveltejs/kit';
-import { repoNamePattern } from '@regit/core';
+import { machines, repoNamePattern, type Machine } from '@regit/core';
 import { repos } from '@regit/db';
-import { asc } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import * as v from 'valibot';
 import { coordinatorFor } from '#lib/server/coordinators.ts';
 import { db } from '#lib/server/db.ts';
@@ -24,7 +24,7 @@ async function coordinator(repo: string) {
 export const getUser = query(async () => getRequestEvent().locals.user);
 
 export const getRepos = query(() =>
-	db().select({ name: repos.name }).from(repos).orderBy(asc(repos.name))
+	db().select({ name: repos.name, machine: repos.machine }).from(repos).orderBy(asc(repos.name))
 );
 
 export const getThreads = query(name, async (repo) => (await coordinator(repo)).threads());
@@ -47,12 +47,19 @@ export const createRepo = command(
 );
 
 export const openThread = command(
-	v.object({ repo: name, text, mode: v.picklist(['small', 'medium', 'large']) }),
-	async ({ repo, text, mode }) => {
+	v.object({
+		repo: name,
+		text,
+		mode: v.picklist(['small', 'medium', 'large']),
+		machine: v.picklist(Object.keys(machines) as Machine[])
+	}),
+	async ({ repo, text, mode, machine }) => {
 		const summary = await (
 			await coordinator(repo)
-		).openThread({ repo, author: author(), text, mode });
+		).openThread({ repo, author: author(), text, mode, machine });
+		await db().update(repos).set({ machine }).where(eq(repos.name, repo));
 		getThreads(repo).refresh();
+		getRepos().refresh();
 		return summary;
 	}
 );

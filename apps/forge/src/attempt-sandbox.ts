@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
 import { toolchainSnapshots } from '@regit/db';
 import { db } from './db.ts';
-import { maxReviewRounds } from '@regit/core';
+import { defaultMachine, machines, maxReviewRounds, type Machine } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	codingInstructions,
@@ -31,6 +31,7 @@ import {
 export interface AttemptInput {
 	task: string;
 	mode: Mode;
+	machine?: Machine;
 	repo: string;
 	intent?: Intent;
 }
@@ -38,6 +39,7 @@ export interface AttemptInput {
 export interface ConverseInput {
 	repo: string;
 	mode: Mode;
+	machine?: Machine;
 	author: string;
 	text: string;
 	entry: string;
@@ -55,6 +57,7 @@ export type AttemptStatus =
 
 export interface AttemptSnapshot {
 	status: AttemptStatus;
+	machine: Machine;
 	error: string | null;
 	toolchain: { tools: Toolchain; restored: boolean } | null;
 	steps: (Step & { checkpoint: string | null })[];
@@ -101,6 +104,7 @@ const sandboxPort = 8080;
 const sliceMs = 10 * 60 * 1000;
 const healthTimeoutMs = 5 * 60 * 1000;
 const idleTimeoutMs = 5 * 60 * 1000;
+const snapshotHeadroomBytes = 2e9;
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
@@ -173,9 +177,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async converse({ repo, mode, author, text, entry }: ConverseInput) {
+	async converse({ repo, mode, machine, author, text, entry }: ConverseInput) {
 		this.#setMeta('repo', repo);
 		this.#setMeta('mode', mode);
+		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
 		if (attempt && !isActive(attempt.status) && attempt.status !== 'cancelled') {
@@ -188,8 +193,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async start({ task, mode, repo, intent }: AttemptInput) {
+	async start({ task, mode, machine, repo, intent }: AttemptInput) {
 		if (this.#attempt()) throw new Error('This attempt has already started');
+		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec(
 			`INSERT INTO attempt (id, task, mode, repo, status, intent) VALUES (1, ?, ?, ?, 'queued', ?)`,
 			task,
@@ -206,6 +212,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const steps = this.#sql.exec<StepRow>('SELECT * FROM steps ORDER BY seq').toArray();
 		return {
 			status: attempt.status,
+			machine: this.#machine(),
 			error: attempt.error,
 			toolchain: attempt.toolchain
 				? { tools: JSON.parse(attempt.toolchain) as Toolchain, restored: attempt.restored === 1 }
@@ -485,6 +492,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
+	#machine() {
+		return (this.#meta('machine') as Machine | null) ?? defaultMachine;
+	}
+
 	#reviewCount() {
 		return this.#sql.exec('SELECT round FROM reviews').toArray().length;
 	}
@@ -594,7 +605,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	// TODO: size the instance per mode
 	async #sandbox(target: Target, token: string): Promise<Fetch> {
 		if (this.env.SANDBOX_URL) return this.#localSandbox(target);
 		const container = this.ctx.container!;
@@ -613,7 +623,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const image = container.images.sandbox!;
 		const forRepo = eq(toolchainSnapshots.repo, target.repo);
 		const [cached] = await db.select().from(toolchainSnapshots).where(forRepo);
-		let restored = cached?.image === image ? cached : null;
+		const disk = machines[this.#machine()].diskGb * 1e9;
+		const fits = (cached?.size ?? 0) + snapshotHeadroomBytes <= disk;
+		let restored = cached?.image === image && fits ? cached : null;
 		try {
 			await this.#start(
 				restored ? { containerSnapshot: { id: restored.snapshotId } } : { image },
@@ -642,7 +654,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 				const snapshot = await container.snapshotContainer({
 					name: `toolchain-${key.slice(0, 12)}`
 				});
-				const row = { snapshotId: snapshot.id, key, image, createdAt: new Date() };
+				// TODO: delete superseded snapshots and old deploy images, which share the account's 50 GB image storage
+				const row = {
+					snapshotId: snapshot.id,
+					key,
+					image,
+					size: snapshot.size,
+					createdAt: new Date()
+				};
 				await db
 					.insert(toolchainSnapshots)
 					.values({ repo: target.repo, ...row })
@@ -667,7 +686,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #start(source: { image: string } | { containerSnapshot: { id: string } }, fetch: Fetch) {
 		const container = this.ctx.container!;
-		container.start({ ...source, enableInternet: true, instance: 'standard-1' });
+		container.start({ ...source, enableInternet: true, instance: this.#machine() });
 		await container.setInactivityTimeout(idleTimeoutMs);
 		try {
 			await waitUntilHealthy(fetch);
