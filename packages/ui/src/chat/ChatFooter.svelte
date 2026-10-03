@@ -8,11 +8,14 @@
 
 	const formatTokens = new Intl.NumberFormat(undefined, {
 		notation: 'compact',
-		maximumFractionDigits: 1
+		maximumFractionDigits: 2
 	}).format;
 
-	const formatCost = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' })
-		.format;
+	const currency = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' });
+
+	function formatCost(cost: number) {
+		return cost > 0 && cost < 0.01 ? `<${currency.format(0.01)}` : currency.format(cost);
+	}
 </script>
 
 <script lang="ts">

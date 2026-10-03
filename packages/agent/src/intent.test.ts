@@ -19,7 +19,7 @@ test('drafts an intent from the conversation', async () => {
 			{ type: 'done', usage }
 		]
 	]);
-	const intent = await draftIntent(model, [
+	const { intent, usage: reported } = await draftIntent(model, [
 		{ author: 'Sam', text: 'Settings take forever.' },
 		{ author: 'Lin', text: 'Only for big orgs.' }
 	]);
@@ -29,6 +29,7 @@ test('drafts an intent from the conversation', async () => {
 		purpose: 'Settings load slowly.',
 		doneWhen: ['Settings render in under a second']
 	});
+	expect(reported).toEqual(usage);
 	expect(requests[0]!.history).toEqual([
 		{ role: 'user', text: 'Sam: Settings take forever.\n\nLin: Only for big orgs.' }
 	]);

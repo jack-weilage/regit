@@ -380,6 +380,14 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'The attempt finished'
 	]);
 	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
+	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
+	expect(detail!.usage).toEqual({
+		rows: [
+			{ task: 'intent', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) },
+			{ task: 'attempt', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) }
+		],
+		context: { used: 60, limit: 1_050_000 }
+	});
 	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
 	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
 		'# Notes\n\nSome notes'

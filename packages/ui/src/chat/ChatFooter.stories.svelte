@@ -49,3 +49,22 @@
 		await expect(canvas.queryByRole('table')).toBeNull();
 	}}
 />
+
+<Story
+	name="Under a cent"
+	args={{
+		context: { used: 1_200, limit: 1_050_000 },
+		usage: [{ task: 'Drafting intents', model: 'gpt-6-luna', tokens: 1_200, cost: 0.0004 }]
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('button', { name: /<\$0\.01/ })).toBeVisible();
+	}}
+/>
+
+<Story
+	name="Nothing yet"
+	args={{ context: { used: 0, limit: 1_050_000 }, usage: [] }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('button', { name: /0% context \$0\.00/ })).toBeVisible();
+	}}
+/>

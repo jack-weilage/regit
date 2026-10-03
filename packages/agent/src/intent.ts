@@ -1,4 +1,4 @@
-import type { ModelClient, ToolSpec } from './types.ts';
+import type { ModelClient, ToolSpec, Usage } from './types.ts';
 
 export interface Intent {
 	headline: string;
@@ -41,17 +41,22 @@ export async function draftIntent(
 		{ instructions, history: [{ role: 'user', text: transcript }], tools: [proposeIntent] },
 		signal
 	);
+	let intent: Intent | undefined;
+	let usage: Usage | undefined;
 	for await (const event of stream) {
-		if (event.type === 'call' && event.call.name === proposeIntent.name) {
+		if (event.type === 'call' && event.call.name === proposeIntent.name && !intent) {
 			const { headline, purpose, doneWhen } = JSON.parse(event.call.arguments) as Intent;
-			return {
+			intent = {
 				headline: headline.trim(),
 				purpose: purpose.trim(),
 				doneWhen: doneWhen.map((check) => check.trim())
 			};
+		} else if (event.type === 'done') {
+			usage = event.usage;
 		}
 	}
-	throw new Error('The model did not propose an intent');
+	if (!intent) throw new Error('The model did not propose an intent');
+	return { intent, usage };
 }
 
 export function describeTask(intent: Intent, conversation: ConversationMessage[]) {

@@ -29,9 +29,22 @@ export interface ThreadSummary {
 
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
+export interface UsageRow {
+	task: 'intent' | 'attempt';
+	model: string;
+	tokens: number;
+	cost: number | null;
+}
+
+export interface ThreadUsage {
+	rows: UsageRow[];
+	context: { used: number; limit: number };
+}
+
 export interface ThreadDetail {
 	summary: ThreadSummary;
 	entries: Entry[];
+	usage: ThreadUsage;
 }
 
 export type LiveMessage =

@@ -1,5 +1,14 @@
 import { DurableObject } from 'cloudflare:workers';
-import { describeTask, draftIntent, modes, openaiModel, type Step } from '@regit/agent';
+import {
+	cost,
+	describeTask,
+	draftIntent,
+	models,
+	modes,
+	openaiModel,
+	type Step,
+	type Usage
+} from '@regit/agent';
 import type {
 	Author,
 	Entry,
@@ -8,7 +17,9 @@ import type {
 	RepoCoordinatorApi,
 	ThreadDetail,
 	ThreadStatus,
-	ThreadSummary
+	ThreadSummary,
+	ThreadUsage,
+	UsageRow
 } from '@regit/core';
 import { threadPurgeDelayMs } from '@regit/core';
 import type { AttemptStatus } from './attempt-sandbox.ts';
@@ -49,6 +60,18 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				body TEXT NOT NULL
 			);
 			CREATE INDEX IF NOT EXISTS entries_by_thread ON entries (thread, seq);
+			CREATE TABLE IF NOT EXISTS usage (
+				seq INTEGER PRIMARY KEY AUTOINCREMENT,
+				thread TEXT NOT NULL,
+				task TEXT NOT NULL,
+				model TEXT NOT NULL,
+				input_tokens INTEGER NOT NULL,
+				cached_input_tokens INTEGER NOT NULL,
+				cache_write_tokens INTEGER NOT NULL,
+				output_tokens INTEGER NOT NULL,
+				at INTEGER NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS usage_by_thread ON usage (thread, seq);
 		`);
 		const columns = new Set(
 			this.#sql
@@ -161,6 +184,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		for (const { id } of due) {
 			await this.env.ATTEMPTS.getByName(id).destroy();
 			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
+			this.#sql.exec('DELETE FROM usage WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM threads WHERE id = ?', id);
 		}
 		await this.#schedulePurge();
@@ -176,16 +200,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	thread(id: string): ThreadDetail | null {
 		const summary = this.#summary(id);
 		if (!summary) return null;
-		if (summary.deleted) return { summary, entries: [] };
+		if (summary.deleted) return { summary, entries: [], usage: this.#usage(id, summary.mode, []) };
 		const rows = this.#sql
 			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq', id)
 			.toArray();
-		return { summary, entries: rows.map((row) => JSON.parse(row.body) as Entry) };
+		return {
+			summary,
+			entries: rows.map((row) => JSON.parse(row.body) as Entry),
+			usage: this.#usage(id, summary.mode)
+		};
 	}
 
 	attemptUpdated(thread: string, update: AttemptUpdate) {
-		if (!this.#summary(thread)) return;
+		const summary = this.#summary(thread);
+		if (!summary) return;
 		if (update.type === 'step') {
+			if (update.step.usage) {
+				this.#recordUsage(thread, 'attempt', modes[summary.mode].model, update.step.usage);
+				this.#touch(thread);
+			}
 			for (const turn of update.step.turns) {
 				if (turn.role === 'assistant' && turn.text.trim()) {
 					this.#add(thread, { type: 'message', author: agent, text: turn.text.trim() });
@@ -228,7 +261,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#conversation(thread).length === conversation.length;
 		let intent;
 		try {
-			intent = await draftIntent(
+			const draft = await draftIntent(
 				openaiModel({
 					gateway: { run: (request) => this.env.MODELS.run(request) },
 					model,
@@ -238,6 +271,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				}),
 				conversation
 			);
+			intent = draft.intent;
+			if (draft.usage) this.#recordUsage(thread, 'intent', model, draft.usage);
 		} catch (error) {
 			if (current()) {
 				const reason = error instanceof Error ? error.message : String(error);
@@ -263,6 +298,60 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(full), seq);
 		this.#broadcast({ type: 'entry', thread, entry: full });
 		this.#touch(thread);
+	}
+
+	#recordUsage(thread: string, task: UsageRow['task'], model: string, usage: Usage) {
+		this.#sql.exec(
+			`INSERT INTO usage (thread, task, model, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			thread,
+			task,
+			model,
+			usage.inputTokens,
+			usage.cachedInputTokens,
+			usage.cacheWriteTokens,
+			usage.outputTokens,
+			Date.now()
+		);
+	}
+
+	#usage(thread: string, mode: Mode, calls = this.#calls(thread)): ThreadUsage {
+		const rows = new Map<string, UsageRow>();
+		for (const call of calls) {
+			const price = cost(call.model, {
+				inputTokens: call.input_tokens,
+				cachedInputTokens: call.cached_input_tokens,
+				cacheWriteTokens: call.cache_write_tokens,
+				outputTokens: call.output_tokens
+			});
+			const key = `${call.task} ${call.model}`;
+			const row = rows.get(key) ?? { task: call.task, model: call.model, tokens: 0, cost: 0 };
+			row.tokens += call.input_tokens + call.output_tokens;
+			row.cost = row.cost === null || price === null ? null : row.cost + price;
+			rows.set(key, row);
+		}
+		const latest = calls.findLast((call) => call.task === 'attempt') ?? calls.at(-1);
+		const model = latest?.model ?? modes[mode].model;
+		return {
+			rows: [...rows.values()],
+			context: {
+				used: latest ? latest.input_tokens + latest.output_tokens : 0,
+				limit: models[model]?.contextWindow ?? 0
+			}
+		};
+	}
+
+	#calls(thread: string) {
+		return this.#sql
+			.exec<{
+				task: UsageRow['task'];
+				model: string;
+				input_tokens: number;
+				cached_input_tokens: number;
+				cache_write_tokens: number;
+				output_tokens: number;
+			}>('SELECT * FROM usage WHERE thread = ? ORDER BY seq', thread)
+			.toArray();
 	}
 
 	#setStatus(thread: string, status: ThreadStatus) {

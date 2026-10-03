@@ -39,6 +39,7 @@
 		| Exclude<Entry, { type: 'message' }>;
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
+	const tasks = { intent: 'Drafting intents', attempt: 'Agent' };
 
 	let { params } = $props();
 
@@ -162,8 +163,16 @@
 					onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
 				/>
 			{/if}
-			<!-- TODO: show real context and usage once the coordinator keeps a usage ledger -->
-			<ChatFooter mode={modes[summary.mode]} context={{ used: 0, limit: 272_000 }} usage={[]} />
+			<ChatFooter
+				mode={modes[summary.mode]}
+				context={detail.usage.context}
+				usage={detail.usage.rows.map((row) => ({
+					task: tasks[row.task],
+					model: row.model,
+					tokens: row.tokens,
+					cost: row.cost ?? 0
+				}))}
+			/>
 		{/snippet}
 	</ThreadView>
 	<DeleteThreadDialog
