@@ -126,3 +126,109 @@
 		</div>
 	{/snippet}
 </Story>
+
+<Story
+	name="States"
+	args={{
+		current: 'modes',
+		threads: [
+			{
+				id: 'sessions',
+				headline: 'fix(auth): refresh expired sessions',
+				status: 'needs-you',
+				updatedAt: minutes(0),
+				href: '#'
+			},
+			{
+				id: 'members',
+				headline: 'perf(settings): load members lazily',
+				status: 'running',
+				updatedAt: minutes(12),
+				href: '#'
+			},
+			{
+				id: 'deploy',
+				headline: 'feat(deploy): roll out behind a flag',
+				status: 'landing',
+				updatedAt: minutes(180),
+				href: '#'
+			},
+			{
+				id: 'modes',
+				headline: 'docs: explain modes',
+				status: 'running',
+				updatedAt: minutes(1),
+				href: '#'
+			},
+			{
+				id: 'router',
+				headline:
+					'refactor(api): split the router into per-resource modules and move the auth middleware',
+				status: 'draft',
+				updatedAt: minutes(60 * 48),
+				href: '#'
+			},
+			{
+				id: 'focus',
+				headline: 'fix(ui): keep focus in dialogs',
+				status: 'shipped',
+				updatedAt: minutes(60 * 24 * 21),
+				href: '#'
+			},
+			{
+				id: 'search',
+				headline: 'feat(search): fuzzy thread search',
+				status: 'discarded',
+				updatedAt: minutes(60 * 24 * 60),
+				href: '#'
+			}
+		]
+	}}
+	play={async ({ canvas, canvasElement }) => {
+		const icons = [...canvasElement.querySelectorAll('svg[role=img]')].map((icon) =>
+			icon.getAttribute('aria-label')
+		);
+		await expect(icons).toEqual([
+			'Needs you',
+			'Running',
+			'Running',
+			'Shipping',
+			'Not started',
+			'Shipped',
+			'Discarded'
+		]);
+		await expect(
+			within(canvas.getByRole('list', { name: 'Running' })).getAllByRole('link')
+		).toHaveLength(3);
+		await expect(
+			[...canvasElement.querySelectorAll('time')].slice(0, 5).map((time) => time.textContent)
+		).toEqual(['now', '1m', '12m', '3h', '2d']);
+		const rows = canvas.getAllByRole('link');
+		await expect(new Set(rows.map((row) => row.offsetHeight)).size).toBe(1);
+		await expect(rows.filter((row) => row.getAttribute('aria-current') === 'page')).toHaveLength(1);
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Empty"
+	args={{ threads: [], newThread: 'new-thread' }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByText('Start your first thread')).toBeVisible();
+		await expect(canvas.getByRole('button', { name: 'New thread' })).toHaveAttribute(
+			'popovertarget',
+			'new-thread'
+		);
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>

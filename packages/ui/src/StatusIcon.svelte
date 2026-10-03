@@ -2,7 +2,7 @@
 	import type { SVGAttributes } from 'svelte/elements';
 
 	interface Props extends SVGAttributes<SVGSVGElement> {
-		state: 'pending' | 'running' | 'attention' | 'passed' | 'failed';
+		state: 'pending' | 'running' | 'shipping' | 'attention' | 'passed' | 'failed';
 	}
 
 	let { state, ...rest }: Props = $props();
@@ -11,6 +11,15 @@
 <svg class={['status', state]} viewBox="0 0 16 16" aria-hidden="true" {...rest}>
 	{#if state === 'attention'}
 		<circle cx="8" cy="8" r="4.5" />
+	{:else if state === 'shipping'}
+		<path
+			class="water"
+			d="M-4 14c1-.8 2-.8 3 0s2 .8 3 0 2-.8 3 0 2 .8 3 0 2-.8 3 0 2 .8 3 0 2-.8 3 0 2 .8 3 0"
+		/>
+		<g class="ship">
+			<path d="M1.75 9.5h12.5l-1.5 3h-9.5z" />
+			<path d="M3.5 7h3v2.5h-3zM6.5 7h3v2.5h-3zM10.75 5v4.5h2V5z" />
+		</g>
 	{:else}
 		<circle class="track" cx="8" cy="8" r="6" />
 		{#if state === 'running'}
@@ -48,6 +57,18 @@
 		stroke: var(--color-accent);
 	}
 
+	.shipping {
+		overflow: hidden;
+
+		.water {
+			opacity: 0.45;
+		}
+
+		.ship {
+			stroke: var(--color-accent);
+		}
+	}
+
 	.attention {
 		fill: var(--color-accent);
 		stroke: none;
@@ -56,6 +77,28 @@
 	@media (prefers-reduced-motion: no-preference) {
 		.running {
 			animation: spin 0.9s linear infinite;
+		}
+
+		.shipping {
+			.water {
+				animation: waves 0.6s linear infinite;
+			}
+
+			.ship {
+				animation: bob 1.2s ease-in-out infinite;
+			}
+		}
+	}
+
+	@keyframes waves {
+		to {
+			translate: -6px 0;
+		}
+	}
+
+	@keyframes bob {
+		50% {
+			translate: 0 -0.6px;
 		}
 	}
 

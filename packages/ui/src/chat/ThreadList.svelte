@@ -22,8 +22,10 @@
 </script>
 
 <script lang="ts">
+	import Button from '../Button.svelte';
 	import Popover from '../Popover.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
+	import ThreadIcon from './ThreadIcon.svelte';
 	import ThreadPreview from './ThreadPreview.svelte';
 	import { formatAge } from './format.ts';
 	import { statuses } from './status.ts';
@@ -31,10 +33,11 @@
 	interface Props {
 		threads: ThreadListItem[];
 		current?: string;
+		newThread?: string;
 		now?: number;
 	}
 
-	let { threads, current, now = Date.now() }: Props = $props();
+	let { threads, current, newThread, now = Date.now() }: Props = $props();
 
 	const id = $props.id();
 
@@ -72,6 +75,17 @@
 </script>
 
 <nav aria-label="Threads" class="threads">
+	{#if !threads.length}
+		<div class="empty">
+			<p class="lead">Start your first thread</p>
+			<p class="body">Describe a change and ReGit drafts a plan.</p>
+			{#if newThread}
+				<Button variant="primary" size="sm" popovertarget={newThread}>
+					<ThreadIcon plus /> New thread
+				</Button>
+			{/if}
+		</div>
+	{/if}
 	{#each sections as section, index (section.title)}
 		<p id="{id}-section-{index}" class="title">{section.title}</p>
 		<ul aria-labelledby="{id}-section-{index}">
@@ -125,6 +139,29 @@
 		align-content: start;
 		gap: var(--space-2);
 		font-size: var(--text-chat);
+	}
+
+	.empty {
+		--icon-size: 1.1em;
+
+		display: grid;
+		justify-items: start;
+		gap: var(--space-2);
+		padding: var(--space-4);
+
+		p {
+			margin: 0;
+		}
+
+		.lead {
+			font-weight: 600;
+		}
+
+		.body {
+			margin-block-end: var(--space-5);
+			color: var(--color-muted);
+			font-size: var(--text-meta);
+		}
 	}
 
 	.title {

@@ -8,7 +8,7 @@
 		tags: ['!autodocs']
 	});
 
-	const states = ['pending', 'running', 'attention', 'passed', 'failed'] as const;
+	const states = ['pending', 'running', 'shipping', 'attention', 'passed', 'failed'] as const;
 </script>
 
 <Story name="States" asChild>

@@ -1,3 +1,4 @@
+export { default as AppShell } from './AppShell.svelte';
 export { default as Avatar } from './Avatar.svelte';
 export { default as Button } from './Button.svelte';
 export { default as Menu, type MenuItem } from './Menu.svelte';
@@ -16,4 +17,5 @@ export { default as ChatMessage } from './chat/ChatMessage.svelte';
 export { default as NewThreadPalette, type Mode } from './chat/NewThreadPalette.svelte';
 export { default as ThreadList, type ThreadListItem } from './chat/ThreadList.svelte';
 export { default as ThreadPreview, type ThreadPreviewProps } from './chat/ThreadPreview.svelte';
+export { default as ThreadView } from './chat/ThreadView.svelte';
 export type { Author, AuthorKind, Mentionable, ThreadAction, ThreadStatus } from './chat/types.ts';

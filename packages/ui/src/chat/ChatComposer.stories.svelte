@@ -43,7 +43,7 @@
 		await userEvent.type(box, '@');
 		await waitFor(() => expect(canvas.getByRole('listbox')).toBeVisible());
 		await userEvent.keyboard('{Escape}');
-		await waitFor(() => expect(canvas.getByRole('listbox')).not.toBeVisible());
+		await waitFor(() => expect(canvas.getByRole('listbox', { hidden: true })).not.toBeVisible());
 	}}
 />
 <Story
