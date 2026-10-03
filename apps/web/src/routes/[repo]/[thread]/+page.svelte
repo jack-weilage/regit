@@ -11,6 +11,7 @@
 		ChatLog,
 		ChatMessage,
 		DeletedThread,
+		Markdown,
 		DeleteThreadDialog,
 		ThreadView,
 		Button,
@@ -125,7 +126,7 @@
 					>
 						{#each block.messages as message (message.id)}
 							<ChatMessage steering={!!message.steering} pending={message.steering?.read === false}
-								>{message.text}</ChatMessage
+								><Markdown source={message.text} /></ChatMessage
 							>
 						{/each}
 					</ChatGroup>

@@ -19,6 +19,7 @@ export type { CheckState } from './chat/ChatChecks.svelte';
 export { default as ChatLog } from './chat/ChatLog.svelte';
 export { default as ChatMention } from './chat/ChatMention.svelte';
 export { default as ChatMessage } from './chat/ChatMessage.svelte';
+export { default as Markdown } from './chat/Markdown.svelte';
 export { default as DeletedThread } from './chat/DeletedThread.svelte';
 export { default as DeleteThreadDialog } from './chat/DeleteThreadDialog.svelte';
 export { default as NewThreadPalette, type Mode } from './chat/NewThreadPalette.svelte';
