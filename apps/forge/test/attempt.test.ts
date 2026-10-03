@@ -605,3 +605,71 @@ test('resumes a finished attempt when someone replies, updating the intent', asy
 		(coding[1]!.query as { tools: { name: string }[] }).tools.map((tool) => tool.name)
 	).toContain('update_intent');
 });
+
+test('reads messages sent during a review and resumes the work after it', async () => {
+	await seed('midreview', { 'notes.md': 'Some notes\n' });
+	await script([
+		[{ type: 'response.output_text.delta', delta: 'Sure.' }],
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'slow',
+					name: 'run',
+					arguments: JSON.stringify({ command: 'sleep 3' })
+				}
+			}
+		],
+		submitReview('pass', ['met']),
+		[{ type: 'response.output_text.delta', delta: 'Made it shorter.' }],
+		submitReview('pass', ['met'])
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('midreview');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'midreview',
+		author: sam,
+		text: 'Add a title.',
+		mode: 'small'
+	});
+	const until = async (
+		check: (detail: NonNullable<Awaited<ReturnType<typeof repo.thread>>>) => boolean
+	) => {
+		for (let i = 0; i < 600; i++) {
+			const detail = (await repo.thread(id))!;
+			if (check(detail)) return detail;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		throw new Error('The thread never got there');
+	};
+	await until((detail) => detail.entries.at(-1)?.type === 'message');
+	await repo.intentProposed(id, {
+		headline: 'docs: add a title',
+		purpose: 'Readers need a title.',
+		doneWhen: ['notes.md starts with a title']
+	});
+	await repo.start(id);
+	await until((detail) => detail.summary.status === 'reviewing');
+
+	await repo.reply(id, { author: sam, text: 'Keep it short.' });
+	const detail = await until(
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.filter((entry) => entry.type === 'review').length === 2
+	);
+
+	expect(
+		detail.entries.find((entry) => entry.type === 'message' && entry.text === 'Keep it short.')
+	).toMatchObject({ steering: { read: true } });
+	expect(detail.entries.flatMap((entry) => (entry.type === 'review' ? [entry.round] : []))).toEqual(
+		[1, 1]
+	);
+	const coding = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
+	);
+	expect(coding).toHaveLength(2);
+	expect(JSON.stringify(coding[1]!.query)).toContain('Sam: Keep it short.');
+});

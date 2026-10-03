@@ -437,14 +437,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 			usage
 		});
 
-		if (review.verdict === 'fail' && round < maxReviewRounds) {
+		const sendBack = review.verdict === 'fail' && round < maxReviewRounds;
+		const queued = this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0;
+		if (!sendBack && !queued) return await this.#finish(attempt, 'finished');
+		if (sendBack) {
 			this.#saveStep({ turns: [{ role: 'user', text: reviewFeedback(intent, review) }] });
-			this.#setStatus('running');
-			await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
-			await this.ctx.storage.setAlarm(Date.now());
-			return;
+		} else {
+			this.#setMeta('cycle', String(this.#reviewCount()));
 		}
-		await this.#finish(attempt, 'finished');
+		this.#setStatus('running');
+		await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
+		await this.ctx.storage.setAlarm(Date.now());
 	}
 
 	async #head(fetch: Fetch) {

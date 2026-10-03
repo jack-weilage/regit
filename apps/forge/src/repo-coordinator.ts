@@ -135,7 +135,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
-		const steering = summary.status === 'running';
+		const steering = summary.status === 'running' || summary.status === 'reviewing';
 		const entry = this.#add(thread, {
 			type: 'message',
 			author,
