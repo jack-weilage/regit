@@ -4,7 +4,7 @@ import { repoNamePattern } from '@regit/core';
 import { repos } from '@regit/db';
 import { asc } from 'drizzle-orm';
 import * as v from 'valibot';
-import { coordinators } from '#lib/server/coordinators.ts';
+import { coordinatorFor } from '#lib/server/coordinators.ts';
 import { db } from '#lib/server/db.ts';
 import { createRepo as create, repoExists, RepoError } from '#lib/server/repos.ts';
 
@@ -18,13 +18,13 @@ function author() {
 
 async function coordinator(repo: string) {
 	if (!(await repoExists(repo))) error(404, `There is no repository named ${repo}`);
-	return coordinators.getByName(repo);
+	return coordinatorFor(repo);
 }
 
 export const getUser = query(async () => getRequestEvent().locals.user);
 
 export const getRepos = query(() =>
-	db.select({ name: repos.name }).from(repos).orderBy(asc(repos.name))
+	db().select({ name: repos.name }).from(repos).orderBy(asc(repos.name))
 );
 
 export const getThreads = query(name, async (repo) => (await coordinator(repo)).threads());

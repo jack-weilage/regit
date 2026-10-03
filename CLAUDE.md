@@ -5,7 +5,7 @@ Bun workspace: `apps/*` (deployables) and `packages/*` (shared code consumed as 
 ## Conventions
 
 - SvelteKit 3, Svelte 5 runes, experimental async and remote functions are on. Config lives in `vite.config.ts`, not `svelte.config.js`.
-- Import app code with `#lib/...`, not `$lib`. Read bindings with `import { env } from 'cloudflare:workers'`, not `platform.env`.
+- Import app code with `#lib/...`, not `$lib`. Read bindings with `import { env } from 'cloudflare:workers'`, not `platform.env`. In `apps/web`, touch `env` only inside functions: the build imports server modules where bindings don't exist.
 - Use the `--space-1` to `--space-7` scale in `theme.css` (2–20px, in rem) for padding, margins and gaps rather than raw values; borders and focus outlines stay in px. Sizes that belong to text (icons, inline avatars, button, bubble and chip padding) use em so they scale with it; `--chat-inset` aligns content with the composer's text.
 - Shared components live in `packages/ui`, each with a Svelte CSF story (`*.stories.svelte`). Style with the tokens in `theme.css`.
 - Durable Objects, Workflows and containers belong in `apps/forge`, which has no API of its own. `apps/web` binds to them with `script_name: "regit-forge"` and types them with the interfaces in `@regit/core` (e.g. `RepoCoordinatorApi`, which the class implements).

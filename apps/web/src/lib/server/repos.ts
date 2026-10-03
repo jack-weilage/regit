@@ -14,7 +14,7 @@ const problems: Partial<Record<ArtifactsErrorCode, string>> = {
 export class RepoError extends Error {}
 
 export async function repoExists(name: string) {
-	const [row] = await db.select({ name: repos.name }).from(repos).where(eq(repos.name, name));
+	const [row] = await db().select({ name: repos.name }).from(repos).where(eq(repos.name, name));
 	return !!row;
 }
 
@@ -27,7 +27,7 @@ export async function createRepo({
 	source?: string;
 	createdBy: string;
 }) {
-	const [claimed] = await db
+	const [claimed] = await db()
 		.insert(repos)
 		.values({ name, source, createdBy, createdAt: new Date() })
 		.onConflictDoNothing()
@@ -38,7 +38,7 @@ export async function createRepo({
 			? env.ARTIFACTS.import({ source: { url: source }, target: { name } })
 			: env.ARTIFACTS.create(name));
 	} catch (error) {
-		await db.delete(repos).where(eq(repos.name, name));
+		await db().delete(repos).where(eq(repos.name, name));
 		const code = (error as ArtifactsError).code;
 		if (code === 'ALREADY_EXISTS') throw new RepoError(`${name} already exists.`);
 		const problem = code && problems[code];
