@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '../Button.svelte';
+	import { clock } from './clock.svelte.ts';
 	import { formatAgo } from './format.ts';
 
 	interface Props {
@@ -11,15 +12,17 @@
 		onrestore: () => void;
 	}
 
-	let { deletedBy, deletedAt, purgeAt, back, now = Date.now(), onrestore }: Props = $props();
+	let { deletedBy, deletedAt, purgeAt, back, now, onrestore }: Props = $props();
 
-	let days = $derived(Math.max(1, Math.ceil((purgeAt - now) / 86_400_000)));
+	let time = $derived(now ?? clock.now);
+
+	let days = $derived(Math.max(1, Math.ceil((purgeAt - time) / 86_400_000)));
 </script>
 
 <div class="deleted">
 	<h1>This thread was deleted</h1>
 	<p>
-		{deletedBy} deleted it {formatAgo(deletedAt, now)}. It's gone for good in {days}
+		{deletedBy} deleted it {formatAgo(deletedAt, time)}. It's gone for good in {days}
 		{days === 1 ? 'day' : 'days'}.
 	</p>
 	<div class="buttons">

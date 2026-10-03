@@ -28,6 +28,7 @@
 	import ThreadIcon from './ThreadIcon.svelte';
 	import ThreadPreview from './ThreadPreview.svelte';
 	import { formatAge } from './format.ts';
+	import { clock } from './clock.svelte.ts';
 	import { statuses } from './status.ts';
 
 	interface Props {
@@ -37,7 +38,9 @@
 		now?: number;
 	}
 
-	let { threads, current, newThread, now = Date.now() }: Props = $props();
+	let { threads, current, newThread, now }: Props = $props();
+
+	let time = $derived(now ?? clock.now);
 
 	const id = $props.id();
 
@@ -107,7 +110,7 @@
 						/>
 						<span class="headline">{thread.headline}</span>
 						<time datetime={new Date(thread.updatedAt).toISOString()}
-							>{formatAge(thread.updatedAt, now)}</time
+							>{formatAge(thread.updatedAt, time)}</time
 						>
 					</a>
 				</li>

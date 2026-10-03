@@ -232,3 +232,29 @@
 		</div>
 	{/snippet}
 </Story>
+
+<Story
+	name="Live ages"
+	args={{
+		now: undefined,
+		current: undefined,
+		threads: [
+			{
+				id: 'fresh',
+				headline: 'fix(auth): refresh expired sessions',
+				status: 'running',
+				updatedAt: Date.now() - 50_000,
+				href: '#'
+			}
+		]
+	}}
+	play={async ({ canvasElement }) => {
+		await expect(canvasElement.querySelector('time')).toHaveTextContent('now');
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
