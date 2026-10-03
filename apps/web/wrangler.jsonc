@@ -20,7 +20,10 @@
 		}
 	],
 	"observability": { "enabled": true },
-	"vars": { "ACCESS_TEAM_DOMAIN": "", "ACCESS_AUD": "" },
+	"vars": {
+		"ACCESS_TEAM_DOMAIN": "jweilage.cloudflareaccess.com",
+		"ACCESS_AUD": "ff8b8b91220e5b72efdf15fa0513dfae74669b1fc2768cb85aca75d88583bb64"
+	},
 	"workers_dev": true,
 	"preview_urls": true
 }
