@@ -16,7 +16,6 @@
 		Button,
 		type ThreadAction
 	} from '@regit/ui';
-	import { goto } from '$app/navigation';
 	import { threadPurgeDelayMs, type Author, type Entry } from '@regit/core';
 	import {
 		deleteThread,
@@ -28,7 +27,6 @@
 		restoreThread,
 		startThread
 	} from '#lib/data.remote.ts';
-	import { getToasts } from '#lib/toasts.svelte.ts';
 
 	type Block =
 		| {
@@ -43,8 +41,6 @@
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
 
 	let { params } = $props();
-
-	const toasts = getToasts();
 
 	let deleting = $state(false);
 
@@ -78,24 +74,6 @@
 
 	function reopen() {
 		reopenThread(ref);
-	}
-
-	async function remove() {
-		const { repo, id } = ref;
-		const headline = detail?.summary.headline;
-		await deleteThread({ repo, id });
-		await goto(`/${repo}`);
-		toasts.show({
-			text: 'Deleted',
-			code: headline || 'the thread',
-			action: {
-				label: 'Undo',
-				onclick: async () => {
-					await restoreThread({ repo, id });
-					await goto(`/${repo}/${id}`);
-				}
-			}
-		});
 	}
 
 	let blocks = $derived(
@@ -197,7 +175,7 @@
 		).length}
 		running={summary.status === 'running'}
 		restoreDays={threadPurgeDelayMs / 86_400_000}
-		onconfirm={remove}
+		onconfirm={() => deleteThread(ref)}
 	/>
 {:else}
 	<p class="missing">This thread doesn't exist.</p>
