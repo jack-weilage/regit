@@ -84,6 +84,7 @@ export interface RepoCoordinatorApi {
 	reopen(thread: string, by: Author): void;
 	delete(thread: string, by: Author): Promise<void>;
 	restore(thread: string): void;
+	stop(thread: string, by: Author): Promise<void>;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;
 }

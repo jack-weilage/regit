@@ -56,3 +56,17 @@
 		<ChatComposer onsend={fn()} placeholder="Reply" mentions={mentionables} />
 	</div>
 </Story>
+
+<Story
+	name="Working"
+	args={{ working: true, onstop: fn(), placeholder: 'Reply to ReGit' }}
+	play={async ({ args, canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'Stop' }));
+		await expect(args.onstop).toHaveBeenCalledOnce();
+		await userEvent.type(canvas.getByRole('textbox'), 'Use the existing hook');
+		await expect(canvas.queryByRole('button', { name: 'Stop' })).toBeNull();
+		await userEvent.keyboard('{Enter}');
+		await expect(args.onsend).toHaveBeenCalledWith('Use the existing hook');
+		await expect(canvas.getByRole('button', { name: 'Stop' })).toBeVisible();
+	}}
+/>

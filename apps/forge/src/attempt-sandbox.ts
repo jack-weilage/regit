@@ -44,7 +44,14 @@ export interface ConverseInput {
 }
 
 export type AttemptStatus =
-	'queued' | 'running' | 'reviewing' | 'finished' | 'stopped' | 'failed' | 'cancelled';
+	| 'queued'
+	| 'running'
+	| 'reviewing'
+	| 'interrupted'
+	| 'finished'
+	| 'stopped'
+	| 'failed'
+	| 'cancelled';
 
 export interface AttemptSnapshot {
 	status: AttemptStatus;
@@ -104,6 +111,7 @@ const outcomes: Record<AgentOutcome, AttemptStatus> = {
 export class AttemptSandbox extends DurableObject<Env> {
 	#sql = this.ctx.storage.sql;
 	#controller?: AbortController;
+	#conversation?: AbortController;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -220,6 +228,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
 	}
 
+	async stop() {
+		this.#conversation?.abort();
+		this.#sql.exec('DELETE FROM inbox');
+		const attempt = this.#attempt();
+		if (!attempt || !isActive(attempt.status)) return;
+		this.#setStatus('interrupted');
+		this.#controller?.abort();
+		await this.ctx.storage.deleteAlarm();
+	}
+
 	async destroy() {
 		await this.cancel();
 		const fork = this.#attempt()?.fork;
@@ -235,6 +253,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #converse() {
+		const controller = (this.#conversation = new AbortController());
 		const repo = this.#meta('repo')!;
 		const mode = this.#meta('mode') as Mode;
 		const thread = this.ctx.id.name!;
@@ -270,6 +289,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					tools,
 					instructions: threadInstructions,
 					history,
+					signal: controller.signal,
 					steer: () => this.#drain(repo)
 				});
 				for await (const event of run) {
@@ -277,9 +297,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 					this.#saveConversation(event.turns);
 					await this.#report(repo, { type: 'reply', step: event });
 				}
+				if (controller.signal.aborted) return;
 			}
 		} catch (error) {
 			this.#sql.exec('DELETE FROM inbox');
+			if (controller.signal.aborted) return;
 			const reason = error instanceof Error ? error.message : String(error);
 			await this.#report(repo, { type: 'conversation-failed', error: reason });
 		}
@@ -375,7 +397,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			tools: sandboxTools(fetch, readOnlyTools),
 			intent,
 			base: attempt.base,
-			summary: this.#summary()
+			summary: this.#summary(),
+			signal: this.#controller?.signal
 		});
 		this.#sql.exec(
 			'INSERT INTO reviews (round, verdict, checks, findings) VALUES (?, ?, ?, ?)',

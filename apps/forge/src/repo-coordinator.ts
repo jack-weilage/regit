@@ -206,6 +206,23 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 	}
 
+	async stop(thread: string, by: Author) {
+		const summary = this.#active(thread);
+		await this.env.ATTEMPTS.getByName(thread).stop();
+		const pending = this.#sql
+			.exec<{ seq: number; body: string }>('SELECT seq, body FROM entries WHERE thread = ?', thread)
+			.toArray()
+			.filter((row) => {
+				const entry = JSON.parse(row.body) as Entry;
+				return entry.type === 'message' && entry.steering?.read === false;
+			});
+		for (const row of pending) this.#markRead(thread, `e${row.seq}`);
+		this.#add(thread, { type: 'event', text: `Stopped by ${by.name}` });
+		if (summary.status === 'running' || summary.status === 'reviewing') {
+			this.#setStatus(thread, 'needs-you');
+		}
+	}
+
 	restore(thread: string) {
 		this.#require(thread);
 		this.#sql.exec('UPDATE threads SET deleted_at = NULL, deleted_by = NULL WHERE id = ?', thread);

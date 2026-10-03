@@ -29,7 +29,8 @@
 		reopenThread,
 		reply,
 		restoreThread,
-		startThread
+		startThread,
+		stopThread
 	} from '#lib/data.remote.ts';
 
 	type Block =
@@ -227,6 +228,8 @@
 				</ChatBanner>
 			{:else}
 				<ChatComposer
+					working={thinking || summary.status === 'running' || summary.status === 'reviewing'}
+					onstop={() => stopThread(ref)}
 					placeholder={summary.status === 'draft' ? 'Refine the intent' : 'Reply to ReGit'}
 					onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
 				/>

@@ -598,3 +598,87 @@ test('sends work that fails review back to the agent, then finishes when it pass
 		detail!.entries.some((entry) => entry.type === 'message' && entry.text.includes('reviewer'))
 	).toBe(false);
 });
+
+const sleepCall = [
+	{
+		type: 'response.output_item.done',
+		item: {
+			type: 'function_call',
+			call_id: 'sleep',
+			name: 'run',
+			arguments: JSON.stringify({ command: 'sleep 30' })
+		}
+	}
+];
+
+async function untilRequests(task: string, count: number) {
+	for (let i = 0; i < 300; i++) {
+		const requests = await modelRequests();
+		const matching = requests.filter(
+			(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === task
+		);
+		if (matching.length >= count) return;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	throw new Error(`Never saw ${count} ${task} requests`);
+}
+
+test('stops a running attempt mid tool call', async () => {
+	await seed('stopping', { 'notes.md': 'Some notes\n' });
+	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], sleepCall]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('stopping');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'stopping',
+		author: sam,
+		text: 'Go.',
+		mode: 'small'
+	});
+	await untilRequests('conversation', 1);
+	for (let i = 0; i < 100; i++) {
+		const last = (await repo.thread(id))!.entries.at(-1);
+		if (last?.type === 'message' && last.text === 'Sure.') break;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	await repo.intentProposed(id, {
+		headline: 'chore: wait',
+		purpose: 'Testing.',
+		doneWhen: ['It waited']
+	});
+	await repo.start(id);
+	await untilRequests('code', 1);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+
+	const stoppedAt = Date.now();
+	await repo.stop(id, sam);
+	const detail = await repo.thread(id);
+	expect(Date.now() - stoppedAt).toBeLessThan(20_000);
+	expect(detail!.summary.status).toBe('needs-you');
+	expect(detail!.entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
+	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
+});
+
+test('stops a conversation turn mid tool call', async () => {
+	await seed('quiet', { 'notes.md': 'Some notes\n' });
+	await script([sleepCall]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('quiet');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'quiet',
+		author: sam,
+		text: 'Look around.',
+		mode: 'small'
+	});
+	await untilRequests('conversation', 1);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+
+	await repo.stop(id, sam);
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	const entries = (await repo.thread(id))!.entries;
+	expect(entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
+	expect(
+		entries.some((entry) => entry.type === 'event' && entry.text.startsWith("Couldn't reply"))
+	).toBe(false);
+});

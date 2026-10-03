@@ -21,7 +21,9 @@
 		placeholder?: string;
 		disabled?: boolean;
 		mentions?: Mentionable[];
+		working?: boolean;
 		onsend: (message: string) => void;
+		onstop?: () => void;
 	}
 
 	let {
@@ -29,7 +31,9 @@
 		placeholder = 'Message',
 		disabled = false,
 		mentions = [],
-		onsend
+		working = false,
+		onsend,
+		onstop
 	}: Props = $props();
 
 	const id = $props.id();
@@ -147,11 +151,19 @@
 			aria-controls={open ? `${id}-suggestions` : undefined}
 			aria-activedescendant={open ? `${id}-${active}` : undefined}></textarea>
 	</div>
-	<Button type="submit" variant="primary" icon disabled={disabled || !message} aria-label="Send">
-		<svg class="send" viewBox="0 0 16 16" aria-hidden="true">
-			<path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
-		</svg>
-	</Button>
+	{#if working && onstop && !message}
+		<Button variant="primary" icon {disabled} aria-label="Stop" onclick={onstop}>
+			<svg class="stop" viewBox="0 0 16 16" aria-hidden="true">
+				<rect x="4.25" y="4.25" width="7.5" height="7.5" rx="1.5" />
+			</svg>
+		</Button>
+	{:else}
+		<Button type="submit" variant="primary" icon disabled={disabled || !message} aria-label="Send">
+			<svg class="send" viewBox="0 0 16 16" aria-hidden="true">
+				<path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+			</svg>
+		</Button>
+	{/if}
 </form>
 
 <style>
@@ -249,6 +261,13 @@
 		&::placeholder {
 			color: var(--color-muted);
 		}
+	}
+
+	.stop {
+		inline-size: 1.25em;
+		block-size: 1.25em;
+		align-self: center;
+		fill: currentColor;
 	}
 
 	.send {

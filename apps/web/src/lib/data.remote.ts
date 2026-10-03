@@ -92,3 +92,9 @@ export const restoreThread = command(thread, async ({ repo, id }) => {
 	getThread({ repo, id }).refresh();
 	getThreads(repo).refresh();
 });
+
+export const stopThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo)).stop(id, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});
