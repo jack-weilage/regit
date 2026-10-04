@@ -23,6 +23,7 @@
 		now?: number;
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
+		onclone?: () => void;
 		onquery?: (text: string) => void;
 		onstart: (thread: { text: string; mode: Mode; machine: Machine }) => void;
 		onopenthread?: (thread: Mentionable) => void;
@@ -42,6 +43,7 @@
 		now,
 		onswitchrepo,
 		oncreaterepo,
+		onclone,
 		onquery,
 		onstart,
 		onopenthread,
@@ -65,11 +67,12 @@
 						checked: name === repo,
 						onselect: () => onswitchrepo?.(name)
 					})),
+					...(onclone ? [{ label: 'Clone…', separated: true, onselect: onclone }] : []),
 					...(oncreaterepo
 						? [
 								{
 									label: 'New repository…',
-									separated: true,
+									separated: !onclone,
 									onselect: () => document.getElementById(`${id}-new-repo`)?.showPopover()
 								}
 							]

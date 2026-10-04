@@ -1,11 +1,13 @@
 import { command, getRequestEvent, query } from '$app/server';
 import { error } from '@sveltejs/kit';
+import { env } from 'cloudflare:workers';
 import { machines, repoNamePattern, type Machine } from '@regit/core';
 import { repos } from '@regit/db';
 import { asc, eq } from 'drizzle-orm';
 import * as v from 'valibot';
 import { coordinatorFor } from '#lib/server/coordinators.ts';
 import { db } from '#lib/server/db.ts';
+import { createGitToken, listGitTokens, revokeGitToken } from '#lib/server/git.ts';
 import { createRepo as create, repoExists, RepoError } from '#lib/server/repos.ts';
 
 const name = v.pipe(v.string(), v.regex(repoNamePattern));
@@ -162,5 +164,40 @@ export const forwardIntent = command(
 	async ({ repo, id, to }) => {
 		await (await coordinator(repo)).forwardIntent(id, to, author());
 		getThread({ repo, id }).refresh();
+	}
+);
+
+export const getGitAccess = query(name, async (repo) => {
+	await coordinator(repo);
+	return {
+		url: `https://${env.GIT_HOST}/${repo}.git`,
+		tokens: await listGitTokens(repo, getRequestEvent().locals.user.email)
+	};
+});
+
+export const createGitAccessToken = command(
+	v.object({
+		repo: name,
+		label: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(60)),
+		scope: v.picklist(['read', 'write']),
+		days: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(365))
+	}),
+	async ({ repo, ...token }) => {
+		await coordinator(repo);
+		const created = await createGitToken({
+			repo,
+			...token,
+			createdBy: getRequestEvent().locals.user.email
+		});
+		getGitAccess(repo).refresh();
+		return { label: created.label, secret: created.secret };
+	}
+);
+
+export const revokeGitAccessToken = command(
+	v.object({ repo: name, id: v.pipe(v.string(), v.uuid()) }),
+	async ({ repo, id }) => {
+		await revokeGitToken(id, getRequestEvent().locals.user.email);
+		getGitAccess(repo).refresh();
 	}
 );

@@ -22,8 +22,13 @@
 	"observability": { "enabled": true },
 	"vars": {
 		"ACCESS_TEAM_DOMAIN": "jweilage.cloudflareaccess.com",
-		"ACCESS_AUD": "ff8b8b91220e5b72efdf15fa0513dfae74669b1fc2768cb85aca75d88583bb64"
+		"ACCESS_AUD": "ff8b8b91220e5b72efdf15fa0513dfae74669b1fc2768cb85aca75d88583bb64",
+		"GIT_HOST": "git.regit.dev"
 	},
+	"routes": [
+		{ "pattern": "regit.dev", "custom_domain": true },
+		{ "pattern": "git.regit.dev", "custom_domain": true }
+	],
 	"workers_dev": true,
 	"preview_urls": true
 }

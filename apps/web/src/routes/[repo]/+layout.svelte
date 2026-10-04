@@ -1,13 +1,22 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { AppShell, type Mode, type SimilarThread, type ThreadListItem } from '@regit/ui';
+	import {
+		AppShell,
+		CloneDialog,
+		type Mode,
+		type SimilarThread,
+		type ThreadListItem
+	} from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
 	import { defaultMachine, type LiveMessage, type Machine, type ThreadActivity } from '@regit/core';
 	import { setLiveActivity } from '#lib/activity.ts';
 	import {
 		assessRequest,
+		createGitAccessToken,
+		getGitAccess,
 		getRepos,
+		revokeGitAccessToken,
 		getThread,
 		getThreads,
 		getUser,
@@ -55,6 +64,10 @@
 		return () => source.close();
 	};
 
+	let cloning = $state(false);
+	let created = $state<{ label: string; secret: string } | null>(null);
+	let access = $derived(cloning ? await getGitAccess(repo) : null);
+
 	let similar = $state<SimilarThread[]>([]);
 	let size = $state<Exclude<Mode, 'auto'>>();
 	let searching: ReturnType<typeof setTimeout> | undefined;
@@ -98,6 +111,10 @@
 		onstart={start}
 		{similar}
 		{size}
+		onclone={() => {
+			created = null;
+			cloning = true;
+		}}
 		onquery={search}
 		onopenthread={(thread) => {
 			latest++;
@@ -108,6 +125,17 @@
 	>
 		{@render children()}
 	</AppShell>
+	{#if access}
+		<CloneDialog
+			bind:open={cloning}
+			{repo}
+			url={access.url}
+			tokens={access.tokens}
+			{created}
+			oncreate={async (token) => (created = await createGitAccessToken({ repo, ...token }))}
+			onrevoke={(id) => revokeGitAccessToken({ repo, id })}
+		/>
+	{/if}
 </div>
 
 <style>

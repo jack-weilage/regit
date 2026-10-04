@@ -23,3 +23,15 @@ export const previews = sqliteTable('previews', {
 	thread: text().notNull(),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull()
 });
+
+export const gitTokens = sqliteTable('git_tokens', {
+	id: text().primaryKey(),
+	hash: text().notNull().unique(),
+	repo: text().notNull(),
+	scope: text({ enum: ['read', 'write'] }).notNull(),
+	label: text().notNull(),
+	createdBy: text('created_by').notNull(),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+	expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+	lastUsedAt: integer('last_used_at', { mode: 'timestamp_ms' })
+});
