@@ -8,5 +8,11 @@ export default {
 		'@storybook/addon-docs',
 		'@storybook/addon-a11y',
 		'@storybook/addon-vitest'
-	]
+	],
+	viteFinal(config) {
+		if (process.env.REGIT_PREVIEW_HOST && typeof config.server?.hmr === 'object') {
+			config.server.hmr.clientPort = 443;
+		}
+		return config;
+	}
 } satisfies StorybookConfig;

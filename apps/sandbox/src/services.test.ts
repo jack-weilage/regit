@@ -113,7 +113,7 @@ test('reports the log tail when a service exits before its port opens', async ()
 	await expect(
 		sandbox.services.start({
 			name: 'broken',
-			command: 'echo "missing module"; exit 3',
+			command: `printf '\\033[31mmissing\\033[0m module\\n'; exit 3`,
 			port: await freePort()
 		})
 	).rejects.toThrow(/exited with code 3 before port \d+ opened:\nmissing module/);

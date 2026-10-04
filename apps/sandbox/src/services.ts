@@ -134,6 +134,7 @@ export function createServices(
 	async function tail(name: string, lines = 100) {
 		const text = await readFile(join(logs, `${name}.log`), 'utf8').catch(() => '');
 		return text
+			.replace(ansi, '')
 			.split('\n')
 			.slice(-lines - 1)
 			.join('\n')
@@ -148,6 +149,8 @@ export function createServices(
 }
 
 export type Services = ReturnType<typeof createServices>;
+
+const ansi = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g;
 
 function signal(child: ChildProcess, name: NodeJS.Signals) {
 	try {
