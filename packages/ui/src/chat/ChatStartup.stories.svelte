@@ -37,7 +37,7 @@
 
 <Story
 	name="Ready"
-	args={{ stages: ready }}
+	args={{ stages: ready, finished: true }}
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.click(canvas.getByText('Sandbox ready · 39s'));
 		await expect(canvas.getByText('Restore the toolchain')).toBeVisible();
@@ -45,3 +45,12 @@
 />
 
 <Story name="Failed" args={{ stages: failed }} />
+
+<Story
+	name="Between stages"
+	args={{ stages: ready.slice(0, 2) }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('status')).toHaveTextContent('Starting a sandbox');
+		await expect(canvas.queryByText(/Sandbox ready/)).toBeNull();
+	}}
+/>

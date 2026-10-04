@@ -94,7 +94,7 @@
 			<ChatGroup author={sam} own>
 				<ChatMessage>The settings page takes forever to load for big orgs.</ChatMessage>
 			</ChatGroup>
-			<ChatStartup stages={stages(s)} {now} />
+			<ChatStartup stages={stages(s)} finished={s >= 60} {now} />
 			{#if s >= 64}
 				<ChatGroup author={agent}>
 					<ChatTools calls={exploring(s)} {now} />

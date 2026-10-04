@@ -14,17 +14,18 @@
 
 	interface Props {
 		stages: StartupStage[];
+		finished?: boolean;
 		now?: number;
 	}
 
-	let { stages, now }: Props = $props();
+	let { stages, finished = false, now }: Props = $props();
 
 	let time = $derived(now ?? stopwatch.now);
 
-	let ready = $derived(stages.every((stage) => stage.status === 'done'));
+	let ready = $derived(finished && stages.every((stage) => stage.status === 'done'));
 	let failed = $derived(stages.some((stage) => stage.status === 'failed'));
 	let started = $derived(stages.find((stage) => stage.startedAt)?.startedAt);
-	let finished = $derived(stages.at(-1)?.finishedAt);
+	let endedAt = $derived(stages.at(-1)?.finishedAt);
 
 	const icon = {
 		pending: 'pending',
@@ -51,9 +52,9 @@
 {/snippet}
 
 <section class="startup chat-enter" aria-label="Sandbox startup">
-	{#if ready && started !== undefined && finished !== undefined}
+	{#if ready && started !== undefined && endedAt !== undefined}
 		<details>
-			<summary>Sandbox ready · {formatDuration(finished - started)}</summary>
+			<summary>Sandbox ready · {formatDuration(endedAt - started)}</summary>
 			{@render list()}
 		</details>
 	{:else}

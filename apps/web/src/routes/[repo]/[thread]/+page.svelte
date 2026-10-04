@@ -365,7 +365,7 @@
 							checks={block.checks}
 						/>
 					{:else if block.type === 'startup'}
-						<ChatStartup stages={block.stages} />
+						<ChatStartup stages={block.stages} finished />
 					{:else}
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
