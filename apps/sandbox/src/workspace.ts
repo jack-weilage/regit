@@ -13,7 +13,7 @@ import type {
 	SquashRequest,
 	Toolchain
 } from '@regit/agent';
-import { exec, git, truncate } from './exec.ts';
+import { exec, git, noHooks, truncate } from './exec.ts';
 
 function auth(token?: string) {
 	if (!token) return undefined;
@@ -109,7 +109,7 @@ export async function rebase(
 ): Promise<RebaseResponse> {
 	await git(root, ['fetch', remote, branch], auth(token));
 	const onto = await git(root, ['rev-parse', 'FETCH_HEAD']);
-	const result = await exec('git', ['rebase', onto], {
+	const result = await exec('git', [...noHooks, 'rebase', onto], {
 		cwd: root,
 		env: identity('COMMITTER', committer)
 	});
@@ -124,7 +124,7 @@ export async function continueRebase(root: string, { committer }: ContinueRebase
 	}
 	if (marked.length) return { sha: null, conflicts: marked };
 	await git(root, ['add', '--all']);
-	const result = await exec('git', ['-c', 'core.editor=true', 'rebase', '--continue'], {
+	const result = await exec('git', [...noHooks, '-c', 'core.editor=true', 'rebase', '--continue'], {
 		cwd: root,
 		env: identity('COMMITTER', committer)
 	});
@@ -136,7 +136,7 @@ async function unmerged(root: string) {
 }
 
 export async function abortRebase(root: string) {
-	await exec('git', ['rebase', '--abort'], { cwd: root });
+	await exec('git', [...noHooks, 'rebase', '--abort'], { cwd: root });
 }
 
 async function rebased(root: string, code: number | null, output: string) {

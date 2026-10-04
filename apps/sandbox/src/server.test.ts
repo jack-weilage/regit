@@ -232,6 +232,17 @@ fi
 			'ReGit <agent@regit.dev> Say hi'
 		);
 	});
+
+	test("commits and pushes without running the repository's git hooks", async () => {
+		for (const hook of ['pre-commit', 'pre-push']) {
+			await writeFile(join(root, '.git/hooks', hook), '#!/bin/sh\necho "hook ran"; exit 1\n');
+			await chmod(join(root, '.git/hooks', hook), 0o755);
+		}
+		await call('edit_file', { path: 'greeting.ts', old_string: 'hello', new_string: 'hey' });
+		const sha = await workspace.commit({ message: 'Say hey', author });
+		await workspace.push({ token: 'token', ref: 'thread/say-hey' });
+		expect(await git(remote, ['rev-parse', 'thread/say-hey'])).toBe(sha);
+	});
 });
 
 describe('shipping', () => {

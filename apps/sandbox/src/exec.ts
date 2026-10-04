@@ -47,9 +47,12 @@ export function exec(
 	});
 }
 
+export const noHooks = ['-c', 'core.hooksPath=/dev/null'];
+
 export async function git(cwd: string, args: string[], env?: Record<string, string>) {
-	const result = await exec('git', args, { cwd, env });
-	if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${result.output.trim()}`);
+	const result = await exec('git', [...noHooks, ...args], { cwd, env });
+	const command = args.find((arg, index) => arg !== '-c' && args[index - 1] !== '-c');
+	if (result.code !== 0) throw new Error(`git ${command} failed: ${result.output.trim()}`);
 	return result.output.trim();
 }
 
