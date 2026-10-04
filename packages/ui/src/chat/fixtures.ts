@@ -1,10 +1,47 @@
-import type { DiffFile, DiffHunk, Mentionable } from './types.ts';
+import type { DiffFile, DiffHunk, Mentionable, SimilarThread } from './types.ts';
 
 export const people: Mentionable[] = [
 	{ kind: 'person', handle: 'sam', label: 'Sam Rivera' },
 	{ kind: 'person', handle: 'lin', label: 'Lin Wei' },
 	{ kind: 'person', handle: 'mira', label: 'Mira Kask' },
 	{ kind: 'person', handle: 'noor', label: 'Noor Haddad' }
+];
+
+export const similarThreads: SimilarThread[] = [
+	{
+		kind: 'thread',
+		handle: 'paginate-members',
+		label: 'perf(settings): load org members in pages',
+		href: '#',
+		relation: 'same',
+		status: 'running'
+	},
+	{
+		kind: 'thread',
+		handle: 'rename-user-id',
+		label: 'feat(api): rename user id to account id',
+		href: '#',
+		relation: 'overlap',
+		status: 'running'
+	},
+	{
+		kind: 'thread',
+		handle: 'cache-org-settings',
+		label: 'Cache org settings',
+		href: '#',
+		relation: 'related',
+		status: 'shipped',
+		detail: 'Shipped in 4f2a91c'
+	},
+	{
+		kind: 'thread',
+		handle: 'audit-log-retention',
+		label: 'Audit log retention',
+		href: '#',
+		relation: 'related',
+		status: 'discarded',
+		detail: 'Discarded 3 days ago'
+	}
 ];
 
 export const threads: Mentionable[] = [

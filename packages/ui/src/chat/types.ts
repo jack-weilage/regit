@@ -21,6 +21,12 @@ export interface Mentionable {
 export type ThreadStatus =
 	'draft' | 'running' | 'reviewing' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
+export interface SimilarThread extends Mentionable {
+	kind: 'thread';
+	relation: 'same' | 'overlap' | 'related';
+	status: ThreadStatus;
+}
+
 export interface ThreadAction {
 	label: string;
 	detail?: string;

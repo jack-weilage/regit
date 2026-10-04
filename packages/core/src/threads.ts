@@ -33,6 +33,12 @@ export interface Intent {
 	doneWhen: string[];
 }
 
+export interface SimilarMatch {
+	thread: string;
+	relation: 'same' | 'overlap' | 'related';
+	probability: number;
+}
+
 export interface ToolCallRecord {
 	id: string;
 	tool: string;
@@ -74,7 +80,7 @@ export type Entry =
 			text: string;
 			steering?: { read: boolean };
 	  }
-	| { type: 'intent'; id: string; at: number; intent: Intent }
+	| { type: 'intent'; id: string; at: number; intent: Intent; similar?: SimilarMatch[] }
 	| {
 			type: 'suggestion';
 			id: string;
@@ -177,6 +183,8 @@ export interface RepoCoordinatorApi {
 	dismissSuggestion(thread: string, entry: string, by: Author): void;
 	serviceAction(thread: string, action: 'start' | 'stop' | 'restart', name: string): Promise<void>;
 	serviceLogs(thread: string, name: string): Promise<string>;
+	similar(text: string): Promise<SimilarMatch[]>;
+	forwardIntent(thread: string, to: string, by: Author): Promise<string>;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;
 }

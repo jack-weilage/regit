@@ -151,3 +151,16 @@ export const stopThread = command(thread, async ({ repo, id }) => {
 	getThread({ repo, id }).refresh();
 	getThreads(repo).refresh();
 });
+
+export const findSimilar = query(
+	v.object({ repo: name, text: v.pipe(v.string(), v.trim(), v.maxLength(2000)) }),
+	async ({ repo, text }) => (text.length < 8 ? [] : (await coordinator(repo)).similar(text))
+);
+
+export const forwardIntent = command(
+	v.object({ ...thread.entries, to: name }),
+	async ({ repo, id, to }) => {
+		await (await coordinator(repo)).forwardIntent(id, to, author());
+		getThread({ repo, id }).refresh();
+	}
+);

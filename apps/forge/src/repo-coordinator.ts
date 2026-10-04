@@ -2,6 +2,8 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
 	describeTask,
+	findSimilar,
+	maxSimilarCandidates,
 	models,
 	modes,
 	type Intent,
@@ -22,6 +24,7 @@ import type {
 	Mode,
 	RepoCoordinatorApi,
 	ShipInput,
+	SimilarMatch,
 	StartupStage,
 	ThreadActivity,
 	ThreadDetail,
@@ -82,6 +85,12 @@ type ThreadRow = {
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
 const maxThreadMessages = 5;
+const similarTimeoutMs = 4000;
+
+function describeIntent({ headline, purpose, doneWhen }: Intent) {
+	const checks = doneWhen.length ? ` Done when: ${doneWhen.join('; ')}` : '';
+	return `${headline} — ${purpose}${checks}`;
+}
 
 export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinatorApi {
 	#sql = this.ctx.storage.sql;
@@ -382,13 +391,71 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		};
 	}
 
-	intentProposed(thread: string, intent: Intent) {
+	async intentProposed(thread: string, intent: Intent) {
 		const summary = this.#summary(thread);
 		if (!summary || summary.deleted) return;
 		if (['discarded', 'shipping', 'shipped'].includes(summary.status)) return;
-		this.#add(thread, { type: 'intent', intent });
+		const id = this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
+		const similar = await this.#similar(describeIntent(intent), thread);
+		if (similar.length) this.#replace(thread, { ...this.#entry(thread, id)!, similar } as Entry);
+	}
+
+	similar(text: string) {
+		return this.#similar(text);
+	}
+
+	async forwardIntent(thread: string, to: string, by: Author) {
+		const intent = this.#entries(thread).findLast((entry) => entry.type === 'intent');
+		if (intent?.type !== 'intent') throw new Error('This thread has no intent to share');
+		return this.messageThread(
+			thread,
+			to,
+			`${by.name} found that this thread has the same goal as yours: ${describeIntent(intent.intent)}`
+		);
+	}
+
+	async #similar(text: string, exclude?: string): Promise<SimilarMatch[]> {
+		const candidates = this.threads()
+			.filter((thread) => thread.id !== exclude && thread.headline)
+			.slice(0, maxSimilarCandidates)
+			.map((thread) => {
+				const intent = this.#entries(thread.id).findLast((entry) => entry.type === 'intent');
+				return {
+					id: thread.id,
+					headline: thread.headline,
+					...(intent?.type === 'intent' && { purpose: intent.intent.purpose })
+				};
+			});
+		try {
+			return await Promise.race([
+				findSimilar((request) => this.env.MODELS.decide(request), text, candidates),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => reject(new Error('Similar threads timed out')), similarTimeoutMs)
+				)
+			]);
+		} catch (error) {
+			console.warn('Could not find similar threads', error);
+			return [];
+		}
+	}
+
+	#entries(thread: string) {
+		return this.#sql
+			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq', thread)
+			.toArray()
+			.map((row) => JSON.parse(row.body) as Entry);
+	}
+
+	#replace(thread: string, entry: Entry) {
+		this.#sql.exec(
+			'UPDATE entries SET body = ? WHERE seq = ? AND thread = ?',
+			JSON.stringify(entry),
+			Number(entry.id.slice(1)),
+			thread
+		);
+		this.#broadcast({ type: 'entry', thread, entry });
 	}
 
 	suggestThread(thread: string, { context, ...intent }: Suggestion) {

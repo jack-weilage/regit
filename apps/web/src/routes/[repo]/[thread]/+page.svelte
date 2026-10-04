@@ -38,10 +38,12 @@
 		type ToolCallRecord
 	} from '@regit/core';
 	import { getLiveActivity, stageActivity, summarizeTools, toolView } from '#lib/activity.ts';
+	import { similarThreads } from '#lib/similar.ts';
 	import {
 		deleteThread,
 		discardThread,
 		dismissSuggestion,
+		forwardIntent,
 		getChanges,
 		readServiceLogs,
 		serviceAction,
@@ -327,6 +329,10 @@
 							sticky={block.id === latestIntent}
 							{...block.id === latestIntent ? progress : {}}
 							changes={block.id === latestIntent ? (summary.changes ?? undefined) : undefined}
+							similar={block.id === latestIntent
+								? similarThreads(params.repo, block.similar ?? [], threads)
+								: []}
+							onmessage={(other) => forwardIntent({ ...ref, to: other.handle })}
 							onchanges={view}
 							onship={block.id === latestIntent && shippable
 								? () => (confirming = true)

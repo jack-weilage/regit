@@ -4,8 +4,21 @@ import { expect, test } from 'vitest';
 import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
-const { dir, git, worker, script, modelRequests, sh, seed, commit, start, submitReview, settled } =
-	await setup();
+const {
+	dir,
+	git,
+	worker,
+	script,
+	modelRequests,
+	scriptDecisions,
+	decisionRequests,
+	sh,
+	seed,
+	commit,
+	start,
+	submitReview,
+	settled
+} = await setup();
 
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
 	await seed('greeting', { 'greeting.ts': "export const greeting = 'hello';\n" });
@@ -1232,4 +1245,109 @@ test('refuses thread messages to itself, unknown or idle threads, and past the l
 	await expect(send(from.id, to.id, 'One more')).rejects.toThrow();
 	await repo.reply(to.id, { author: sam, text: 'Carry on.' });
 	await expect(send(from.id, to.id, 'After the person')).resolves.toContain('Delivered');
+});
+
+test('flags a proposed intent that duplicates another thread, and forwards it there', async () => {
+	await seed('dupes', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('dupes');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const propose = (headline: string) => [
+		{
+			type: 'response.output_item.done',
+			item: {
+				type: 'function_call',
+				call_id: 'intent',
+				name: 'propose_intent',
+				arguments: JSON.stringify({
+					headline,
+					purpose: 'Big orgs wait for every member to load.',
+					doneWhen: ['Settings loads in under a second']
+				})
+			}
+		}
+	];
+	const intent = async (thread: string) => {
+		await expect
+			.poll(
+				async () =>
+					(await repo.thread(thread))!.entries.findLast((entry) => entry.type === 'intent'),
+				{
+					timeout: 20_000
+				}
+			)
+			.toBeDefined();
+		return (await repo.thread(thread))!.entries.findLast((entry) => entry.type === 'intent')!;
+	};
+
+	await script([
+		propose('perf(settings): load org members in pages'),
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const first = await repo.openThread({
+		repo: 'dupes',
+		author: sam,
+		text: 'Settings are slow.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	expect(await intent(first.id)).not.toHaveProperty('similar');
+
+	await scriptDecisions([
+		{
+			answers: { t1: { probabilities: { same: 0.93, overlap: 0.05, related: 0.02, unrelated: 0 } } }
+		}
+	]);
+	await script([
+		propose('fix(settings): page the member list'),
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const second = await repo.openThread({
+		repo: 'dupes',
+		author: sam,
+		text: 'Members take ages.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await expect
+		.poll(
+			async () =>
+				(await intent(second.id)).type === 'intent' &&
+				((await intent(second.id)) as { similar?: unknown }).similar,
+			{
+				timeout: 20_000
+			}
+		)
+		.toEqual([{ thread: first.id, relation: 'same', probability: 0.93 }]);
+	const [asked] = await decisionRequests();
+	expect(asked!.state).toMatchObject({
+		new_intent: expect.stringContaining('fix(settings): page the member list'),
+		threads: {
+			t1: 'perf(settings): load org members in pages — Big orgs wait for every member to load.'
+		}
+	});
+
+	await script([[{ type: 'response.output_text.delta', delta: 'Thanks.' }]]);
+	await repo.forwardIntent(second.id, first.id, sam);
+	expect((await repo.thread(first.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			direction: 'in',
+			thread: second.id,
+			text: expect.stringContaining(
+				'Sam found that this thread has the same goal as yours: fix(settings): page the member list'
+			)
+		})
+	);
+
+	await scriptDecisions([
+		{
+			answers: {
+				t1: { probabilities: { unrelated: 1 } },
+				t2: { probabilities: { same: 0.2, overlap: 0.6, related: 0.1, unrelated: 0.1 } }
+			}
+		}
+	]);
+	const live = await repo.similar('Show members a page at a time');
+	expect(live).toEqual([{ thread: expect.any(String), relation: 'overlap', probability: 0.8 }]);
 });

@@ -11,14 +11,14 @@
 	import ChatLog from './ChatLog.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import { mentionables, threads } from './fixtures.ts';
-	import type { Author, Mentionable } from './types.ts';
+	import { mentionables, similarThreads, threads } from './fixtures.ts';
+	import type { Author, Mentionable, SimilarThread } from './types.ts';
 
 	interface Intent {
 		headline: string;
 		purpose: string;
 		doneWhen: string[];
-		similar?: Mentionable[];
+		similar?: SimilarThread[];
 	}
 
 	type Entry =
@@ -40,7 +40,7 @@
 			headline: 'perf(settings): render org settings without loading every member',
 			purpose: 'Large orgs wait several seconds before the settings page shows anything.',
 			doneWhen: ['Settings loads in under a second for an org with 5,000 members.'],
-			similar: [{ ...threads[0]!, detail: 'Discarded 3 days ago' }]
+			similar: [similarThreads[3]!]
 		},
 		{
 			headline: 'perf(settings): stop loading the full audit log on the settings page',

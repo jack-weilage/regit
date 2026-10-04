@@ -8,7 +8,7 @@
 	import NewThreadPalette, { type Mode } from './chat/NewThreadPalette.svelte';
 	import ThreadIcon from './chat/ThreadIcon.svelte';
 	import ThreadList, { type ThreadListItem } from './chat/ThreadList.svelte';
-	import type { Mentionable } from './chat/types.ts';
+	import type { Mentionable, SimilarThread } from './chat/types.ts';
 
 	interface Props {
 		repo: string;
@@ -18,7 +18,7 @@
 		account?: { name: string; email: string; avatar?: string };
 		mode?: Mode;
 		machine?: Machine;
-		similar?: Mentionable[];
+		similar?: SimilarThread[];
 		now?: number;
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;

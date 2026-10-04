@@ -5,7 +5,7 @@
 	import Button from '../Button.svelte';
 	import NewThreadPalette from './NewThreadPalette.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
-	import { threads } from './fixtures.ts';
+	import { similarThreads } from './fixtures.ts';
 
 	const { Story } = defineMeta({
 		title: 'Chat/New thread palette',
@@ -27,7 +27,7 @@
 
 <Story
 	name="Open"
-	args={{ similar: threads.slice(0, 2) }}
+	args={{ similar: similarThreads.slice(2) }}
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: 'New thread' }));
 		const input = canvas.getByRole('textbox', { name: 'What should change?' });
@@ -102,14 +102,15 @@
 
 <Story
 	name="Similar threads"
-	args={{ similar: threads.slice(0, 2) }}
+	args={{ similar: similarThreads.toReversed() }}
 	play={async ({ args, canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: 'New thread' }));
 		await waitFor(() =>
 			expect(canvas.getByRole('textbox', { name: 'What should change?' })).toHaveFocus()
 		);
 		await userEvent.keyboard('{ArrowDown}{Enter}');
-		await expect(args.onopenthread).toHaveBeenCalledWith(threads[0]);
+		await expect(canvas.getAllByRole('option')[1]).toHaveTextContent('Same goal · Running');
+		await expect(args.onopenthread).toHaveBeenCalledWith(similarThreads[0]);
 	}}
 	template={page}
 />

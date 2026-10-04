@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { GatewayRequest } from '@regit/agent';
+import type { GatewayRequest, JevRequest, JevResponse } from '@regit/agent';
 
 const completed = {
 	type: 'response.completed',
@@ -10,6 +10,8 @@ const completed = {
 
 let replies: object[][] = [];
 let requests: GatewayRequest[] = [];
+let decisions: JevResponse[] = [];
+let decided: JevRequest[] = [];
 
 export default class FakeModels extends WorkerEntrypoint {
 	script(next: object[][]) {
@@ -19,6 +21,25 @@ export default class FakeModels extends WorkerEntrypoint {
 
 	requests() {
 		return JSON.stringify(requests);
+	}
+
+	scriptDecisions(next: JevResponse[]) {
+		decisions = next;
+		decided = [];
+	}
+
+	decisionRequests() {
+		return JSON.stringify(decided);
+	}
+
+	decide(request: JevRequest): JevResponse {
+		decided.push(request);
+		const unrelated = { probabilities: { unrelated: 1 } };
+		return (
+			decisions.shift() ?? {
+				answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, unrelated]))
+			}
+		);
 	}
 
 	run(request: GatewayRequest) {

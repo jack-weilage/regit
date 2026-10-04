@@ -5,7 +5,7 @@
 	import ChatIntent from './ChatIntent.svelte';
 	import ChatLog from './ChatLog.svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import { threads } from './fixtures.ts';
+	import { similarThreads } from './fixtures.ts';
 
 	const { Story } = defineMeta({
 		title: 'Chat/Intent',
@@ -31,17 +31,15 @@
 <Story
 	name="Suggested"
 	args={{
-		similar: [
-			{ ...threads[0]!, detail: 'Discarded 3 days ago' },
-			{ ...threads[1]!, detail: 'Shipped last week' }
-		],
+		similar: similarThreads.slice(2),
 		onstart: fn()
 	}}
 	play={async ({ args, canvas, userEvent }) => {
 		await expect(
 			canvas.getByText('Settings loads in under a second for an org with 5,000 members.')
 		).toBeVisible();
-		await expect(canvas.getByRole('link', { name: /Paginate the member list/ })).toBeVisible();
+		await userEvent.click(canvas.getByText('Related · 2'));
+		await expect(canvas.getByRole('link', { name: /Cache org settings/ })).toBeVisible();
 		await userEvent.click(canvas.getByRole('button', { name: 'Start' }));
 		await expect(args.onstart).toHaveBeenCalledOnce();
 	}}
@@ -230,3 +228,42 @@
 		</ChatLog>
 	</div>
 </Story>
+
+<Story
+	name="Duplicate"
+	args={{ similar: similarThreads, onstart: fn(), onmessage: fn() }}
+	play={async ({ args, canvas, userEvent }) => {
+		await expect(canvas.getByRole('note')).toHaveTextContent(
+			'Same goal as perf(settings): load org members in pages Running'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: /Message perf\(settings\)/ }));
+		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[0]);
+		await expect(canvas.getByRole('button', { name: 'Start anyway' })).toBeVisible();
+	}}
+/>
+
+<Story
+	name="Already shipped"
+	args={{
+		similar: [
+			{ ...similarThreads[0]!, status: 'shipped', detail: 'Shipped in 4f2a91c' },
+			similarThreads[3]!
+		],
+		onstart: fn(),
+		onmessage: fn()
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('note')).toHaveTextContent('Shipped in 4f2a91c');
+		await expect(canvas.queryByRole('button', { name: /Message/ })).toBeNull();
+	}}
+/>
+
+<Story
+	name="Overlaps"
+	args={{ similar: [similarThreads[1]!], onstart: fn(), onmessage: fn() }}
+	play={async ({ args, canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: /Message feat\(api\)/ }));
+		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[1]);
+		await expect(canvas.getByRole('button', { name: 'Start' })).toBeVisible();
+	}}
+/>

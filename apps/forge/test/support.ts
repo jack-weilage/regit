@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll } from 'vitest';
-import type { GatewayRequest } from '@regit/agent';
+import type { GatewayRequest, JevRequest, JevResponse } from '@regit/agent';
 import type { AttemptInput } from '../src/attempt-sandbox.ts';
 import type FakeModels from './fake-models.ts';
 import { startGitServer } from './git-process.ts';
@@ -47,6 +47,14 @@ export async function setup({ containers = false } = {}) {
 
 	async function script(replies: object[][]) {
 		await (await models.getExport()).script(replies);
+	}
+
+	async function scriptDecisions(next: JevResponse[]) {
+		await (await models.getExport()).scriptDecisions(next);
+	}
+
+	async function decisionRequests() {
+		return JSON.parse(await (await models.getExport()).decisionRequests()) as JevRequest[];
 	}
 
 	async function modelRequests() {
@@ -132,6 +140,8 @@ export async function setup({ containers = false } = {}) {
 		worker,
 		script,
 		modelRequests,
+		scriptDecisions,
+		decisionRequests,
 		sh,
 		seed,
 		commit,

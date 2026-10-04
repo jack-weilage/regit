@@ -24,7 +24,8 @@
 	import ChatChecks, { type CheckState } from './ChatChecks.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
-	import type { Mentionable } from './types.ts';
+	import { statuses } from './status.ts';
+	import type { SimilarThread, ThreadStatus } from './types.ts';
 
 	interface Props {
 		headline: string;
@@ -35,13 +36,14 @@
 		note?: string;
 		changes?: { files: number; additions: number; deletions: number };
 		sticky?: boolean;
-		similar?: Mentionable[];
+		similar?: SimilarThread[];
 		handoff?: boolean;
 		superseded?: boolean;
 		onstart?: () => void;
 		onship?: () => void;
 		onchanges?: () => void;
 		ondismiss?: () => void;
+		onmessage?: (thread: SimilarThread) => void;
 	}
 
 	let {
@@ -59,8 +61,16 @@
 		onstart,
 		onship,
 		onchanges,
-		ondismiss
+		ondismiss,
+		onmessage
 	}: Props = $props();
+
+	const messageable = (status: ThreadStatus) =>
+		['draft', 'running', 'reviewing', 'shipping'].includes(status);
+
+	let same = $derived(similar.find((thread) => thread.relation === 'same'));
+	let overlaps = $derived(similar.filter((thread) => thread.relation === 'overlap'));
+	let related = $derived(similar.filter((thread) => thread.relation === 'related'));
 
 	let stuck = $state(false);
 	let open = $state(false);
@@ -86,6 +96,21 @@
 		return () => observer.disconnect();
 	};
 </script>
+
+{#snippet meta(thread: SimilarThread)}
+	<span class="meta">{thread.detail ?? statuses[thread.status].label}</span>
+{/snippet}
+
+{#snippet message(thread: SimilarThread, size: 'sm' | 'xs')}
+	{#if onmessage && messageable(thread.status)}
+		<Button
+			{size}
+			variant={size === 'xs' ? 'ghost' : 'quiet'}
+			aria-label="Message {thread.label}"
+			onclick={() => onmessage(thread)}>{size === 'xs' ? 'Message' : 'Message it'}</Button
+		>
+	{/if}
+{/snippet}
 
 {#snippet details()}
 	<p class="purpose">{purpose}</p>
@@ -165,27 +190,47 @@
 		<div class="body">
 			<div class="clip">
 				<div class="content" bind:offsetHeight={bodyHeight}>
+					{#if same}
+						<div class="duplicate" role="note">
+							<p>
+								<span class="label">Same goal as</span>
+								<ChatMention mention={same} />
+								{@render meta(same)}
+							</p>
+							{@render message(same, 'sm')}
+						</div>
+					{/if}
 					{@render details()}
 
-					{#if similar.length}
+					{#if overlaps.length}
 						<div class="section">
-							<p class="heading">Similar threads</p>
+							<p class="heading">Overlaps</p>
 							<ul class="similar">
-								{#each similar as item (item.handle)}
+								{#each overlaps as item (item.handle)}
 									<li>
 										<ChatMention mention={item} />
-										{#if item.detail}
-											<span>{item.detail}</span>
-										{/if}
+										{@render meta(item)}
+										{@render message(item, 'xs')}
 									</li>
 								{/each}
 							</ul>
 						</div>
 					{/if}
 
+					{#if related.length}
+						<details class="related">
+							<summary>Related · {related.length}</summary>
+							<ul class="similar">
+								{#each related as item (item.handle)}
+									<li><ChatMention mention={item} />{@render meta(item)}</li>
+								{/each}
+							</ul>
+						</details>
+					{/if}
+
 					{#if onstart}
 						<div class="actions">
-							<Button variant="primary" onclick={onstart}>Start</Button>
+							<Button variant="primary" onclick={onstart}>{same ? 'Start anyway' : 'Start'}</Button>
 						</div>
 					{/if}
 
@@ -467,6 +512,54 @@
 		color: var(--color-muted);
 		font-size: var(--text-meta);
 		font-weight: 600;
+	}
+
+	.duplicate {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-3) var(--space-4);
+		padding: var(--space-4) var(--space-5);
+		border: 1px solid color-mix(in oklab, var(--color-accent) 45%, var(--color-border));
+		border-radius: var(--radius);
+		background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+
+		p {
+			margin: 0;
+		}
+
+		.label {
+			font-weight: 600;
+		}
+
+		:global(.mention) {
+			max-inline-size: min(100%, 36em);
+		}
+	}
+
+	.meta {
+		color: var(--color-muted);
+		font-size: var(--text-meta);
+	}
+
+	.related summary {
+		display: list-item;
+		inline-size: fit-content;
+		font-family: inherit;
+		list-style: revert;
+		color: var(--color-muted);
+		font-size: var(--text-meta);
+		font-weight: 600;
+		cursor: pointer;
+
+		&:hover {
+			color: var(--color-fg);
+		}
+	}
+
+	.related .similar {
+		margin-block-start: var(--space-3);
 	}
 
 	.similar {

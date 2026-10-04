@@ -1,11 +1,19 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { AppShell, type Mode, type ThreadListItem } from '@regit/ui';
+	import { AppShell, type Mode, type SimilarThread, type ThreadListItem } from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
 	import { defaultMachine, type LiveMessage, type Machine, type ThreadActivity } from '@regit/core';
 	import { setLiveActivity } from '#lib/activity.ts';
-	import { getRepos, getThread, getThreads, getUser, openThread } from '#lib/data.remote.ts';
+	import {
+		findSimilar,
+		getRepos,
+		getThread,
+		getThreads,
+		getUser,
+		openThread
+	} from '#lib/data.remote.ts';
+	import { similarThreads } from '#lib/similar.ts';
 	import { createAndOpen } from '#lib/repos.ts';
 
 	let { children, params } = $props();
@@ -21,8 +29,9 @@
 	let machine = $derived(
 		(known.find((known) => known.name === repo)?.machine as Machine | undefined) ?? defaultMachine
 	);
+	let summaries = $derived(await getThreads(repo));
 	let threads = $derived<ThreadListItem[]>(
-		(await getThreads(repo)).map((thread) => ({
+		summaries.map((thread) => ({
 			id: thread.id,
 			headline: thread.headline || 'New thread',
 			status: thread.status,
@@ -46,7 +55,22 @@
 		return () => source.close();
 	};
 
+	let similar = $state<SimilarThread[]>([]);
+	let searching: ReturnType<typeof setTimeout> | undefined;
+	let latest = 0;
+
+	function search(text: string) {
+		clearTimeout(searching);
+		const run = ++latest;
+		searching = setTimeout(async () => {
+			const matches = await findSimilar({ repo, text }).catch(() => []);
+			if (run === latest) similar = similarThreads(repo, matches, summaries);
+		}, 300);
+	}
+
 	async function start(thread: { text: string; mode: Mode; machine: Machine }) {
+		latest++;
+		similar = [];
 		const summary = await openThread({ repo, ...thread });
 		await goto(`/${repo}/${summary.id}`);
 	}
@@ -68,6 +92,13 @@
 		onswitchrepo={(name) => goto(`/${name}`)}
 		oncreaterepo={createAndOpen}
 		onstart={start}
+		{similar}
+		onquery={search}
+		onopenthread={(thread) => {
+			latest++;
+			similar = [];
+			if (thread.href) goto(thread.href);
+		}}
 	>
 		{@render children()}
 	</AppShell>

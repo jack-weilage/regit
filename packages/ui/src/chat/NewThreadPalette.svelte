@@ -22,12 +22,16 @@
 	import Menu from '../Menu.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
-	import type { Mentionable } from './types.ts';
+	import { statuses } from './status.ts';
+	import type { Mentionable, SimilarThread } from './types.ts';
+
+	const relations = { same: 'Same goal', overlap: 'Overlaps', related: 'Related' };
+	const order = ['same', 'overlap', 'related'];
 
 	interface Props {
 		id: string;
 		repo: string;
-		similar?: Mentionable[];
+		similar?: SimilarThread[];
 		mode?: Mode;
 		machine?: Machine;
 		onquery?: (text: string) => void;
@@ -51,7 +55,10 @@
 	let palette: HTMLElement | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
 
-	let options = $derived([null, ...similar]);
+	let matches = $derived(
+		similar.toSorted((a, b) => order.indexOf(a.relation) - order.indexOf(b.relation))
+	);
+	let options = $derived([null, ...matches]);
 	let current = $derived(modes.find((option) => option.id === mode)!);
 	let currentMachine = $derived(machines.find((option) => option.id === machine)!);
 
@@ -113,7 +120,7 @@
 		</li>
 		{#if similar.length}
 			<li role="presentation" class="heading">Similar threads</li>
-			{#each similar as thread, index (thread.handle)}
+			{#each matches as thread, index (thread.handle)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<li
 					id="{id}-option-{index + 1}"
@@ -122,9 +129,10 @@
 					onclick={() => choose(thread)}
 				>
 					<ChatMention mention={{ ...thread, href: undefined }} />
-					{#if thread.detail}
-						<span class="detail">{thread.detail}</span>
-					{/if}
+					<span class="detail"
+						><span class={['relation', thread.relation]}>{relations[thread.relation]}</span> · {thread.detail ??
+							statuses[thread.status].label}</span
+					>
 				</li>
 			{/each}
 		{/if}
@@ -270,6 +278,11 @@
 
 		.detail {
 			font-size: var(--text-meta);
+		}
+
+		.relation.same {
+			color: var(--color-fg);
+			font-weight: 600;
 		}
 	}
 
