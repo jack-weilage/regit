@@ -51,6 +51,15 @@ export type Entry =
 			steering?: { read: boolean };
 	  }
 	| { type: 'intent'; id: string; at: number; intent: Intent }
+	| {
+			type: 'suggestion';
+			id: string;
+			at: number;
+			intent: Intent;
+			context: string;
+			outcome:
+				{ kind: 'dismissed'; by: string } | { kind: 'spun-off'; thread: string; by: string } | null;
+	  }
 	| { type: 'event'; id: string; at: number; text: string };
 
 export interface ThreadSummary {
@@ -61,6 +70,7 @@ export interface ThreadSummary {
 	machine: Machine;
 	updatedAt: number;
 	deleted: { at: number; by: string } | null;
+	parent: { id: string; headline: string } | null;
 	changes: DiffSummary | null;
 	base: string | null;
 	shipped: { sha: string; by: string; at: number } | null;
@@ -113,6 +123,8 @@ export interface RepoCoordinatorApi {
 	stop(thread: string, by: Author): Promise<void>;
 	changes(thread: string): Promise<DiffFile[] | null>;
 	ship(thread: string, input: ShipInput): Promise<void>;
+	spinOff(thread: string, entry: string, by: Author): Promise<ThreadSummary>;
+	dismissSuggestion(thread: string, entry: string, by: Author): void;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;
 }

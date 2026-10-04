@@ -6,6 +6,7 @@ import {
 	modes,
 	type Intent,
 	type Step,
+	type Suggestion,
 	type Usage
 } from '@regit/agent';
 import type {
@@ -64,6 +65,9 @@ type ThreadRow = {
 	shipped_by: string | null;
 	shipped_at: number | null;
 	base: string | null;
+	parent: string | null;
+	context: string | null;
+	parent_headline?: string | null;
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
@@ -119,7 +123,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			['shipped_sha', 'TEXT'],
 			['shipped_by', 'TEXT'],
 			['shipped_at', 'INTEGER'],
-			['base', 'TEXT']
+			['base', 'TEXT'],
+			['parent', 'TEXT'],
+			['context', 'TEXT']
 		]) {
 			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
 		}
@@ -273,7 +279,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	threads(): ThreadSummary[] {
 		return this.#sql
-			.exec<ThreadRow>('SELECT * FROM threads WHERE deleted_at IS NULL ORDER BY updated_at DESC')
+			.exec<ThreadRow>(`${selectThreads} WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC`)
 			.toArray()
 			.map(toSummary);
 	}
@@ -299,6 +305,44 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
+	}
+
+	suggestThread(thread: string, { context, ...intent }: Suggestion) {
+		const summary = this.#summary(thread);
+		if (!summary || summary.deleted || summary.status === 'discarded') return;
+		this.#add(thread, { type: 'suggestion', intent, context, outcome: null });
+	}
+
+	async spinOff(thread: string, entry: string, by: Author) {
+		const parent = this.#active(thread);
+		const suggestion = this.#entry(thread, entry);
+		if (suggestion?.type !== 'suggestion' || suggestion.outcome) {
+			throw new Error('That suggestion is no longer open');
+		}
+		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
+		this.#sql.exec(
+			`INSERT INTO threads (id, headline, status, mode, machine, parent, context, updated_at)
+			VALUES (?, ?, 'draft', ?, ?, ?, ?, ?)`,
+			id,
+			suggestion.intent.headline,
+			parent.mode,
+			parent.machine,
+			thread,
+			suggestion.context,
+			Date.now()
+		);
+		if (suggestion.context)
+			this.#add(id, { type: 'message', author: agent, text: suggestion.context });
+		this.#add(id, { type: 'intent', intent: suggestion.intent });
+		this.#update(thread, { ...suggestion, outcome: { kind: 'spun-off', thread: id, by: by.name } });
+		return this.#summary(id)!;
+	}
+
+	dismissSuggestion(thread: string, entry: string, by: Author) {
+		this.#active(thread);
+		const suggestion = this.#entry(thread, entry);
+		if (suggestion?.type !== 'suggestion' || suggestion.outcome) return;
+		this.#update(thread, { ...suggestion, outcome: { kind: 'dismissed', by: by.name } });
 	}
 
 	changes(thread: string) {
@@ -425,14 +469,39 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async #converse(thread: string, author: Author, text: string, entry: string) {
 		const { mode, machine } = this.#summary(thread)!;
+		const [row] = this.#sql
+			.exec<Pick<ThreadRow, 'context'>>('SELECT context FROM threads WHERE id = ?', thread)
+			.toArray();
 		await this.env.ATTEMPTS.getByName(thread).converse({
 			repo: this.#repo(),
 			mode,
 			machine,
+			...(row?.context && { context: row.context }),
 			author: author.name,
 			text,
 			entry
 		});
+	}
+
+	#entry(thread: string, id: string) {
+		const [row] = this.#sql
+			.exec<{ body: string }>(
+				'SELECT body FROM entries WHERE seq = ? AND thread = ?',
+				Number(id.slice(1)),
+				thread
+			)
+			.toArray();
+		return row ? (JSON.parse(row.body) as Entry) : undefined;
+	}
+
+	#update(thread: string, entry: Entry) {
+		this.#sql.exec(
+			'UPDATE entries SET body = ? WHERE seq = ?',
+			JSON.stringify(entry),
+			Number(entry.id.slice(1))
+		);
+		this.#broadcast({ type: 'entry', thread, entry });
+		this.#touch(thread);
 	}
 
 	#markRead(thread: string, id: string) {
@@ -537,7 +606,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	#summary(id: string) {
-		const row = this.#sql.exec<ThreadRow>('SELECT * FROM threads WHERE id = ?', id).toArray()[0];
+		const row = this.#sql.exec<ThreadRow>(`${selectThreads} WHERE t.id = ?`, id).toArray()[0];
 		return row && toSummary(row);
 	}
 
@@ -587,6 +656,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
+const selectThreads =
+	'SELECT t.*, p.headline AS parent_headline FROM threads t LEFT JOIN threads p ON p.id = t.parent';
+
 function headlineFrom(text: string) {
 	const line = text.trim().split('\n')[0]!.trim();
 	return line.length > 72 ? `${line.slice(0, 71)}…` : line;
@@ -601,6 +673,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		machine: row.machine ?? defaultMachine,
 		updatedAt: row.updated_at,
 		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' },
+		parent: row.parent ? { id: row.parent, headline: row.parent_headline ?? '' } : null,
 		changes: row.changes ? (JSON.parse(row.changes) as DiffSummary) : null,
 		base: row.base,
 		shipped:

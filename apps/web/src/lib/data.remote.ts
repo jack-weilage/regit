@@ -118,6 +118,20 @@ export const shipThread = command(
 	}
 );
 
+const suggestion = v.object({ ...thread.entries, entry: v.pipe(v.string(), v.regex(/^e\d+$/)) });
+
+export const spinOff = command(suggestion, async ({ repo, id, entry }) => {
+	const child = await (await coordinator(repo)).spinOff(id, entry, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+	return child;
+});
+
+export const dismissSuggestion = command(suggestion, async ({ repo, id, entry }) => {
+	await (await coordinator(repo)).dismissSuggestion(id, entry, author());
+	getThread({ repo, id }).refresh();
+});
+
 export const stopThread = command(thread, async ({ repo, id }) => {
 	await (await coordinator(repo)).stop(id, author());
 	getThread({ repo, id }).refresh();

@@ -11,7 +11,7 @@ export interface ConversationMessage {
 	text: string;
 }
 
-const parameters = {
+export const intentParameters = {
 	type: 'object',
 	properties: {
 		headline: {
@@ -37,13 +37,13 @@ const specs: ToolSpec[] = [
 		name: 'propose_intent',
 		description:
 			'Propose the change this thread should make. The person reviews it and decides whether to start the work.',
-		parameters
+		parameters: intentParameters
 	},
 	{
 		name: 'update_intent',
 		description:
 			"Revise the thread's current intent after the person refines what they want. Replaces the whole intent.",
-		parameters
+		parameters: intentParameters
 	}
 ];
 

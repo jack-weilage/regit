@@ -31,3 +31,4 @@ export { default as ThreadPreview, type ThreadPreviewProps } from './chat/Thread
 export { default as ThreadTombstone } from './chat/ThreadTombstone.svelte';
 export { default as ThreadView } from './chat/ThreadView.svelte';
 export type { Author, AuthorKind, Mentionable, ThreadAction, ThreadStatus } from './chat/types.ts';
+export { statuses } from './chat/status.ts';

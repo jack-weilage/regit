@@ -27,6 +27,7 @@ import {
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
+	suggestTools,
 	threadInstructions,
 	type AgentOutcome,
 	type Fetch,
@@ -49,6 +50,7 @@ export interface ConverseInput {
 	repo: string;
 	mode: Mode;
 	machine?: Machine;
+	context?: string;
 	author: string;
 	text: string;
 	entry: string;
@@ -199,10 +201,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async converse({ repo, mode, machine, author, text, entry }: ConverseInput) {
+	async converse({ repo, mode, machine, context, author, text, entry }: ConverseInput) {
 		this.#setMeta('repo', repo);
 		this.#setMeta('mode', mode);
 		if (machine) this.#setMeta('machine', machine);
+		if (context && !this.#sql.exec('SELECT 1 FROM conversation LIMIT 1').toArray().length) {
+			const seed = `This thread was spun off from another one. What it found:\n\n${context}`;
+			this.#sql.exec(
+				'INSERT INTO conversation (turns) VALUES (?)',
+				JSON.stringify([{ role: 'user', text: seed }])
+			);
+		}
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
 		if (attempt && !isActive(attempt.status) && attempt.status !== 'shipped') {
@@ -321,7 +330,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const coordinator = this.env.REPOS.getByName(repo);
 			const tools = combineTools(
 				sandboxTools(fetch, readOnlyTools),
-				intentTools((intent) => coordinator.intentProposed(thread, intent))
+				intentTools((intent) => coordinator.intentProposed(thread, intent)),
+				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion))
 			);
 
 			for (let turns = await this.#drain(repo); turns.length; turns = await this.#drain(repo)) {
@@ -408,6 +418,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 							);
 						},
 						['update_intent']
+					),
+					suggestTools((suggestion) =>
+						this.env.REPOS.getByName(attempt.repo).suggestThread(this.ctx.id.name!, suggestion)
 					)
 				),
 				checkpoints: {

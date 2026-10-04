@@ -299,9 +299,11 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'search',
 		'run',
 		'propose_intent',
-		'update_intent'
+		'update_intent',
+		'suggest_thread'
 	]);
 	expect(tools(requests[4]!)).toContain('write_file');
+	expect(tools(requests[4]!)).toContain('suggest_thread');
 	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
 	expect(detail!.usage).toEqual({
 		rows: [
@@ -943,4 +945,84 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 		'docs: add a title\ninit'
 	);
 	expect(() => sh(join(dir, 'imported.git'), 'rev-parse', '--verify', 'main')).toThrow();
+});
+
+test('suggests separate work and spins it off into a linked thread', async () => {
+	await seed('suggesting', { 'notes.md': 'Some notes\n' });
+	const suggestion = {
+		headline: 'fix(audit): query only the last entry',
+		purpose: 'Settings fetch the whole audit log.',
+		doneWhen: ['One query returns one row'],
+		context: 'notes.md:1 mentions the audit log query.'
+	};
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'suggest',
+					name: 'suggest_thread',
+					arguments: JSON.stringify(suggestion)
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Noted that separately.' }],
+		[{ type: 'response.output_text.delta', delta: 'Got it.' }]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('suggesting');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'suggesting',
+		author: sam,
+		text: 'Tidy the notes.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const parent = await untilThread(repo, id, (detail) =>
+		detail.entries.some(
+			(entry) => entry.type === 'message' && entry.text === 'Noted that separately.'
+		)
+	);
+	const card = parent.entries.find((entry) => entry.type === 'suggestion')!;
+	expect(card).toMatchObject({
+		intent: { headline: suggestion.headline, doneWhen: suggestion.doneWhen },
+		context: suggestion.context,
+		outcome: null
+	});
+
+	const child = await repo.spinOff(id, card.id, sam);
+	expect(child).toMatchObject({
+		headline: suggestion.headline,
+		status: 'draft',
+		mode: 'small',
+		parent: { id, headline: 'Tidy the notes.' }
+	});
+	expect((await repo.thread(id))!.entries.find((entry) => entry.id === card.id)).toMatchObject({
+		outcome: { kind: 'spun-off', thread: child.id, by: 'Sam' }
+	});
+	expect((await repo.thread(child.id))!.entries).toMatchObject([
+		{ type: 'message', author: { name: 'ReGit' }, text: suggestion.context },
+		{ type: 'intent', intent: { headline: suggestion.headline } }
+	]);
+	await expect(repo.spinOff(id, card.id, sam)).rejects.toThrow();
+
+	await repo.reply(child.id, { author: sam, text: 'Go ahead.' });
+	await untilThread(repo, child.id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Got it.')
+	);
+	const requests = await modelRequests();
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain('spun off from another one');
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain(suggestion.context);
+
+	await repo.suggestThread(id, { ...suggestion, headline: 'docs: explain the audit log' });
+	const second = (await repo.thread(id))!.entries.findLast((entry) => entry.type === 'suggestion')!;
+	repo.dismissSuggestion(id, second.id, sam);
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some(
+			(entry) =>
+				entry.id === second.id && entry.type === 'suggestion' && entry.outcome?.kind === 'dismissed'
+		)
+	);
 });

@@ -10,11 +10,13 @@
 		ChatHeader,
 		ChatIntent,
 		ChatLog,
+		ChatMention,
 		ChatMessage,
 		ChatReview,
 		DeletedThread,
 		Markdown,
 		DeleteThreadDialog,
+		statuses,
 		ShipDialog,
 		ThreadView,
 		Button,
@@ -26,13 +28,16 @@
 	import {
 		deleteThread,
 		discardThread,
+		dismissSuggestion,
 		getChanges,
 		getThread,
+		getThreads,
 		getUser,
 		reopenThread,
 		reply,
 		restoreThread,
 		shipThread,
+		spinOff,
 		startThread,
 		stopThread
 	} from '#lib/data.remote.ts';
@@ -63,6 +68,7 @@
 
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
 	let user = $derived(await getUser());
+	let threads = $derived(await getThreads(params.repo));
 
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
 	let latestReview = $derived(
@@ -203,7 +209,19 @@
 	<div class={['page', { viewing }]}>
 		<ThreadView>
 			{#snippet header()}
-				<ChatHeader headline={summary.headline || 'New thread'} status={summary.status} {actions} />
+				<ChatHeader
+					headline={summary.headline || 'New thread'}
+					status={summary.status}
+					parent={summary.parent
+						? {
+								kind: 'thread',
+								handle: summary.parent.id,
+								label: summary.parent.headline || 'New thread',
+								href: `/${params.repo}/${summary.parent.id}`
+							}
+						: undefined}
+					{actions}
+				/>
 			{/snippet}
 			<ChatLog label="Thread messages">
 				{#each blocks as block (block.id)}
@@ -236,6 +254,32 @@
 								? () => startThread({ repo: params.repo, id: params.thread })
 								: undefined}
 						/>
+					{:else if block.type === 'suggestion'}
+						{#if block.outcome?.kind === 'spun-off'}
+							{@const spun = block.outcome}
+							{@const child = threads.find((thread) => thread.id === spun.thread)}
+							<ChatEvent time={new Date(block.at)}
+								>Spun off <ChatMention
+									mention={{
+										kind: 'thread',
+										handle: spun.thread,
+										label: child?.headline || block.intent.headline,
+										href: `/${params.repo}/${spun.thread}`
+									}}
+								/>{#if child}&nbsp;· {statuses[child.status].label.toLowerCase()}{/if}</ChatEvent
+							>
+						{:else if block.outcome?.kind === 'dismissed'}
+							<ChatEvent time={new Date(block.at)}
+								>Dismissed separate work: <code>{block.intent.headline}</code></ChatEvent
+							>
+						{:else}
+							<ChatIntent
+								{...block.intent}
+								handoff
+								onstart={() => spinOff({ ...ref, entry: block.id })}
+								ondismiss={() => dismissSuggestion({ ...ref, entry: block.id })}
+							/>
+						{/if}
 					{:else if block.type === 'review'}
 						<ChatReview
 							verdict={block.verdict === 'pass'
