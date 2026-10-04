@@ -54,6 +54,15 @@ export interface Identity {
 	email: string;
 }
 
+export interface HeadBranchRequest {
+	remote: string;
+	token?: string;
+}
+
+export interface HeadBranchResponse {
+	branch: string | null;
+}
+
 export interface DiffRequest {
 	base: string;
 }

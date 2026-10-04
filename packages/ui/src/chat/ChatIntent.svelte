@@ -196,7 +196,9 @@
 								<Button
 									variant="ghost"
 									size="sm"
-									aria-label="View changes: {changes.files} files, {changes.additions} added, {changes.deletions} removed"
+									aria-label="View changes: {changes.files} {changes.files === 1
+										? 'file'
+										: 'files'}, {changes.additions} added, {changes.deletions} removed"
 									onclick={onchanges}
 								>
 									{changes.files}

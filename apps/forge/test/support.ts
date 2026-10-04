@@ -57,9 +57,9 @@ export async function setup({ containers = false } = {}) {
 		return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 	}
 
-	async function seed(name: string, files: Record<string, string>) {
+	async function seed(name: string, files: Record<string, string>, branch = 'main') {
 		const work = join(dir, `${name}-work`);
-		sh(dir, 'init', '--quiet', '--initial-branch', 'main', work);
+		sh(dir, 'init', '--quiet', '--initial-branch', branch, work);
 		await commit(work, files, 'init');
 		sh(dir, 'clone', '--quiet', '--bare', work, `${name}.git`);
 		return work;

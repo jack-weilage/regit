@@ -719,8 +719,8 @@ async function untilThread(
 	);
 }
 
-async function startedThread(name: string, steps: object[][]) {
-	await seed(name, { 'notes.md': 'Some notes\n' });
+async function startedThread(name: string, steps: object[][], branch?: string) {
+	await seed(name, { 'notes.md': 'Some notes\n' }, branch);
 	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], ...steps]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName(name);
@@ -913,4 +913,32 @@ test('resolves conflicts with main, reviews again, then ships', async () => {
 		'conflicts',
 		'review'
 	]);
+});
+
+test("ships to the branch the repository's HEAD points to, not its recorded default", async () => {
+	const { repo, sam, id } = await startedThread(
+		'imported',
+		[
+			writeNotes('# Notes\\n'),
+			[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+			submitReview('pass', ['met'])
+		],
+		'master'
+	);
+	await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 1
+	);
+
+	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
+	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
+
+	expect(shipped.entries.at(-1)).toMatchObject({
+		text: expect.stringContaining('Shipped to master')
+	});
+	expect(sh(join(dir, 'imported.git'), 'log', '--format=%s', 'master')).toBe(
+		'docs: add a title\ninit'
+	);
+	expect(() => sh(join(dir, 'imported.git'), 'rev-parse', '--verify', 'main')).toThrow();
 });

@@ -526,7 +526,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 			using repo = await this.env.ARTIFACTS.get(attempt.repo);
 			const base = await repo.info();
 			const { plaintext: baseToken } = await repo.createToken('write', 60 * 60);
-			const target = { remote: base.remote, branch: base.defaultBranch, token: baseToken };
+			await this.#allowGit(base, baseToken, true);
+			const branch =
+				(await workspace.headBranch({ remote: base.remote, token: baseToken })) ??
+				base.defaultBranch;
+			const target = { remote: base.remote, branch, token: baseToken };
 
 			const message = [request.title, request.body, 'Co-authored-by: ReGit <agent@regit.dev>']
 				.filter(Boolean)
@@ -539,24 +543,23 @@ export class AttemptSandbox extends DurableObject<Env> {
 			});
 			if (!squashed) throw new Error('There are no changes to ship');
 
-			await this.#allowGit(base, baseToken, true);
 			for (let retry = 0; ; retry++) {
 				const rebased = await workspace.rebase({ ...target, committer: author });
 				if (rebased.conflicts.length) {
 					await this.#report(attempt.repo, {
 						type: 'conflicts',
 						files: rebased.conflicts,
-						base: base.defaultBranch
+						base: branch
 					});
 					this.#setStatus('running');
 					await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
-					await this.#resolve(attempt, fetch, rebased.conflicts, base.defaultBranch, controller);
+					await this.#resolve(attempt, fetch, rebased.conflicts, branch, controller);
 					this.#setBase(attempt, rebased.onto);
 					await this.#push(fork, token, () =>
 						workspace.push({ ref: fork.branch, token, force: true })
 					);
 					await this.#saveChanges(attempt, fetch);
-					await this.#report(attempt.repo, { type: 'rebased', base: base.defaultBranch });
+					await this.#report(attempt.repo, { type: 'rebased', base: branch });
 					this.#setMeta('cycle', String(this.#reviewCount()));
 					return await this.#review(attempt, fetch);
 				}
@@ -567,7 +570,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						workspace.push({ ref: fork.branch, token, force: true })
 					);
 					await this.#saveChanges(attempt, fetch);
-					await this.#report(attempt.repo, { type: 'shipped', sha, base: base.defaultBranch });
+					await this.#report(attempt.repo, { type: 'shipped', sha, base: branch });
 					await this.#finish(attempt, 'shipped');
 					break;
 				} catch (error) {

@@ -9,6 +9,8 @@ import type {
 	DiffResponse,
 	ErrorResponse,
 	Fetch,
+	HeadBranchRequest,
+	HeadBranchResponse,
 	PushRequest,
 	PushResponse,
 	RebaseRequest,
@@ -67,6 +69,14 @@ export function sandboxWorkspace(fetch: Fetch) {
 		async push(request: PushRequest) {
 			const { sha } = await post<PushResponse>(fetch, '/workspace/push', JSON.stringify(request));
 			return sha;
+		},
+		async headBranch(request: HeadBranchRequest) {
+			const { branch } = await post<HeadBranchResponse>(
+				fetch,
+				'/workspace/head-branch',
+				JSON.stringify(request)
+			);
+			return branch;
 		},
 		async diff(request: DiffRequest) {
 			const { diff } = await post<DiffResponse>(fetch, '/workspace/diff', JSON.stringify(request));

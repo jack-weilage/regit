@@ -5,6 +5,7 @@ import type {
 	CommitRequest,
 	ContinueRebaseRequest,
 	DiffRequest,
+	HeadBranchRequest,
 	Identity,
 	PushRequest,
 	RebaseRequest,
@@ -73,6 +74,11 @@ export async function push(root: string, { token, ref, remote = 'origin', force 
 
 function identity(prefix: 'AUTHOR' | 'COMMITTER', { name, email }: Identity) {
 	return { [`GIT_${prefix}_NAME`]: name, [`GIT_${prefix}_EMAIL`]: email };
+}
+
+export async function headBranch(root: string, { remote, token }: HeadBranchRequest) {
+	const refs = await git(root, ['ls-remote', '--symref', remote, 'HEAD'], auth(token));
+	return /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(refs)?.[1] ?? null;
 }
 
 export async function diff(root: string, { base }: DiffRequest) {

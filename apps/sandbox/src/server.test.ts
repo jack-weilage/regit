@@ -263,6 +263,13 @@ describe('shipping', () => {
 		base = await git(root, ['rev-parse', 'HEAD']);
 	});
 
+	test("finds the branch a remote's HEAD points to", async () => {
+		expect(await workspace.headBranch({ remote })).toBe('main');
+		await git(remote, ['symbolic-ref', 'HEAD', 'refs/heads/trunk']);
+		await git(root, ['push', 'origin', 'main:trunk']);
+		expect(await workspace.headBranch({ remote })).toBe('trunk');
+	});
+
 	test('diffs the work against the commit it started from', async () => {
 		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
 		await call('write_file', { path: 'farewell.ts', content: "export const bye = 'bye';\n" });
