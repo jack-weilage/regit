@@ -246,11 +246,16 @@
 	let blocks = $derived(
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
 			const last = blocks.at(-1);
+			const batch = last?.type === 'group' ? last.messages.at(-1)?.calls : undefined;
+			if (entry.type === 'tools' && batch) {
+				batch.push(...entry.calls);
+				return blocks;
+			}
+			const item = entry.type === 'tools' ? { id: entry.id, calls: [...entry.calls] } : entry;
 			const author = entry.type === 'message' ? entry.author : agent;
 			if (entry.type !== 'message' && entry.type !== 'tools') blocks.push(entry);
-			else if (last?.type === 'group' && last.author.name === author.name)
-				last.messages.push(entry);
-			else blocks.push({ type: 'group', id: entry.id, at: entry.at, author, messages: [entry] });
+			else if (last?.type === 'group' && last.author.name === author.name) last.messages.push(item);
+			else blocks.push({ type: 'group', id: entry.id, at: entry.at, author, messages: [item] });
 			return blocks;
 		}, [])
 	);
@@ -385,7 +390,7 @@
 						{/if}
 					</ChatGroup>
 				{/if}
-				{#if activity?.status}
+				{#if activity?.status && !activity.startup}
 					<ChatActivity since={activity.status.since}>{activity.status.label}</ChatActivity>
 				{:else if !activity && thinking}
 					<ChatActivity>ReGit is thinking</ChatActivity>
