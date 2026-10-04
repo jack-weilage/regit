@@ -1,3 +1,5 @@
+export type { DiffFile, DiffHunk, DiffLine } from '@regit/core';
+
 export type AuthorKind = 'person' | 'agent';
 
 export interface Author {
@@ -17,7 +19,7 @@ export interface Mentionable {
 }
 
 export type ThreadStatus =
-	'draft' | 'running' | 'reviewing' | 'needs-you' | 'landing' | 'shipped' | 'discarded';
+	'draft' | 'running' | 'reviewing' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
 export interface ThreadAction {
 	label: string;

@@ -28,6 +28,8 @@
 	--color-accent-fg: #0e0e10;
 	--color-danger: #dc2626;
 	--color-danger-text: light-dark(#b91c1c, #f87171);
+	--color-added: light-dark(#166534, #4ade80);
+	--color-removed: light-dark(#b91c1c, #f87171);
 }
 
 body {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		ChangesPanel,
 		ChatActivity,
 		ChatBanner,
 		ChatComposer,
@@ -14,6 +15,7 @@
 		DeletedThread,
 		Markdown,
 		DeleteThreadDialog,
+		ShipDialog,
 		ThreadView,
 		Button,
 		type CheckState,
@@ -24,11 +26,13 @@
 	import {
 		deleteThread,
 		discardThread,
+		getChanges,
 		getThread,
 		getUser,
 		reopenThread,
 		reply,
 		restoreThread,
+		shipThread,
 		startThread,
 		stopThread
 	} from '#lib/data.remote.ts';
@@ -54,6 +58,8 @@
 	let { params } = $props();
 
 	let deleting = $state(false);
+	let viewing = $state(false);
+	let confirming = $state(false);
 
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
 	let user = $derived(await getUser());
@@ -70,6 +76,12 @@
 			const intent = detail?.entries.findLast((entry) => entry.type === 'intent');
 			const review = latestReview;
 			const count = intent?.type === 'intent' ? intent.intent.doneWhen.length : 0;
+			const checks = review?.checks;
+			if (status === 'shipping') return { status: 'shipping', checks, note: 'Shipping' };
+			if (status === 'shipped') {
+				const sha = detail!.summary.shipped?.sha.slice(0, 7);
+				return { status: 'shipped', checks, note: sha ? `Shipped in ${sha}` : 'Shipped' };
+			}
 			if (status === 'reviewing') {
 				return {
 					status: 'reviewing',
@@ -81,6 +93,10 @@
 				const resumed = detail!.entries
 					.slice(review ? detail!.entries.indexOf(review) : 0)
 					.some((entry) => entry.type === 'message' && entry.author.kind === 'person');
+				const conflict = detail!.entries.findLast((entry) => entry.type === 'event');
+				if (conflict?.type === 'event' && conflict.text.startsWith('Conflicts with')) {
+					return { status: 'working', note: 'Resolving conflicts' };
+				}
 				if (!review || review.verdict !== 'fail' || resumed) {
 					return { status: 'working', note: 'The agent is working' };
 				}
@@ -118,6 +134,19 @@
 		);
 	});
 	let ref = $derived({ repo: params.repo, id: params.thread });
+	let intent = $derived(
+		detail?.entries.findLast(
+			(entry): entry is Extract<Entry, { type: 'intent' }> => entry.type === 'intent'
+		)?.intent
+	);
+	let shippable = $derived(
+		detail?.summary.status === 'needs-you' && !!detail.summary.changes?.files
+	);
+
+	function view() {
+		viewing = true;
+		getChanges(ref).refresh();
+	}
 	let actions = $derived.by<ThreadAction[]>(() => {
 		const status = detail?.summary.status;
 		return [
@@ -171,86 +200,126 @@
 	/>
 {:else if detail}
 	{@const { summary } = detail}
-	<ThreadView>
-		{#snippet header()}
-			<ChatHeader headline={summary.headline || 'New thread'} status={summary.status} {actions} />
-		{/snippet}
-		<ChatLog label="Thread messages">
-			{#each blocks as block (block.id)}
-				{#if block.type === 'group'}
-					<ChatGroup
-						author={block.author}
-						time={new Date(block.at)}
-						own={block.author.kind === 'person' && block.author.name === user.name}
-					>
-						{#each block.messages as message (message.id)}
-							<ChatMessage steering={!!message.steering} pending={message.steering?.read === false}
-								><Markdown source={message.text} /></ChatMessage
-							>
-						{/each}
-					</ChatGroup>
-				{:else if block.type === 'intent'}
-					<ChatIntent
-						{...block.intent}
-						superseded={block.id !== latestIntent}
-						sticky={block.id === latestIntent}
-						{...block.id === latestIntent ? progress : {}}
-						onstart={block.id === latestIntent && summary.status === 'draft' && !thinking
-							? () => startThread({ repo: params.repo, id: params.thread })
-							: undefined}
-					/>
-				{:else if block.type === 'review'}
-					<ChatReview
-						verdict={block.verdict === 'pass'
-							? 'passed'
-							: block.verdict === 'fail' && block.round < maxReviewRounds
-								? 'sent-back'
-								: 'needs-you'}
-						round={block.round}
-						doneWhen={detail.entries.findLast((entry) => entry.type === 'intent')?.intent
-							.doneWhen ?? []}
-						checks={block.checks}
-					/>
-				{:else}
-					<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
+	<div class={['page', { viewing }]}>
+		<ThreadView>
+			{#snippet header()}
+				<ChatHeader headline={summary.headline || 'New thread'} status={summary.status} {actions} />
+			{/snippet}
+			<ChatLog label="Thread messages">
+				{#each blocks as block (block.id)}
+					{#if block.type === 'group'}
+						<ChatGroup
+							author={block.author}
+							time={new Date(block.at)}
+							own={block.author.kind === 'person' && block.author.name === user.name}
+						>
+							{#each block.messages as message (message.id)}
+								<ChatMessage
+									steering={!!message.steering}
+									pending={message.steering?.read === false}
+									><Markdown source={message.text} /></ChatMessage
+								>
+							{/each}
+						</ChatGroup>
+					{:else if block.type === 'intent'}
+						<ChatIntent
+							{...block.intent}
+							superseded={block.id !== latestIntent}
+							sticky={block.id === latestIntent}
+							{...block.id === latestIntent ? progress : {}}
+							changes={block.id === latestIntent ? (summary.changes ?? undefined) : undefined}
+							onchanges={view}
+							onship={block.id === latestIntent && shippable
+								? () => (confirming = true)
+								: undefined}
+							onstart={block.id === latestIntent && summary.status === 'draft' && !thinking
+								? () => startThread({ repo: params.repo, id: params.thread })
+								: undefined}
+						/>
+					{:else if block.type === 'review'}
+						<ChatReview
+							verdict={block.verdict === 'pass'
+								? 'passed'
+								: block.verdict === 'fail' && block.round < maxReviewRounds
+									? 'sent-back'
+									: 'needs-you'}
+							round={block.round}
+							doneWhen={detail.entries.findLast((entry) => entry.type === 'intent')?.intent
+								.doneWhen ?? []}
+							checks={block.checks}
+						/>
+					{:else}
+						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
+					{/if}
+				{/each}
+				{#if thinking}
+					<ChatActivity>ReGit is thinking</ChatActivity>
+				{:else if summary.status === 'running'}
+					<ChatActivity>ReGit is working</ChatActivity>
+				{:else if summary.status === 'reviewing'}
+					<ChatActivity>ReGit is reviewing the work</ChatActivity>
 				{/if}
-			{/each}
-			{#if thinking}
-				<ChatActivity>ReGit is thinking</ChatActivity>
-			{:else if summary.status === 'running'}
-				<ChatActivity>ReGit is working</ChatActivity>
-			{:else if summary.status === 'reviewing'}
-				<ChatActivity>ReGit is reviewing the work</ChatActivity>
-			{/if}
-		</ChatLog>
-		{#snippet bottom()}
-			{#if summary.status === 'discarded'}
-				<ChatBanner>
-					This thread was discarded. The conversation is read-only.
-					{#snippet actions()}
-						<Button size="sm" onclick={reopen}>Reopen</Button>
-					{/snippet}
-				</ChatBanner>
-			{:else}
-				<ChatComposer
-					working={thinking || summary.status === 'running' || summary.status === 'reviewing'}
-					onstop={() => stopThread(ref)}
-					placeholder={summary.status === 'draft' ? 'Refine the intent' : 'Reply to ReGit'}
-					onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
+			</ChatLog>
+			{#snippet bottom()}
+				{#if summary.status === 'discarded'}
+					<ChatBanner>
+						This thread was discarded. The conversation is read-only.
+						{#snippet actions()}
+							<Button size="sm" onclick={reopen}>Reopen</Button>
+						{/snippet}
+					</ChatBanner>
+				{:else}
+					<ChatComposer
+						working={thinking || ['running', 'reviewing', 'shipping'].includes(summary.status)}
+						onstop={() => stopThread(ref)}
+						placeholder={summary.status === 'draft' ? 'Refine the intent' : 'Reply to ReGit'}
+						onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
+					/>
+				{/if}
+				<ChatFooter
+					mode={modes[summary.mode]}
+					context={detail.usage.context}
+					usage={detail.usage.rows.map((row) => ({
+						task: tasks[row.task],
+						model: row.model,
+						tokens: row.tokens,
+						cost: row.cost ?? 0
+					}))}
 				/>
-			{/if}
-			<ChatFooter
-				mode={modes[summary.mode]}
-				context={detail.usage.context}
-				usage={detail.usage.rows.map((row) => ({
-					task: tasks[row.task],
-					model: row.model,
-					tokens: row.tokens,
-					cost: row.cost ?? 0
-				}))}
-			/>
-		{/snippet}
-	</ThreadView>
+			{/snippet}
+		</ThreadView>
+		{#if viewing}
+			<div class="panel">
+				{#await getChanges(ref) then files}
+					<ChangesPanel
+						files={files ?? []}
+						onship={shippable ? () => (confirming = true) : undefined}
+						onclose={() => (viewing = false)}
+					/>
+				{/await}
+			</div>
+		{/if}
+	</div>
+	{#if intent && summary.changes}
+		<ShipDialog
+			bind:open={confirming}
+			repo={params.repo}
+			headline={intent.headline}
+			body={intent.purpose}
+			{...summary.changes}
+			review={latestReview
+				? {
+						verdict: latestReview.verdict,
+						met: latestReview.checks.filter((check) => check === 'met').length,
+						total: latestReview.checks.length
+					}
+				: null}
+			onship={({ title, body }) => {
+				viewing = false;
+				shipThread({ ...ref, title, body });
+			}}
+		/>
+	{/if}
 	<DeleteThreadDialog
 		bind:open={deleting}
 		headline={summary.headline || 'This thread'}
@@ -267,6 +336,36 @@
 {/if}
 
 <style>
+	.page {
+		container: page / inline-size;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: minmax(0, 1fr);
+		block-size: 100%;
+		min-block-size: 0;
+
+		&.viewing {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+		}
+	}
+
+	.panel {
+		min-inline-size: 0;
+		min-block-size: 0;
+		border-inline-start: 1px solid var(--color-border);
+	}
+
+	@container page (width < 60rem) {
+		.viewing > :global(*) {
+			grid-area: 1 / 1 / 2 / -1;
+		}
+
+		.panel {
+			z-index: 2;
+			border-inline-start: 0;
+		}
+	}
+
 	.missing {
 		display: grid;
 		place-items: center;

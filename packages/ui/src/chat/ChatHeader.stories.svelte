@@ -58,7 +58,7 @@
 	<div style="inline-size: 22rem">
 		<ChatHeader
 			headline="perf(settings): stop loading the full audit log on the settings page"
-			status="landing"
+			status="shipping"
 			parent={threads[0]}
 			onpreview={fn()}
 			actions={[{ label: 'Copy link', onselect: fn() }]}

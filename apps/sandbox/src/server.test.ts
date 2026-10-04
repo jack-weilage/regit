@@ -234,6 +234,137 @@ fi
 	});
 });
 
+describe('shipping', () => {
+	const sam = { name: 'Sam Rivera', email: 'sam@example.com' };
+	let base: string;
+
+	async function checkpoint(content: string, message: string) {
+		await call('write_file', { path: 'greeting.ts', content });
+		return workspace.commit({ message, author });
+	}
+
+	async function landOnMain(content: string) {
+		const elsewhere = join(dir, 'elsewhere');
+		await git(dir, ['clone', remote, elsewhere]);
+		await writeFile(join(elsewhere, 'greeting.ts'), content);
+		await git(elsewhere, [
+			'-c',
+			'user.name=Lin',
+			'-c',
+			'user.email=lin@example.com',
+			'commit',
+			'-am',
+			'Main moved'
+		]);
+		await git(elsewhere, ['push', 'origin', 'main']);
+	}
+
+	beforeEach(async () => {
+		base = await git(root, ['rev-parse', 'HEAD']);
+	});
+
+	test('diffs the work against the commit it started from', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
+		await call('write_file', { path: 'farewell.ts', content: "export const bye = 'bye';\n" });
+		await workspace.commit({ message: 'Say bye', author });
+
+		const diff = await workspace.diff({ base });
+		expect(diff).toContain("-export const greeting = 'hello';\n+export const greeting = 'hi';");
+		expect(diff).toContain('new file mode');
+	});
+
+	test('squashes checkpoints into one commit by the person shipping', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Checkpoint 1');
+		await checkpoint("export const greeting = 'hey';\n", 'Checkpoint 2');
+
+		const sha = await workspace.squash({
+			base,
+			message: 'feat: say hey',
+			author: sam,
+			committer: author
+		});
+		expect(await git(root, ['rev-list', '--count', `${base}..HEAD`])).toBe('1');
+		expect(await git(root, ['log', '-1', '--format=%an|%cn|%s', sha!])).toBe(
+			'Sam Rivera|ReGit|feat: say hey'
+		);
+		expect(
+			await workspace.squash({ base: sha!, message: 'empty', author: sam, committer: author })
+		).toBeNull();
+	});
+
+	test('rebases onto the latest main and pushes there', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
+		await call('write_file', { path: 'farewell.ts', content: "export const bye = 'bye';\n" });
+		await workspace.commit({ message: 'Say bye', author });
+		await workspace.squash({ base, message: 'feat: greet', author: sam, committer: author });
+		const elsewhere = join(dir, 'elsewhere');
+		await git(dir, ['clone', remote, elsewhere]);
+		await writeFile(join(elsewhere, 'other.ts'), 'export {};\n');
+		await git(elsewhere, ['add', '.']);
+		await git(elsewhere, [
+			'-c',
+			'user.name=Lin',
+			'-c',
+			'user.email=lin@example.com',
+			'commit',
+			'-m',
+			'Other'
+		]);
+		await git(elsewhere, ['push', 'origin', 'main']);
+
+		const rebased = await workspace.rebase({ remote, branch: 'main', committer: author });
+		expect(rebased).toMatchObject({
+			conflicts: [],
+			onto: await git(remote, ['rev-parse', 'main'])
+		});
+		const sha = await workspace.push({ remote, ref: 'main' });
+		expect(sha).toBe(rebased.sha);
+		expect(await git(remote, ['log', '--format=%s', 'main'])).toBe('feat: greet\nOther\ninit');
+	});
+
+	test('stops on conflicts, refuses leftover markers, then continues once resolved', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
+		await workspace.squash({ base, message: 'feat: say hi', author: sam, committer: author });
+		await landOnMain("export const greeting = 'hey';\n");
+
+		const rebased = await workspace.rebase({ remote, branch: 'main', committer: author });
+		expect(rebased).toMatchObject({ sha: null, conflicts: ['greeting.ts'] });
+		expect(await workspace.continueRebase({ committer: author })).toEqual({
+			sha: null,
+			conflicts: ['greeting.ts']
+		});
+
+		await call('write_file', {
+			path: 'greeting.ts',
+			content: "export const greeting = 'hi, hey';\n"
+		});
+		const continued = await workspace.continueRebase({ committer: author });
+		expect(continued.conflicts).toEqual([]);
+		expect(await git(root, ['log', '--format=%s', '-2'])).toBe('feat: say hi\nMain moved');
+		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe(
+			"export const greeting = 'hi, hey';\n"
+		);
+	});
+
+	test('aborts a rebase and force pushes the rewritten branch', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
+		await workspace.push({ ref: 'thread/hi' });
+		const squashed = await workspace.squash({
+			base,
+			message: 'feat: say hi',
+			author: sam,
+			committer: author
+		});
+		await landOnMain("export const greeting = 'hey';\n");
+		await workspace.rebase({ remote, branch: 'main', committer: author });
+
+		await workspace.abortRebase();
+		expect(await git(root, ['rev-parse', 'HEAD'])).toBe(squashed);
+		await expect(workspace.push({ ref: 'thread/hi' })).rejects.toThrow();
+		expect(await workspace.push({ ref: 'thread/hi', force: true })).toBe(squashed);
+	});
+});
+
 test('serves a health check', async () => {
 	const response = await sandbox(new Request('http://sandbox/health'));
 	expect(await response.text()).toBe('ok');

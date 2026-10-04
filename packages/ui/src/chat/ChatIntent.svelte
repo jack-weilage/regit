@@ -1,13 +1,16 @@
 <script module lang="ts">
 	import type { StatusIconState } from './status.ts';
 
-	export type IntentStatus = 'working' | 'reviewing' | 'needs-you' | 'ready';
+	export type IntentStatus =
+		'working' | 'reviewing' | 'needs-you' | 'ready' | 'shipping' | 'shipped';
 
 	const icons: Record<IntentStatus, StatusIconState> = {
 		working: 'running',
 		reviewing: 'reviewing',
 		'needs-you': 'attention',
-		ready: 'passed'
+		ready: 'passed',
+		shipping: 'shipping',
+		shipped: 'passed'
 	};
 
 	const stickyTop = 8;
@@ -30,12 +33,14 @@
 		status?: IntentStatus;
 		checks?: CheckState[];
 		note?: string;
+		changes?: { files: number; additions: number; deletions: number };
 		sticky?: boolean;
 		similar?: Mentionable[];
 		handoff?: boolean;
 		superseded?: boolean;
 		onstart?: () => void;
 		onship?: () => void;
+		onchanges?: () => void;
 		ondismiss?: () => void;
 	}
 
@@ -46,12 +51,14 @@
 		status,
 		checks = [],
 		note,
+		changes,
 		sticky = false,
 		similar = [],
 		handoff = false,
 		superseded = false,
 		onstart,
 		onship,
+		onchanges,
 		ondismiss
 	}: Props = $props();
 
@@ -182,9 +189,22 @@
 						</div>
 					{/if}
 
-					{#if note || onship}
+					{#if note || onship || changes}
 						<div class="footer">
 							{#if note}<p class="note">{note}</p>{/if}
+							{#if changes}
+								<Button
+									variant="ghost"
+									size="sm"
+									aria-label="View changes: {changes.files} files, {changes.additions} added, {changes.deletions} removed"
+									onclick={onchanges}
+								>
+									{changes.files}
+									{changes.files === 1 ? 'file' : 'files'}
+									<span class="added">+{changes.additions}</span>
+									<span class="removed">−{changes.deletions}</span>
+								</Button>
+							{/if}
 							{#if onship}<Button variant="primary" size="sm" onclick={onship}>Ship</Button>{/if}
 						</div>
 					{/if}
@@ -372,8 +392,22 @@
 	}
 
 	.note {
+		flex: 1;
 		color: var(--color-muted);
 		font-size: var(--text-meta);
+	}
+
+	.added,
+	.removed {
+		font-family: var(--font-mono);
+	}
+
+	.added {
+		color: var(--color-added);
+	}
+
+	.removed {
+		color: var(--color-removed);
 	}
 
 	.marker {

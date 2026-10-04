@@ -1,6 +1,8 @@
 export { runAttempt, type AttemptEvent, type AttemptOptions, type Checkpoints } from './attempt.ts';
 export { codingInstructions, threadInstructions } from './instructions.ts';
 export { describeTask, intentTools, type ConversationMessage, type Intent } from './intent.ts';
+export { resolveConflicts, type ConflictOptions } from './conflicts.ts';
+export { parseDiff } from './diff.ts';
 export { combineTools } from './tools.ts';
 export { runAgent, type AgentOptions, type AgentOutcome } from './loop.ts';
 export { modes, reviewers, type Mode } from './modes.ts';

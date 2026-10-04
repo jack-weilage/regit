@@ -798,3 +798,119 @@ test('keeps the last verdict when a reply leads to no changes', async () => {
 	);
 	expect(tasks).toEqual(['conversation', 'code', 'review', 'code']);
 });
+
+const writeNotes = (content: string) => [
+	{
+		type: 'response.output_item.done',
+		item: {
+			type: 'function_call',
+			call_id: 'write',
+			name: 'run',
+			arguments: JSON.stringify({ command: `printf '${content}' > notes.md` })
+		}
+	}
+];
+
+const tasks = async () =>
+	(await modelRequests()).map(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task
+	);
+
+test('ships reviewed work as one commit on main', async () => {
+	const { repo, sam, id } = await startedThread('shipping', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met']),
+		[{ type: 'response.output_text.delta', delta: 'It is the first line.' }]
+	]);
+	const ready = await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 1
+	);
+	expect(ready.summary.changes).toEqual({ files: 1, additions: 1, deletions: 1 });
+	expect(await repo.changes(id)).toMatchObject([
+		{ path: 'notes.md', change: 'modified', additions: 1, deletions: 1 }
+	]);
+
+	await repo.ship(id, {
+		by: sam,
+		email: 'sam@example.com',
+		title: 'docs: add a title',
+		body: 'Readers need a title.'
+	});
+	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
+
+	const main = sh(join(dir, 'shipping.git'), 'rev-parse', 'main');
+	expect(shipped.summary.shipped).toMatchObject({ sha: main, by: 'Sam' });
+	expect(shipped.entries.at(-1)).toMatchObject({
+		type: 'event',
+		text: `Shipped to main in ${main.slice(0, 7)} by Sam`
+	});
+	expect(sh(join(dir, 'shipping.git'), 'log', '--format=%an|%s', 'main')).toBe(
+		'Sam|docs: add a title\nSam|init'
+	);
+	expect(sh(join(dir, 'shipping.git'), 'log', '-1', '--format=%b', 'main')).toBe(
+		'Readers need a title.\n\nCo-authored-by: ReGit <agent@regit.dev>'
+	);
+	expect(sh(join(dir, 'shipping.git'), 'show', 'main:notes.md')).toBe('# Notes');
+
+	await repo.reply(id, { author: sam, text: 'Where is the title?' });
+	const answered = await untilThread(repo, id, (detail) =>
+		detail.entries.some(
+			(entry) => entry.type === 'message' && entry.text === 'It is the first line.'
+		)
+	);
+	expect(answered.summary.status).toBe('shipped');
+	expect(await tasks()).toEqual(['conversation', 'code', 'code', 'review', 'conversation']);
+});
+
+test('resolves conflicts with main, reviews again, then ships', async () => {
+	const { repo, sam, id } = await startedThread('conflicting', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met']),
+		writeNotes('# Notes\\nSome better notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Kept both.' }],
+		submitReview('pass', ['met'])
+	]);
+	await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 1
+	);
+	const work = join(dir, 'conflicting-work');
+	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
+	sh(work, 'push', '--quiet', join(dir, 'conflicting.git'), 'main');
+
+	const ship = { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' };
+	await repo.ship(id, ship);
+	const resolved = await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 2
+	);
+	const events = resolved.entries.flatMap((entry) => (entry.type === 'event' ? [entry.text] : []));
+	expect(events).toEqual(
+		expect.arrayContaining(['Conflicts with main in 1 file', 'Rebased onto main'])
+	);
+	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
+
+	await repo.ship(id, ship);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
+	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe(
+		'docs: add a title\nBetter notes\ninit'
+	);
+	expect(sh(join(dir, 'conflicting.git'), 'show', 'main:notes.md')).toBe(
+		'# Notes\nSome better notes'
+	);
+	expect(await tasks()).toEqual([
+		'conversation',
+		'code',
+		'code',
+		'review',
+		'conflicts',
+		'conflicts',
+		'review'
+	]);
+});

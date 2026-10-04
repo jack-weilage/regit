@@ -1,5 +1,15 @@
 import { isTool, ToolError, tools } from './tools.ts';
-import { clone, commit, push, toolchain } from './workspace.ts';
+import {
+	abortRebase,
+	clone,
+	commit,
+	continueRebase,
+	diff,
+	push,
+	rebase,
+	squash,
+	toolchain
+} from './workspace.ts';
 
 export interface SandboxOptions {
 	mise?: string;
@@ -9,7 +19,12 @@ export function createSandbox(root: string, { mise = 'mise' }: SandboxOptions = 
 	const workspace: Record<string, (body: never) => Promise<object>> = {
 		clone: async (body) => (await clone(root, body), {}),
 		commit: async (body) => ({ sha: await commit(root, body) }),
-		push: async (body) => (await push(root, body), {}),
+		push: async (body) => ({ sha: await push(root, body) }),
+		diff: async (body) => ({ diff: await diff(root, body) }),
+		squash: async (body) => ({ sha: await squash(root, body) }),
+		rebase: (body) => rebase(root, body),
+		'continue-rebase': (body) => continueRebase(root, body),
+		'abort-rebase': async () => (await abortRebase(root), {}),
 		toolchain: async () => ({ tools: await toolchain(root, mise) })
 	};
 

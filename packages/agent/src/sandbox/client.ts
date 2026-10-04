@@ -3,9 +3,17 @@ import type {
 	CloneRequest,
 	CommitRequest,
 	CommitResponse,
+	ContinueRebaseRequest,
+	ContinueRebaseResponse,
+	DiffRequest,
+	DiffResponse,
 	ErrorResponse,
 	Fetch,
 	PushRequest,
+	PushResponse,
+	RebaseRequest,
+	RebaseResponse,
+	SquashRequest,
 	ToolchainResponse,
 	ToolName,
 	ToolResponse
@@ -57,7 +65,33 @@ export function sandboxWorkspace(fetch: Fetch) {
 			return sha;
 		},
 		async push(request: PushRequest) {
-			await post(fetch, '/workspace/push', JSON.stringify(request));
+			const { sha } = await post<PushResponse>(fetch, '/workspace/push', JSON.stringify(request));
+			return sha;
+		},
+		async diff(request: DiffRequest) {
+			const { diff } = await post<DiffResponse>(fetch, '/workspace/diff', JSON.stringify(request));
+			return diff;
+		},
+		async squash(request: SquashRequest) {
+			const { sha } = await post<CommitResponse>(
+				fetch,
+				'/workspace/squash',
+				JSON.stringify(request)
+			);
+			return sha;
+		},
+		rebase(request: RebaseRequest) {
+			return post<RebaseResponse>(fetch, '/workspace/rebase', JSON.stringify(request));
+		},
+		continueRebase(request: ContinueRebaseRequest) {
+			return post<ContinueRebaseResponse>(
+				fetch,
+				'/workspace/continue-rebase',
+				JSON.stringify(request)
+			);
+		},
+		async abortRebase() {
+			await post(fetch, '/workspace/abort-rebase', '{}');
 		},
 		async toolchain() {
 			const { tools } = await post<ToolchainResponse>(fetch, '/workspace/toolchain', '{}');

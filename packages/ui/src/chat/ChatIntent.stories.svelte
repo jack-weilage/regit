@@ -155,11 +155,37 @@
 		status: 'ready',
 		checks: ['met', 'met', 'met'],
 		note: 'Reviewed · ready to ship',
-		onship: fn()
+		changes: { files: 4, additions: 23, deletions: 8 },
+		onship: fn(),
+		onchanges: fn()
 	}}
 	play={async ({ args, canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: /View changes: 4 files/ }));
+		await expect(args.onchanges).toHaveBeenCalledOnce();
 		await userEvent.click(canvas.getByRole('button', { name: 'Ship' }));
 		await expect(args.onship).toHaveBeenCalledOnce();
+	}}
+/>
+
+<Story
+	name="Shipping"
+	args={{
+		...progress,
+		status: 'shipping',
+		checks: ['met', 'met', 'met'],
+		note: 'Shipping to main',
+		changes: { files: 4, additions: 23, deletions: 8 }
+	}}
+/>
+
+<Story
+	name="Shipped"
+	args={{
+		...progress,
+		status: 'shipped',
+		checks: ['met', 'met', 'met'],
+		note: 'Shipped to main in a1b2c3d',
+		changes: { files: 4, additions: 23, deletions: 8 }
 	}}
 />
 

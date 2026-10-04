@@ -8,7 +8,7 @@ export const statuses: Record<ThreadStatus, { label: string; icon: StatusIconSta
 	running: { label: 'Running', icon: 'running' },
 	reviewing: { label: 'Reviewing', icon: 'reviewing' },
 	'needs-you': { label: 'Needs you', icon: 'attention' },
-	landing: { label: 'Shipping', icon: 'shipping' },
+	shipping: { label: 'Shipping', icon: 'shipping' },
 	shipped: { label: 'Shipped', icon: 'passed' },
 	discarded: { label: 'Discarded', icon: 'failed' }
 };

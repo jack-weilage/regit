@@ -13,10 +13,13 @@ import type {
 	CheckVerdict,
 	ReviewVerdict,
 	Entry,
+	DiffFile,
+	DiffSummary,
 	LiveMessage,
 	Machine,
 	Mode,
 	RepoCoordinatorApi,
+	ShipInput,
 	ThreadDetail,
 	ThreadStatus,
 	ThreadSummary,
@@ -32,6 +35,11 @@ export type AttemptUpdate =
 	| { type: 'reply'; step: Step }
 	| { type: 'conversation-failed'; error: string }
 	| { type: 'read'; entries: string[] }
+	| { type: 'changes'; summary: DiffSummary }
+	| { type: 'conflicts'; files: string[]; base: string }
+	| { type: 'rebased'; base: string }
+	| { type: 'shipped'; sha: string; base: string }
+	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
 	| {
 			type: 'review';
 			round: number;
@@ -51,6 +59,10 @@ type ThreadRow = {
 	reopen_status: ThreadStatus | null;
 	deleted_at: number | null;
 	deleted_by: string | null;
+	changes: string | null;
+	shipped_sha: string | null;
+	shipped_by: string | null;
+	shipped_at: number | null;
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
@@ -101,7 +113,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			['reopen_status', 'TEXT'],
 			['deleted_at', 'INTEGER'],
 			['deleted_by', 'TEXT'],
-			['machine', 'TEXT']
+			['machine', 'TEXT'],
+			['changes', 'TEXT'],
+			['shipped_sha', 'TEXT'],
+			['shipped_by', 'TEXT'],
+			['shipped_at', 'INTEGER']
 		]) {
 			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
 		}
@@ -141,14 +157,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
-		const steering = summary.status === 'running' || summary.status === 'reviewing';
+		const steering = ['running', 'reviewing', 'shipping'].includes(summary.status);
 		const entry = this.#add(thread, {
 			type: 'message',
 			author,
 			text,
 			...(steering && { steering: { read: false } })
 		});
-		if (steering || summary.status === 'draft' || summary.status === 'needs-you') {
+		if (steering || ['draft', 'needs-you', 'shipped'].includes(summary.status)) {
 			await this.#converse(thread, author, text, entry);
 		}
 		if (summary.status === 'needs-you') this.#setStatus(thread, 'running');
@@ -226,7 +242,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			});
 		for (const row of pending) this.#markRead(thread, `e${row.seq}`);
 		this.#add(thread, { type: 'event', text: `Stopped by ${by.name}` });
-		if (summary.status === 'running' || summary.status === 'reviewing') {
+		if (['running', 'reviewing', 'shipping'].includes(summary.status)) {
 			this.#setStatus(thread, 'needs-you');
 		}
 	}
@@ -276,15 +292,74 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	intentProposed(thread: string, intent: Intent) {
 		const summary = this.#summary(thread);
-		if (!summary || summary.deleted || summary.status === 'discarded') return;
+		if (!summary || summary.deleted) return;
+		if (['discarded', 'shipping', 'shipped'].includes(summary.status)) return;
 		this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
 	}
 
+	changes(thread: string) {
+		this.#active(thread);
+		return this.env.ATTEMPTS.getByName(thread).changes() as Promise<DiffFile[] | null>;
+	}
+
+	async ship(thread: string, { by, email, title, body }: ShipInput) {
+		const summary = this.#active(thread);
+		if (summary.status !== 'needs-you' || !summary.changes) {
+			throw new Error('This thread has nothing ready to ship');
+		}
+		await this.env.ATTEMPTS.getByName(thread).ship({
+			title,
+			body,
+			author: { name: by.name, email }
+		});
+		this.#sql.exec('UPDATE threads SET shipped_by = ? WHERE id = ?', by.name, thread);
+		this.#setStatus(thread, 'shipping');
+	}
+
 	attemptUpdated(thread: string, update: AttemptUpdate) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
+		if (update.type === 'changes') {
+			this.#sql.exec(
+				'UPDATE threads SET changes = ? WHERE id = ?',
+				JSON.stringify(update.summary),
+				thread
+			);
+			this.#touch(thread);
+			return;
+		}
+		if (update.type === 'usage') {
+			for (const usage of update.usage) this.#recordUsage(thread, update.task, update.model, usage);
+			return;
+		}
+		if (update.type === 'conflicts') {
+			const files = update.files.length === 1 ? '1 file' : `${update.files.length} files`;
+			this.#add(thread, { type: 'event', text: `Conflicts with ${update.base} in ${files}` });
+			return;
+		}
+		if (update.type === 'rebased') {
+			this.#add(thread, { type: 'event', text: `Rebased onto ${update.base}` });
+			return;
+		}
+		if (update.type === 'shipped') {
+			this.#sql.exec(
+				'UPDATE threads SET shipped_sha = ?, shipped_at = ? WHERE id = ?',
+				update.sha,
+				Date.now(),
+				thread
+			);
+			const [{ shipped_by: by }] = this.#sql
+				.exec<Pick<ThreadRow, 'shipped_by'>>('SELECT shipped_by FROM threads WHERE id = ?', thread)
+				.toArray() as [Pick<ThreadRow, 'shipped_by'>];
+			this.#add(thread, {
+				type: 'event',
+				text: `Shipped to ${update.base} in ${update.sha.slice(0, 7)} by ${by}`
+			});
+			this.#setStatus(thread, 'shipped');
+			return;
+		}
 		if (update.type === 'review') {
 			for (const usage of update.usage) this.#recordUsage(thread, 'review', update.model, usage);
 			const { round, verdict, checks } = update;
@@ -326,7 +401,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			cancelled: ['discarded', 'The attempt was cancelled']
 		};
 		if (update.status === 'reviewing' || update.status === 'running') {
-			if (summary.status === 'running' || summary.status === 'reviewing') {
+			if (['running', 'reviewing', 'shipping'].includes(summary.status)) {
 				this.#setStatus(thread, update.status);
 			}
 			return;
@@ -522,6 +597,11 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		mode: row.mode,
 		machine: row.machine ?? defaultMachine,
 		updatedAt: row.updated_at,
-		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' }
+		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' },
+		changes: row.changes ? (JSON.parse(row.changes) as DiffSummary) : null,
+		shipped:
+			row.shipped_sha && row.shipped_at
+				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }
+				: null
 	};
 }

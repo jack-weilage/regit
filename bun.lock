@@ -60,6 +60,7 @@
     "packages/agent": {
       "name": "@regit/agent",
       "dependencies": {
+        "@regit/core": "workspace:*",
         "openai": "^7.27.0",
       },
       "devDependencies": {

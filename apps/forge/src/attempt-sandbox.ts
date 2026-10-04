@@ -2,7 +2,14 @@ import { DurableObject } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
 import { toolchainSnapshots } from '@regit/db';
 import { db } from './db.ts';
-import { defaultMachine, machines, maxReviewRounds, type Machine } from '@regit/core';
+import {
+	defaultMachine,
+	machines,
+	maxReviewRounds,
+	summarize,
+	type DiffFile,
+	type Machine
+} from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	codingInstructions,
@@ -10,7 +17,9 @@ import {
 	intentTools,
 	modes,
 	openaiModel,
+	parseDiff,
 	readOnlyTools,
+	resolveConflicts,
 	reviewers,
 	reviewFeedback,
 	reviewIntent,
@@ -49,6 +58,8 @@ export type AttemptStatus =
 	| 'queued'
 	| 'running'
 	| 'reviewing'
+	| 'shipping'
+	| 'shipped'
 	| 'interrupted'
 	| 'finished'
 	| 'stopped'
@@ -105,6 +116,15 @@ const sliceMs = 10 * 60 * 1000;
 const healthTimeoutMs = 5 * 60 * 1000;
 const idleTimeoutMs = 5 * 60 * 1000;
 const snapshotHeadroomBytes = 2e9;
+const maxStoredChanges = 1_500_000;
+const shipRetries = 3;
+const resolveRounds = 2;
+
+export interface ShipRequest {
+	title: string;
+	body: string;
+	author: { name: string; email: string };
+}
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
@@ -185,7 +205,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
-		if (attempt && !isActive(attempt.status)) {
+		if (attempt && !isActive(attempt.status) && attempt.status !== 'shipped') {
 			this.#setMeta('cycle', String(this.#reviewCount()));
 			this.#setStatus('queued');
 		}
@@ -262,9 +282,25 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.ctx.storage.deleteAll();
 	}
 
+	async ship(request: ShipRequest) {
+		const attempt = this.#attempt();
+		if (!attempt || isActive(attempt.status) || ['shipped', 'cancelled'].includes(attempt.status)) {
+			throw new Error('There is nothing to ship right now');
+		}
+		this.#setMeta('ship', JSON.stringify(request));
+		this.#setStatus('shipping');
+		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	changes(): DiffFile[] | null {
+		const changes = this.#meta('changes');
+		return changes ? (JSON.parse(changes) as DiffFile[]) : null;
+	}
+
 	override async alarm() {
 		const attempt = this.#attempt();
-		if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
+		if (attempt?.status === 'shipping') await this.#ship(attempt);
+		else if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
 		else if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) await this.#converse();
 	}
 
@@ -395,6 +431,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				next = await run.next();
 			}
 			if (this.#attempt()?.status !== 'running') return;
+			await this.#saveChanges(attempt, fetch);
 			if (next.value === 'finished' && attempt.intent) await this.#review(attempt, fetch);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
@@ -473,6 +510,139 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#setStatus('running');
 		await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
 		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	async #ship(attempt: AttemptRow) {
+		const request = JSON.parse(this.#meta('ship')!) as ShipRequest;
+		const controller = (this.#controller = new AbortController());
+		let lockGit: (() => Promise<void>) | undefined;
+		try {
+			if (!attempt.base) throw new Error('There are no changes to ship');
+			const fork = await this.#fork(attempt);
+			const token = await this.#token(fork);
+			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+			lockGit = () => this.#allowGit(fork, token, false);
+			const workspace = sandboxWorkspace(fetch);
+			using repo = await this.env.ARTIFACTS.get(attempt.repo);
+			const base = await repo.info();
+			const { plaintext: baseToken } = await repo.createToken('write', 60 * 60);
+			const target = { remote: base.remote, branch: base.defaultBranch, token: baseToken };
+
+			const message = [request.title, request.body, 'Co-authored-by: ReGit <agent@regit.dev>']
+				.filter(Boolean)
+				.join('\n\n');
+			const squashed = await workspace.squash({
+				base: attempt.base,
+				message,
+				author: request.author,
+				committer: author
+			});
+			if (!squashed) throw new Error('There are no changes to ship');
+
+			await this.#allowGit(base, baseToken, true);
+			for (let retry = 0; ; retry++) {
+				const rebased = await workspace.rebase({ ...target, committer: author });
+				if (rebased.conflicts.length) {
+					await this.#report(attempt.repo, {
+						type: 'conflicts',
+						files: rebased.conflicts,
+						base: base.defaultBranch
+					});
+					this.#setStatus('running');
+					await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
+					await this.#resolve(attempt, fetch, rebased.conflicts, base.defaultBranch, controller);
+					this.#setBase(attempt, rebased.onto);
+					await this.#push(fork, token, () =>
+						workspace.push({ ref: fork.branch, token, force: true })
+					);
+					await this.#saveChanges(attempt, fetch);
+					await this.#report(attempt.repo, { type: 'rebased', base: base.defaultBranch });
+					this.#setMeta('cycle', String(this.#reviewCount()));
+					return await this.#review(attempt, fetch);
+				}
+				this.#setBase(attempt, rebased.onto);
+				try {
+					const sha = await workspace.push({ ref: target.branch, ...target });
+					await this.#push(fork, token, () =>
+						workspace.push({ ref: fork.branch, token, force: true })
+					);
+					await this.#saveChanges(attempt, fetch);
+					await this.#report(attempt.repo, { type: 'shipped', sha, base: base.defaultBranch });
+					await this.#finish(attempt, 'shipped');
+					break;
+				} catch (error) {
+					if (retry + 1 >= shipRetries) throw error;
+				}
+			}
+		} catch (error) {
+			const status = this.#attempt()?.status;
+			if (status !== 'shipping' && status !== 'running' && status !== 'reviewing') return;
+			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
+		} finally {
+			this.#controller = undefined;
+			await lockGit?.().catch(() => {});
+			if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) {
+				const status = this.#attempt()?.status;
+				if (status !== 'shipped' && status && !isActive(status)) {
+					this.#setMeta('cycle', String(this.#reviewCount()));
+					this.#setStatus('queued');
+				}
+				await this.ctx.storage.setAlarm(Date.now());
+			}
+		}
+	}
+
+	async #resolve(
+		attempt: AttemptRow,
+		fetch: Fetch,
+		files: string[],
+		branch: string,
+		controller: AbortController
+	) {
+		const workspace = sandboxWorkspace(fetch);
+		const { model, effort } = modes[attempt.mode];
+		const thread = this.ctx.id.name ?? this.ctx.id.toString();
+		for (let round = 0; round < resolveRounds; round++) {
+			const { usage } = await resolveConflicts({
+				model: openaiModel({
+					gateway: { run: (request) => this.env.MODELS.run(request) },
+					model,
+					effort,
+					sessionId: `${thread}/conflicts`,
+					metadata: { thread, mode: attempt.mode, task: 'conflicts' }
+				}),
+				tools: sandboxTools(fetch),
+				intent: JSON.parse(attempt.intent!) as Intent,
+				base: branch,
+				files,
+				signal: controller.signal
+			});
+			await this.#report(attempt.repo, { type: 'usage', task: 'attempt', model, usage });
+			const continued = await workspace.continueRebase({ committer: author });
+			if (!continued.conflicts.length) return;
+			files = continued.conflicts;
+		}
+		await workspace.abortRebase();
+		throw new Error(`Couldn't resolve conflicts with ${branch}`);
+	}
+
+	async #saveChanges(attempt: AttemptRow, fetch: Fetch) {
+		if (!attempt.base) return;
+		try {
+			let files = parseDiff(await sandboxWorkspace(fetch).diff({ base: attempt.base }));
+			if (JSON.stringify(files).length > maxStoredChanges) {
+				files = files.map((file) => ({ ...file, hunks: [], tooLarge: true }));
+			}
+			this.#setMeta('changes', JSON.stringify(files));
+			await this.#report(attempt.repo, { type: 'changes', summary: summarize(files) });
+		} catch (error) {
+			console.warn('Could not save the changes', error);
+		}
+	}
+
+	#setBase(attempt: AttemptRow, base: string) {
+		attempt.base = base;
+		this.#sql.exec('UPDATE attempt SET base = ?', base);
 	}
 
 	async #head(fetch: Fetch) {
@@ -614,7 +784,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.ctx.container!.interceptOutboundHttps(remote.hostname, proxy);
 	}
 
-	async #push(fork: Fork, token: string, push: () => Promise<void>) {
+	async #push(fork: Fork, token: string, push: () => Promise<unknown>) {
 		await this.#allowGit(fork, token, true);
 		try {
 			await push();
@@ -724,7 +894,7 @@ async function digest(value: unknown) {
 }
 
 function isActive(status: AttemptStatus) {
-	return status === 'queued' || status === 'running' || status === 'reviewing';
+	return ['queued', 'running', 'reviewing', 'shipping'].includes(status);
 }
 
 async function waitUntilHealthy(fetch: Fetch) {

@@ -149,7 +149,7 @@
 			{
 				id: 'deploy',
 				headline: 'feat(deploy): roll out behind a flag',
-				status: 'landing',
+				status: 'shipping',
 				updatedAt: minutes(180),
 				href: '#'
 			},

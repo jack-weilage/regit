@@ -100,6 +100,24 @@ export const restoreThread = command(thread, async ({ repo, id }) => {
 	getThreads(repo).refresh();
 });
 
+export const getChanges = query(thread, async ({ repo, id }) =>
+	(await coordinator(repo)).changes(id)
+);
+
+export const shipThread = command(
+	v.object({
+		...thread.entries,
+		title: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(200)),
+		body: v.pipe(v.string(), v.trim(), v.maxLength(20_000))
+	}),
+	async ({ repo, id, title, body }) => {
+		const { email } = getRequestEvent().locals.user;
+		await (await coordinator(repo)).ship(id, { by: author(), email, title, body });
+		getThread({ repo, id }).refresh();
+		getThreads(repo).refresh();
+	}
+);
+
 export const stopThread = command(thread, async ({ repo, id }) => {
 	await (await coordinator(repo)).stop(id, author());
 	getThread({ repo, id }).refresh();

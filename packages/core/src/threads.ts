@@ -1,3 +1,5 @@
+import type { DiffFile, DiffSummary } from './diff.ts';
+
 export type Mode = 'small' | 'medium' | 'large';
 
 export const machines = {
@@ -11,7 +13,8 @@ export type Machine = keyof typeof machines;
 
 export const defaultMachine: Machine = 'standard-1';
 
-export type ThreadStatus = 'draft' | 'running' | 'reviewing' | 'needs-you' | 'discarded';
+export type ThreadStatus =
+	'draft' | 'running' | 'reviewing' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
 export type ReviewVerdict = 'pass' | 'fail' | 'needs-human';
 
@@ -58,6 +61,15 @@ export interface ThreadSummary {
 	machine: Machine;
 	updatedAt: number;
 	deleted: { at: number; by: string } | null;
+	changes: DiffSummary | null;
+	shipped: { sha: string; by: string; at: number } | null;
+}
+
+export interface ShipInput {
+	by: Author;
+	email: string;
+	title: string;
+	body: string;
 }
 
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
@@ -98,6 +110,8 @@ export interface RepoCoordinatorApi {
 	delete(thread: string, by: Author): Promise<void>;
 	restore(thread: string): void;
 	stop(thread: string, by: Author): Promise<void>;
+	changes(thread: string): Promise<DiffFile[] | null>;
+	ship(thread: string, input: ShipInput): Promise<void>;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;
 }

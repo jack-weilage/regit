@@ -41,6 +41,52 @@ export interface ToolchainResponse {
 export interface PushRequest {
 	ref: string;
 	token?: string;
+	remote?: string;
+	force?: boolean;
+}
+
+export interface PushResponse {
+	sha: string;
+}
+
+export interface Identity {
+	name: string;
+	email: string;
+}
+
+export interface DiffRequest {
+	base: string;
+}
+
+export interface DiffResponse {
+	diff: string;
+}
+
+export interface SquashRequest {
+	base: string;
+	message: string;
+	author: Identity;
+	committer: Identity;
+}
+
+export interface RebaseRequest {
+	remote: string;
+	branch: string;
+	token?: string;
+	committer: Identity;
+}
+
+export interface ContinueRebaseRequest {
+	committer: Identity;
+}
+
+export interface ContinueRebaseResponse {
+	sha: string | null;
+	conflicts: string[];
+}
+
+export interface RebaseResponse extends ContinueRebaseResponse {
+	onto: string;
 }
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;

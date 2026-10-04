@@ -3,6 +3,7 @@ export type ThreadKind = (typeof threadKinds)[number];
 
 export const verdicts = ['ship', 'iterate', 'discard'] as const;
 export type Verdict = (typeof verdicts)[number];
+export * from './diff.ts';
 export * from './threads.ts';
 
 export const repoNamePattern = /^(?!.*--)[A-Za-z0-9._-]+$/;
