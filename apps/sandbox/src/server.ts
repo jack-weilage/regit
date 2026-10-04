@@ -33,7 +33,7 @@ export function createSandbox(
 		})
 	};
 	const workspace: Record<string, (body: never) => Promise<object>> = {
-		clone: async (body) => (await clone(root, body), {}),
+		clone: async (body) => (await services.pausedDuring(() => clone(root, body)), {}),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),
 		diff: async (body) => ({ diff: await diff(root, body) }),

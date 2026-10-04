@@ -145,7 +145,17 @@ export function createServices(
 		await Promise.all([...running.keys()].map(stop));
 	}
 
-	return { list, start, stop, restart, logs: tail, stopAll };
+	async function pausedDuring<T>(change: () => Promise<T>) {
+		const resume = [...running.values()]
+			.filter((entry) => entry.status !== 'exited')
+			.map((entry) => (entry.saved ? { name: entry.spec.name } : entry.spec));
+		await stopAll();
+		const result = await change();
+		for (const request of resume) start(request).catch(() => {});
+		return result;
+	}
+
+	return { list, start, stop, restart, logs: tail, stopAll, pausedDuring };
 }
 
 export type Services = ReturnType<typeof createServices>;

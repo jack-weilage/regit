@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { services as cli } from './cli.ts';
+import { git } from './exec.ts';
 import { createSandbox } from './server.ts';
 import { parseServices } from './services.ts';
 
@@ -117,4 +118,50 @@ test('reports the log tail when a service exits before its port opens', async ()
 			port: await freePort()
 		})
 	).rejects.toThrow(/exited with code 3 before port \d+ opened:\nmissing module/);
+});
+
+test('restarts running services in the new checkout when the workspace is recloned', async () => {
+	const port = await freePort();
+	const remote = async (message: string) => {
+		const dir = await mkdtemp(join(tmpdir(), 'regit-remote-'));
+		await mkdir(join(dir, '.agents'));
+		await writeFile(
+			join(dir, '.agents/services.yml'),
+			`services:\n  web:\n    command: node server.js\n    port: ${port}\n`
+		);
+		await writeFile(
+			join(dir, 'server.js'),
+			`const fs = require('fs');
+fs.mkdirSync('cache', { recursive: true });
+setInterval(() => fs.writeFileSync('cache/' + Math.random(), ''), 2);
+require('http').createServer((q, s) => s.end('${message}')).listen(process.env.PORT);\n`
+		);
+		await git(dir, ['init', '--initial-branch', 'main']);
+		await git(dir, ['add', '.']);
+		await git(dir, [
+			'-c',
+			'user.name=Sam',
+			'-c',
+			'user.email=sam@example.com',
+			'commit',
+			'-m',
+			'init'
+		]);
+		return dir;
+	};
+	const clone = (remote: string) =>
+		fetch('http://sandbox/workspace/clone', { method: 'POST', body: JSON.stringify({ remote }) });
+
+	const [base, fork] = await Promise.all([remote('from base'), remote('from fork')]);
+	expect((await clone(base)).status).toBe(200);
+	await sandbox.services.start({ name: 'web' });
+	expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toBe('from base');
+
+	expect((await clone(fork)).status).toBe(200);
+	await vi.waitFor(
+		async () =>
+			expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toBe('from fork'),
+		{ timeout: 10_000, interval: 200 }
+	);
+	await Promise.all([base, fork].map((dir) => rm(dir, { recursive: true, force: true })));
 });
