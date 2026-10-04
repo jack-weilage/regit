@@ -14,6 +14,8 @@ import {
 } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
+	askThreads,
+	askThreadsTools,
 	codingInstructions,
 	combineTools,
 	intentTools,
@@ -29,6 +31,7 @@ import {
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
+	searcher,
 	StepActivity,
 	suggestTools,
 	threadInstructions,
@@ -410,7 +413,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 				threadTools({
 					list: () => coordinator.otherThreads(thread),
 					send: (to, text) => coordinator.messageThread(thread, to, text)
-				})
+				}),
+				askThreadsTools((question) => this.#askThreads(repo, question))
 			);
 
 			for (let turns = await this.#drain(repo); turns.length; turns = await this.#drain(repo)) {
@@ -530,7 +534,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.ctx.id.name!),
 						send: (to, text) =>
 							this.env.REPOS.getByName(attempt.repo).messageThread(this.ctx.id.name!, to, text)
-					})
+					}),
+					askThreadsTools((question) => this.#askThreads(attempt.repo, question))
 				),
 				checkpoints: {
 					commit: (request) => workspace.commit(request),
@@ -850,6 +855,30 @@ export class AttemptSandbox extends DurableObject<Env> {
 				});
 			}
 		});
+	}
+
+	async #askThreads(repo: string, question: string) {
+		const coordinator = this.env.REPOS.getByName(repo);
+		const thread = this.ctx.id.name!;
+		const { answer, usage } = await askThreads({
+			model: openaiModel({
+				gateway: { run: (request) => this.env.MODELS.run(request) },
+				model: searcher.model,
+				effort: searcher.effort,
+				sessionId: `${thread}/search`,
+				metadata: { thread, mode: this.#meta('mode') ?? 'medium', task: 'search' }
+			}),
+			source: {
+				list: () => coordinator.otherThreads(thread),
+				read: (id) => coordinator.threadDigest(id),
+				search: (id, query) => coordinator.searchThread(id, query),
+				diff: (id, path) => coordinator.threadDiff(id, path)
+			},
+			question
+		});
+		if (usage.length)
+			await this.#report(repo, { type: 'usage', task: 'search', model: searcher.model, usage });
+		return answer;
 	}
 
 	#background(controller: AbortController, start: () => Promise<Fetch>) {

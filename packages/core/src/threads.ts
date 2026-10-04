@@ -131,7 +131,7 @@ export interface ShipInput {
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface UsageRow {
-	task: 'intent' | 'conversation' | 'attempt' | 'review';
+	task: 'intent' | 'conversation' | 'attempt' | 'review' | 'search';
 	model: string;
 	tokens: number;
 	cost: number | null;

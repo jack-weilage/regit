@@ -16,7 +16,8 @@ const verbs: Record<string, [running: string, done: string]> = {
 	update_intent: ['Updating the intent to', 'Updated the intent to'],
 	suggest_thread: ['Suggesting', 'Suggested'],
 	list_threads: ['Listing threads', 'Listed threads'],
-	message_thread: ['Messaging thread', 'Messaged thread']
+	message_thread: ['Messaging thread', 'Messaged thread'],
+	ask_threads: ['Asking about threads', 'Asked about threads']
 };
 
 export function toolView(call: ToolCallRecord): ToolCallView {
@@ -38,7 +39,8 @@ export function summarizeTools(calls: ToolCallRecord[]) {
 		count('propose_intent', 'update_intent') && 'updated the intent',
 		count('suggest_thread') && `suggested ${plural(count('suggest_thread'), 'thread', 'threads')}`,
 		count('list_threads') && 'listed threads',
-		count('message_thread') && `messaged ${plural(count('message_thread'), 'thread', 'threads')}`
+		count('message_thread') && `messaged ${plural(count('message_thread'), 'thread', 'threads')}`,
+		count('ask_threads') && 'asked about threads'
 	].filter(Boolean);
 	const failed = calls.filter((call) => call.status === 'failed').length;
 	const text = parts.join(', ') || plural(calls.length, 'tool call', 'tool calls');

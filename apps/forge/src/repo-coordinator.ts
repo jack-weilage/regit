@@ -88,6 +88,62 @@ type ThreadRow = {
 const agent: Author = { name: 'ReGit', kind: 'agent' };
 const maxThreadMessages = 5;
 const similarTimeoutMs = 4000;
+const recentHistory = 12;
+const maxSearchHits = 30;
+const maxDiffChars = 20_000;
+const pastTense: Record<string, string> = {
+	read_file: 'Read',
+	write_file: 'Wrote',
+	edit_file: 'Edited',
+	find_files: 'Found files',
+	search: 'Searched for',
+	run: 'Ran',
+	ask_threads: 'Asked about threads:',
+	message_thread: 'Messaged thread'
+};
+
+function historyLines(entries: Entry[]) {
+	return entries
+		.flatMap((entry): string[] => {
+			if (entry.type === 'message') return [`${entry.author.name}: ${entry.text}`];
+			if (entry.type === 'thread-message') {
+				const way = entry.direction === 'in' ? 'From' : 'To';
+				return [`${way} thread ${entry.thread} (${entry.headline || 'New thread'}): ${entry.text}`];
+			}
+			if (entry.type === 'event') return [`· ${entry.text}`];
+			if (entry.type === 'intent')
+				return [`Intent: ${entry.intent.headline} — ${entry.intent.purpose}`];
+			if (entry.type === 'review') {
+				return [`Review round ${entry.round}: ${entry.verdict} (${entry.checks.join(', ')})`];
+			}
+			if (entry.type === 'suggestion') return [`Suggested a thread: ${entry.intent.headline}`];
+			if (entry.type === 'tools') {
+				const calls = entry.calls.map((call) =>
+					`${pastTense[call.tool] ?? call.tool} ${call.target}${call.status === 'failed' ? ' (failed)' : ''}`.trim()
+				);
+				return [`ReGit: ${calls.join('; ')}`];
+			}
+			return [];
+		})
+		.map((line, index, all) => {
+			const text = line.length > 500 ? `${line.slice(0, 500)}…` : line;
+			return `#${index + 1} of ${all.length}: ${text}`;
+		});
+}
+
+function renderDiff(file: DiffFile) {
+	const header = `--- ${file.path} (${file.change}, +${file.additions} −${file.deletions})`;
+	if (file.binary || file.tooLarge)
+		return `${header}\n(${file.binary ? 'binary' : 'too large to show'})`;
+	const prefix = { context: ' ', added: '+', removed: '-' };
+	const hunks = file.hunks.map((hunk) =>
+		[
+			`@@ ${hunk.context ?? ''}`.trimEnd(),
+			...hunk.lines.map((line) => `${prefix[line.kind]}${line.text}`)
+		].join('\n')
+	);
+	return [header, ...hunks].join('\n');
+}
 
 function describeIntent({ headline, purpose, doneWhen }: Intent) {
 	const checks = doneWhen.length ? ` Done when: ${doneWhen.join('; ')}` : '';
@@ -358,6 +414,71 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return steering
 			? 'Delivered. Its agent reads it at its next step.'
 			: 'Delivered. Its agent will reply in this thread.';
+	}
+
+	async threadDigest(id: string) {
+		const summary = this.#summary(id);
+		if (!summary || summary.deleted) return `There is no thread ${id}`;
+		const entries = this.#entries(id);
+		const history = historyLines(entries);
+		const intent = entries.findLast((entry) => entry.type === 'intent');
+		const review = entries.findLast((entry) => entry.type === 'review');
+		const files = await this.changes(id).catch(() => null);
+		const running = this.#services(id).filter((service) => service.status === 'running');
+		const lines = [`${id} · ${summary.status} · ${summary.headline || 'New thread'}`];
+		if (intent?.type === 'intent') {
+			lines.push(`Intent: ${intent.intent.purpose}`, 'Done when:');
+			intent.intent.doneWhen.forEach((check, index) => {
+				const state = review?.type === 'review' ? review.checks[index] : undefined;
+				lines.push(`- ${check}${state ? ` [${state}]` : ''}`);
+			});
+		}
+		if (review?.type === 'review')
+			lines.push(`Latest review: round ${review.round}, ${review.verdict}`);
+		if (summary.shipped) {
+			lines.push(`Shipped in ${summary.shipped.sha.slice(0, 7)} by ${summary.shipped.by}`);
+		}
+		if (files?.length) {
+			lines.push('Changed files:');
+			for (const file of files) {
+				lines.push(`- ${file.path} (${file.change}, +${file.additions} −${file.deletions})`);
+			}
+		}
+		if (running.length)
+			lines.push(`Running services: ${running.map((service) => service.name).join(', ')}`);
+		const recent = history.slice(-recentHistory);
+		lines.push(
+			`Recent history (${recent.length} of ${history.length}; search_thread finds older entries):`,
+			...recent
+		);
+		return lines.join('\n');
+	}
+
+	searchThread(id: string, query: string) {
+		const summary = this.#summary(id);
+		if (!summary || summary.deleted) return `There is no thread ${id}`;
+		const history = historyLines(this.#entries(id));
+		const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+		const hits = history.filter((line) => terms.every((term) => line.toLowerCase().includes(term)));
+		if (!hits.length) return `No matches in ${history.length} entries.`;
+		const shown = hits.slice(-maxSearchHits);
+		const more = hits.length - shown.length;
+		return [
+			`${hits.length} matches in ${history.length} entries${more ? ` (showing the latest ${shown.length})` : ''}:`,
+			...shown
+		].join('\n');
+	}
+
+	async threadDiff(id: string, path?: string) {
+		const summary = this.#summary(id);
+		if (!summary || summary.deleted) return `There is no thread ${id}`;
+		const files = ((await this.changes(id).catch(() => null)) ?? []).filter(
+			(file) =>
+				!path || file.path === path || file.oldPath === path || file.path.endsWith(`/${path}`)
+		);
+		if (!files.length) return path ? `No changes to ${path}.` : 'No changes.';
+		const text = files.map(renderDiff).join('\n');
+		return text.length > maxDiffChars ? `${text.slice(0, maxDiffChars)}\n… truncated` : text;
 	}
 
 	#threadMessagesSincePerson(thread: string) {
@@ -791,7 +912,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			row.cost = row.cost === null || price === null ? null : row.cost + price;
 			rows.set(key, row);
 		}
-		const latest = calls.findLast((call) => call.task === 'attempt') ?? calls.at(-1);
+		const latest =
+			calls.findLast((call) => call.task === 'attempt') ??
+			calls.findLast((call) => call.task === 'conversation') ??
+			calls.at(-1);
 		const model = latest?.model ?? modes[mode].model;
 		return {
 			rows: [...rows.values()],

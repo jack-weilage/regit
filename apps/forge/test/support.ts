@@ -49,6 +49,17 @@ export async function setup({ containers = false } = {}) {
 		await (await models.getExport()).script(replies);
 	}
 
+	async function idle(quietMs = 1000, timeoutMs = 15_000) {
+		const deadline = Date.now() + timeoutMs;
+		let count = (await modelRequests()).length;
+		while (Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, quietMs));
+			const next = (await modelRequests()).length;
+			if (next === count) return;
+			count = next;
+		}
+	}
+
 	async function scriptDecisions(next: JevResponse[]) {
 		await (await models.getExport()).scriptDecisions(next);
 	}
@@ -142,6 +153,7 @@ export async function setup({ containers = false } = {}) {
 		modelRequests,
 		scriptDecisions,
 		decisionRequests,
+		idle,
 		sh,
 		seed,
 		commit,

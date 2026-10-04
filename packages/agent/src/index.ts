@@ -17,9 +17,16 @@ export {
 	type SimilarMatch
 } from './similar.ts';
 export { StepActivity, toolTarget } from './activity.ts';
+export {
+	askThreads,
+	askThreadsTools,
+	searchInstructions,
+	threadSourceTools,
+	type ThreadSource
+} from './search.ts';
 export { combineTools } from './tools.ts';
 export { runAgent, type AgentOptions, type AgentOutcome } from './loop.ts';
-export { modes, reviewers, type Mode } from './modes.ts';
+export { modes, reviewers, searcher, type Mode } from './modes.ts';
 export { reviewFeedback, reviewIntent, type CheckVerdict, type Review } from './review.ts';
 export { cost, models, type ModelInfo } from './pricing.ts';
 export type * from './types.ts';

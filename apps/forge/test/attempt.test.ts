@@ -12,6 +12,7 @@ const {
 	modelRequests,
 	scriptDecisions,
 	decisionRequests,
+	idle,
 	sh,
 	seed,
 	commit,
@@ -338,7 +339,8 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'update_intent',
 		'suggest_thread',
 		'list_threads',
-		'message_thread'
+		'message_thread',
+		'ask_threads'
 	]);
 	expect(tools(requests[4]!)).toContain('write_file');
 	expect(tools(requests[4]!)).toContain('suggest_thread');
@@ -1395,4 +1397,95 @@ test('sizes an auto thread when it opens and again when its intent changes', asy
 	expect((await repo.thread(opened.id))!.summary.auto).toBe(true);
 	const [first] = await decisionRequests();
 	expect(first!.state).toMatchObject({ new_intent: 'Rework how notes are stored.' });
+});
+
+test('answers questions about another thread without interrupting it', async () => {
+	await seed('observed', { 'notes.md': 'Some notes\n' });
+	await idle();
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('observed');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const callTool = (call_id: string, name: string, args: object) => [
+		{
+			type: 'response.output_item.done',
+			item: { type: 'function_call', call_id, name, arguments: JSON.stringify(args) }
+		}
+	];
+	const replied = async (thread: string) =>
+		expect
+			.poll(
+				async () =>
+					(await repo.thread(thread))!.entries.some(
+						(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+					),
+				{ timeout: 20_000 }
+			)
+			.toBe(true);
+
+	await script([
+		callTool('intent', 'propose_intent', {
+			headline: 'docs(notes): add a title',
+			purpose: 'The notes have no heading.',
+			doneWhen: ['notes.md starts with a title']
+		}),
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const target = await repo.openThread({
+		repo: 'observed',
+		author: sam,
+		text: 'The notes need a title.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(target.id);
+
+	await script([
+		callTool('ask', 'ask_threads', {
+			question: 'What is the notes thread doing?',
+			thread: target.id
+		}),
+		callTool('read', 'read_thread', { id: target.id }),
+		[{ type: 'response.output_text.delta', delta: 'It is adding a title to notes.md.' }],
+		[{ type: 'response.output_text.delta', delta: 'Done.' }]
+	]);
+	const watcher = await repo.openThread({
+		repo: 'observed',
+		author: sam,
+		text: 'What are the others doing?',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(watcher.id);
+
+	const detail = (await repo.thread(watcher.id))!;
+	expect(detail.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'tools',
+			calls: [
+				expect.objectContaining({
+					tool: 'ask_threads',
+					status: 'done',
+					output: 'It is adding a title to notes.md.'
+				})
+			]
+		})
+	);
+	expect(detail.usage.rows.map((row) => row.task)).toContain('search');
+	const searches = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'search'
+	);
+	expect(searches).toHaveLength(2);
+	expect(JSON.stringify(searches[0]!.query)).toContain(
+		`What is the notes thread doing? (thread ${target.id})`
+	);
+	expect(JSON.stringify(searches[1]!.query)).toContain('docs(notes): add a title');
+	expect(JSON.stringify(searches[1]!.query)).toContain('notes.md starts with a title');
+	expect(
+		(await repo.thread(target.id))!.entries.some((entry) => entry.type === 'thread-message')
+	).toBe(false);
+
+	expect(await repo.searchThread(target.id, 'title')).toMatch(
+		/^\d+ matches in \d+ entries:\n#\d+ of \d+: /
+	);
+	expect(await repo.threadDiff(target.id)).toBe('No changes.');
 });

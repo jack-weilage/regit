@@ -9,6 +9,11 @@ export const modes: Record<Mode, { model: string; effort: ReasoningEffort }> = {
 	large: { model: 'gpt-6.1-sol', effort: 'high' }
 };
 
+export const searcher: { model: string; effort: ReasoningEffort } = {
+	model: 'gpt-6-luna',
+	effort: 'low'
+};
+
 export const reviewers: Record<Mode, { model: string; effort: ReasoningEffort }> = {
 	small: { model: 'gpt-6.1-sol', effort: 'medium' },
 	medium: { model: 'gpt-6.1-sol', effort: 'high' },

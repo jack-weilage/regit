@@ -11,7 +11,8 @@ const targets: Record<string, string> = {
 	propose_intent: 'headline',
 	update_intent: 'headline',
 	suggest_thread: 'headline',
-	message_thread: 'thread'
+	message_thread: 'thread',
+	ask_threads: 'question'
 };
 
 const kept = 4000;
@@ -55,7 +56,9 @@ export class StepActivity {
 			const { output } = event.result;
 			call.status = failed(output) ? 'failed' : 'done';
 			call.finishedAt = this.now();
-			if (call.tool === 'run' || call.status === 'failed') call.output = output.slice(-kept);
+			if (['run', 'ask_threads'].includes(call.tool) || call.status === 'failed') {
+				call.output = output.slice(-kept);
+			}
 		}
 	}
 

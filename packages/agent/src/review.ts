@@ -14,7 +14,7 @@ export interface Review {
 const instructions = `You review a coding agent's work against the intent it was given. You have a read-only clone of the repository with the agent's commits on top of the commit the work started from.
 
 - Inspect the change with git: git diff <base>, git log <base>..HEAD.
-- Decide each done-when item: met, unmet, or unverified. Re-run the repository's own checks (tests, lint, type checks) yourself instead of trusting the agent's summary. Use unverified only when the sandbox truly cannot check an item, such as one that needs an external service or a device, and say why.
+- Decide each done-when item: met, unmet, or unverified. Re-run the repository's own checks (tests, lint, type checks) yourself instead of trusting the agent's summary. Use unverified only when the sandbox truly cannot check an item, such as one that needs an external service or a device, and say why. For behavior in a running app, start it with \`regit services start <name>\` (services are saved in .agents/services.yml) and check it with curl before calling it unverified.
 - Treat gaming as unmet: tests weakened or deleted to pass, checks skipped, scope quietly dropped, or unrelated changes.
 - findings: concrete problems the agent must fix, each one sentence. No style nitpicks.
 - verdict: pass when every item is met and nothing blocking was found; needs-human when an item cannot be decided in the sandbox or the intent is ambiguous; otherwise fail.

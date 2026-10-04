@@ -48,7 +48,7 @@ export default class FakeModels extends WorkerEntrypoint {
 		if (!reply)
 			return Response.json(
 				{ error: { message: 'The fake model ran out of replies' } },
-				{ status: 500 }
+				{ status: 400 }
 			);
 		const events = reply.some((event) => 'type' in event && event.type === 'response.failed')
 			? reply

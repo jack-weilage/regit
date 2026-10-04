@@ -7,7 +7,7 @@ import type {
 import type { ModelClient, ModelEvent, Turn } from '../types.ts';
 import { gatewayFetch, type Gateway, type Metadata } from './gateway.ts';
 
-export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface OpenAIModelOptions {
 	gateway: Gateway;

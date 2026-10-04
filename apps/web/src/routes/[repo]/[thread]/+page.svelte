@@ -81,7 +81,8 @@
 		intent: 'Drafting intents',
 		conversation: 'Conversation',
 		attempt: 'Agent',
-		review: 'Review'
+		review: 'Review',
+		search: 'Thread search'
 	};
 
 	let { params } = $props();
