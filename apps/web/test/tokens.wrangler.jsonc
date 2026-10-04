@@ -1,6 +1,6 @@
 {
-	"name": "git",
-	"main": "./git-worker.ts",
+	"name": "tokens",
+	"main": "./tokens-worker.ts",
 	"compatibility_date": "2026-10-01",
 	"d1_databases": [
 		{
@@ -9,6 +9,5 @@
 			"migrations_dir": "../../../packages/db/drizzle",
 			"migrations_pattern": "../../../packages/db/drizzle/*/migration.sql"
 		}
-	],
-	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }]
+	]
 }

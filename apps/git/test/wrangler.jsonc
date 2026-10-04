@@ -1,0 +1,14 @@
+{
+	"name": "git",
+	"main": "../src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "regit",
+			"migrations_dir": "../../../packages/db/drizzle",
+			"migrations_pattern": "../../../packages/db/drizzle/*/migration.sql"
+		}
+	],
+	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }]
+}

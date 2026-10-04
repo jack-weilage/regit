@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { createTestHarness } from 'wrangler';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'vitest';
 import { startGitServer } from '../../forge/test/git-process.ts';
-import type GitWorker from './git-worker.ts';
+import { hashGitToken, newGitToken } from '@regit/db';
 
 let dir: string;
 let backend: Awaited<ReturnType<typeof startGitServer>>;
 let server: ReturnType<typeof createTestHarness>;
-let worker: ReturnType<typeof server.getWorker<Env, { default: typeof GitWorker }>>;
+let worker: ReturnType<typeof server.getWorker<Env>>;
 let base: URL;
 
 const run = promisify(execFile);
@@ -39,20 +39,20 @@ beforeAll(async () => {
 	server = createTestHarness({
 		workers: [
 			{
-				configPath: './test/git.wrangler.jsonc',
-				bindingOverrides: { ARTIFACTS: 'fake-git-artifacts' }
+				configPath: './test/wrangler.jsonc',
+				bindingOverrides: { ARTIFACTS: 'fake-artifacts' }
 			},
 			{
 				config: {
-					name: 'fake-git-artifacts',
-					main: './test/fake-git-artifacts.ts',
+					name: 'fake-artifacts',
+					main: './test/fake-artifacts.ts',
 					compatibility_date: '2026-10-01',
 					vars: { GIT_REMOTE: `http://127.0.0.1:${backend.port}` }
 				}
 			}
 		]
 	});
-	worker = server.getWorker<Env, { default: typeof GitWorker }>();
+	worker = server.getWorker<Env>();
 	base = (await server.listen()).url;
 	const work = join(dir, 'seed');
 	await git(dir, 'init', '--quiet', '--initial-branch', 'main', work);
@@ -81,24 +81,34 @@ afterAll(async () => {
 	await rm(dir, { recursive: true, force: true });
 });
 
+async function token(repo: string, scope: 'read' | 'write', days = 30) {
+	const secret = newGitToken();
+	const now = Date.now();
+	await (
+		await worker.getEnv()
+	).DB.prepare(
+		'INSERT INTO git_tokens (id, hash, repo, scope, label, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+	)
+		.bind(
+			crypto.randomUUID(),
+			await hashGitToken(secret),
+			repo,
+			scope,
+			'laptop',
+			'sam@regit.dev',
+			now,
+			now + days * 86_400_000
+		)
+		.run();
+	return secret;
+}
+
 test('clones with a read token and pushes with a write token, through Artifacts', async () => {
-	const tokens = await worker.getExport();
-	const reader = await tokens.createToken({
-		repo: 'demo',
-		scope: 'read',
-		days: 30,
-		createdBy: 'sam@regit.dev'
-	});
-	const writer = await tokens.createToken({
-		repo: 'demo',
-		scope: 'write',
-		days: 30,
-		createdBy: 'sam@regit.dev'
-	});
-	expect(reader.secret).toMatch(/^regit_[0-9a-f]{48}$/);
+	const reader = await token('demo', 'read');
+	const writer = await token('demo', 'write');
 
 	const clone = join(dir, 'clone');
-	await git(dir, 'clone', '--quiet', remote(reader.secret), clone);
+	await git(dir, 'clone', '--quiet', remote(reader), clone);
 	expect(await readFile(join(clone, 'README.md'), 'utf8')).toBe('# Demo\n');
 
 	await writeFile(join(clone, 'README.md'), '# Demo\n\nFrom a laptop.\n');
@@ -113,48 +123,29 @@ test('clones with a read token and pushes with a write token, through Artifacts'
 		'-am',
 		'Edit'
 	);
-	expect(await fails(clone, 'push', remote(reader.secret), 'main')).toContain(
+	expect(await fails(clone, 'push', remote(reader), 'main')).toContain(
 		"This token can't push to demo"
 	);
 
-	await git(clone, 'push', '--quiet', remote(writer.secret), 'main');
+	await git(clone, 'push', '--quiet', remote(writer), 'main');
 	expect(await git(join(dir, 'demo.git'), 'log', '-1', '--format=%s', 'main')).toBe('Edit');
 	expect((await backend.requests()).map((headers) => headers.authorization)).toContain(
 		'Bearer artifact-write'
 	);
-	expect(
-		(await tokens.listTokens('demo', 'sam@regit.dev')).map((token) => token.lastUsedAt)
-	).not.toContain(null);
+	const { results } = await (
+		await worker.getEnv()
+	).DB.prepare('SELECT last_used_at FROM git_tokens').all();
+	expect(results.map((row) => row.last_used_at)).not.toContain(null);
 });
 
-test('refuses missing, foreign and expired tokens, and lists and revokes tokens', async () => {
-	const tokens = await worker.getExport();
+test('refuses missing, foreign and expired tokens', async () => {
 	expect((await fetch(new URL('/demo.git/info/refs?service=git-upload-pack', base))).status).toBe(
 		401
 	);
-	const other = await tokens.createToken({
-		repo: 'other',
-		scope: 'write',
-		days: 30,
-		createdBy: 'sam@regit.dev'
-	});
-	expect(await fails(dir, 'ls-remote', remote(other.secret))).toContain(
+	expect(await fails(dir, 'ls-remote', remote(await token('other', 'write')))).toContain(
 		"This token doesn't grant access to demo"
 	);
-	const expired = await tokens.createToken({
-		repo: 'demo',
-		scope: 'read',
-		days: -1,
-		createdBy: 'sam@regit.dev'
-	});
-	expect(await fails(dir, 'ls-remote', remote(expired.secret))).toMatch(
+	expect(await fails(dir, 'ls-remote', remote(await token('demo', 'read', -1)))).toMatch(
 		/Authentication failed|401/
 	);
-
-	const mine = await tokens.listTokens('demo', 'sam@regit.dev');
-	expect(mine.map(({ id, scope }) => ({ id, scope }))).toEqual([{ id: expired.id, scope: 'read' }]);
-	expect(mine[0]).not.toHaveProperty('hash');
-	expect(await tokens.listTokens('demo', 'lin@regit.dev')).toEqual([]);
-	await tokens.revokeToken(expired.id, 'sam@regit.dev');
-	expect(await tokens.listTokens('demo', 'sam@regit.dev')).toEqual([]);
 });

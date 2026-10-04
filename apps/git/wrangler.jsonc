@@ -1,0 +1,17 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "regit-git",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"routes": [{ "pattern": "git.regit.dev/*", "zone_name": "regit.dev" }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "regit",
+			"database_id": "42902469-4868-49b8-8155-f952e93d8a4f"
+		}
+	],
+	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
+	"observability": { "enabled": true },
+	"workers_dev": false
+}
