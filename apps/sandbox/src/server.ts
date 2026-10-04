@@ -52,13 +52,20 @@ export function createSandbox(
 		if (preview) {
 			const url = new URL(request.url);
 			const target = `http://127.0.0.1:${preview[1]}${preview[2] ?? '/'}${url.search}`;
-			return globalThis
+			const headers = new Headers(request.headers);
+			headers.set('accept-encoding', 'identity');
+			const response = await globalThis
 				.fetch(target, {
 					method: request.method,
-					headers: request.headers,
+					headers,
 					body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer()
 				})
-				.catch(() => error(`Nothing is listening on port ${preview[1]}`, 502));
+				.catch(() => null);
+			if (!response) return error(`Nothing is listening on port ${preview[1]}`, 502);
+			const plain = new Headers(response.headers);
+			plain.delete('content-encoding');
+			plain.delete('content-length');
+			return new Response(response.body, { status: response.status, headers: plain });
 		}
 		if (request.method !== 'POST') return error('Not found', 404);
 

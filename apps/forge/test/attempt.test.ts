@@ -1030,7 +1030,7 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 
 test('runs saved services and serves them on preview hosts', async () => {
 	const port = 40_000 + Math.floor(Math.random() * 10_000);
-	const command = `node -e "console.log('booting'); require('http').createServer((q, s) => s.end('hi from ' + q.url)).listen(process.env.PORT)"`;
+	const command = `node -e "console.log('booting'); require('http').createServer((q, s) => { const body = 'hi from ' + q.url; if (/gzip/.test(q.headers['accept-encoding'] || '')) { s.setHeader('content-encoding', 'gzip'); s.end(require('zlib').gzipSync(body)); } else s.end(body); }).listen(process.env.PORT)"`;
 	const work = await seed('serving', { 'README.md': '# Serving\n' });
 	mkdirSync(join(work, '.agents'));
 	await commit(
@@ -1058,7 +1058,9 @@ test('runs saved services and serves them on preview hosts', async () => {
 
 	await repo.serviceAction(id, 'start', 'hello');
 	expect((await repo.thread(id))!.services[0]).toMatchObject({ status: 'running' });
-	const response = await worker.fetch(new URL('/page?x=1', preview).toString());
+	const response = await worker.fetch(new URL('/page?x=1', preview).toString(), {
+		headers: { 'Accept-Encoding': 'gzip' }
+	});
 	expect(await response.text()).toBe('hi from /page?x=1');
 	expect(await repo.serviceLogs(id, 'hello')).toBe('booting');
 

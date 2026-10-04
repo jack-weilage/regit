@@ -347,20 +347,21 @@ export class AttemptSandbox extends DurableObject<Env> {
 			}
 		}
 		if (!service) return new Response(`${name} stopped`, { status: 502 });
+		const headers = new Headers(request.headers);
+		headers.delete('accept-encoding');
+		const forwarded = new Request(request, { headers });
+		const path = `/preview/${service.port}${url.pathname}${url.search}`;
 		if (this.env.SANDBOX_URL) {
 			const base = `${this.env.SANDBOX_URL}/${this.ctx.id.name ?? this.ctx.id.toString()}`;
-			return globalThis.fetch(
-				`${base}/preview/${service.port}${url.pathname}${url.search}`,
-				request
-			);
+			return plain(await globalThis.fetch(`${base}${path}`, forwarded));
 		}
 		const container = this.ctx.container!;
 		try {
-			return await container.getTcpPort(service.port).fetch(request.url, request.clone());
+			return plain(await container.getTcpPort(service.port).fetch(request.url, forwarded.clone()));
 		} catch {
-			return container
-				.getTcpPort(sandboxPort)
-				.fetch(`http://sandbox/preview/${service.port}${url.pathname}${url.search}`, request);
+			return plain(
+				await container.getTcpPort(sandboxPort).fetch(`http://sandbox${path}`, forwarded)
+			);
 		}
 	}
 
@@ -1064,6 +1065,18 @@ async function digest(value: unknown) {
 		new TextEncoder().encode(JSON.stringify(value))
 	);
 	return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function plain(response: Response) {
+	if (response.webSocket || !response.headers.has('content-encoding')) return response;
+	const headers = new Headers(response.headers);
+	headers.delete('content-encoding');
+	headers.delete('content-length');
+	return new Response(response.body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers
+	});
 }
 
 function isActive(status: AttemptStatus) {
