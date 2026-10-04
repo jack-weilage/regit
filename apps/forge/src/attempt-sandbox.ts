@@ -357,7 +357,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 		const container = this.ctx.container!;
 		try {
-			return plain(await container.getTcpPort(service.port).fetch(request.url, forwarded.clone()));
+			return plain(
+				await container
+					.getTcpPort(service.port)
+					.fetch(`http://localhost:${service.port}${url.pathname}${url.search}`, forwarded.clone())
+			);
 		} catch {
 			return plain(
 				await container.getTcpPort(sandboxPort).fetch(`http://sandbox${path}`, forwarded)
