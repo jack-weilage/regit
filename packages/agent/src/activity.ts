@@ -10,7 +10,8 @@ const targets: Record<string, string> = {
 	run: 'command',
 	propose_intent: 'headline',
 	update_intent: 'headline',
-	suggest_thread: 'headline'
+	suggest_thread: 'headline',
+	message_thread: 'thread'
 };
 
 const kept = 4000;

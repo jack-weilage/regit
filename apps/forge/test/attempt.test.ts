@@ -323,10 +323,13 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'run',
 		'propose_intent',
 		'update_intent',
-		'suggest_thread'
+		'suggest_thread',
+		'list_threads',
+		'message_thread'
 	]);
 	expect(tools(requests[4]!)).toContain('write_file');
 	expect(tools(requests[4]!)).toContain('suggest_thread');
+	expect(tools(requests[4]!)).toContain('message_thread');
 	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
 	expect(detail!.usage).toEqual({
 		rows: [
@@ -1130,4 +1133,103 @@ test('runs saved services and serves them on preview hosts', async () => {
 	await repo.serviceAction(id, 'stop', 'hello');
 
 	expect((await worker.fetch('https://0000-hello.regit.dev/')).status).toBe(404);
+});
+
+test("delivers a thread's message to another thread's agent", async () => {
+	await seed('pair', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('pair');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const replied = async (thread: string, count: number) => {
+		await expect
+			.poll(
+				async () =>
+					(await repo.thread(thread))!.entries.filter(
+						(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+					).length,
+				{ timeout: 20_000 }
+			)
+			.toBe(count);
+	};
+
+	await script([[{ type: 'response.output_text.delta', delta: 'Listening.' }]]);
+	const ui = await repo.openThread({
+		repo: 'pair',
+		author: sam,
+		text: 'Rework the settings page.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(ui.id, 1);
+
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'tell',
+					name: 'message_thread',
+					arguments: JSON.stringify({ thread: ui.id, text: 'User.id is now User.accountId.' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Noted.' }],
+		[{ type: 'response.output_text.delta', delta: 'Noted.' }]
+	]);
+	const api = await repo.openThread({
+		repo: 'pair',
+		author: sam,
+		text: 'Rename the user id and tell the settings thread.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(api.id, 1);
+	await replied(ui.id, 2);
+
+	expect((await repo.thread(api.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			direction: 'out',
+			thread: ui.id,
+			text: 'User.id is now User.accountId.'
+		})
+	);
+	expect((await repo.thread(ui.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			direction: 'in',
+			thread: api.id,
+			headline: 'Rename the user id and tell the settings thread.',
+			text: 'User.id is now User.accountId.'
+		})
+	);
+	const delivered = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === ui.id
+	);
+	expect(JSON.stringify(delivered)).toContain(`Thread ${api.id} (`);
+});
+
+test('refuses thread messages to itself, unknown or idle threads, and past the limit', async () => {
+	await seed('guarded', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('guarded');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	await script(
+		Array.from({ length: 8 }, () => [{ type: 'response.output_text.delta', delta: 'Ok.' }])
+	);
+	const open = (text: string) =>
+		repo.openThread({ repo: 'guarded', author: sam, text, mode: 'small', machine: 'standard-1' });
+	const [from, to, idle] = [await open('One.'), await open('Two.'), await open('Three.')];
+	// Miniflare's test bridge drops the message of a rejected RPC call, so only the rejection is checked.
+	const send = async (a: string, b: string, text: string) => repo.messageThread(a, b, text);
+
+	await expect(send(from.id, from.id, 'Hi')).rejects.toThrow();
+	await expect(send(from.id, 'nope', 'Hi')).rejects.toThrow();
+	await repo.discard(idle.id, sam);
+	await expect(send(from.id, idle.id, 'Hi')).rejects.toThrow();
+	for (let i = 0; i < 5; i++) await send(from.id, to.id, `Message ${i}`);
+	await expect(send(from.id, to.id, 'One more')).rejects.toThrow();
+	await repo.reply(to.id, { author: sam, text: 'Carry on.' });
+	await expect(send(from.id, to.id, 'After the person')).resolves.toContain('Delivered');
 });

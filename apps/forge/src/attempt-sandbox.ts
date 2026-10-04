@@ -32,6 +32,7 @@ import {
 	StepActivity,
 	suggestTools,
 	threadInstructions,
+	threadTools,
 	type AgentOutcome,
 	type Fetch,
 	type ServiceInfo,
@@ -405,7 +406,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const tools = combineTools(
 				sandboxTools(fetch, readOnlyTools),
 				intentTools((intent) => coordinator.intentProposed(thread, intent)),
-				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion))
+				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion)),
+				threadTools({
+					list: () => coordinator.otherThreads(thread),
+					send: (to, text) => coordinator.messageThread(thread, to, text)
+				})
 			);
 
 			for (let turns = await this.#drain(repo); turns.length; turns = await this.#drain(repo)) {
@@ -520,7 +525,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 					),
 					suggestTools((suggestion) =>
 						this.env.REPOS.getByName(attempt.repo).suggestThread(this.ctx.id.name!, suggestion)
-					)
+					),
+					threadTools({
+						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.ctx.id.name!),
+						send: (to, text) =>
+							this.env.REPOS.getByName(attempt.repo).messageThread(this.ctx.id.name!, to, text)
+					})
 				),
 				checkpoints: {
 					commit: (request) => workspace.commit(request),

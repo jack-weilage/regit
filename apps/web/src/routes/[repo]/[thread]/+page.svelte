@@ -14,6 +14,7 @@
 		ChatMessage,
 		ChatReview,
 		ChatStartup,
+		ChatThreadMessage,
 		ChatTools,
 		DeletedThread,
 		Markdown,
@@ -374,6 +375,21 @@
 						/>
 					{:else if block.type === 'startup'}
 						<ChatStartup stages={block.stages} finished />
+					{:else if block.type === 'thread-message'}
+						{@const other = threads.find((thread) => thread.id === block.thread)}
+						<ChatThreadMessage
+							direction={block.direction}
+							thread={{
+								kind: 'thread',
+								handle: block.thread,
+								label: other?.headline || block.headline || 'New thread',
+								href: `/${params.repo}/${block.thread}`,
+								deleted: !other
+							}}
+							pending={block.steering?.read === false}
+						>
+							<ChatMessage><Markdown source={block.text} /></ChatMessage>
+						</ChatThreadMessage>
 					{:else}
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}

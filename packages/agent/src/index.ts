@@ -4,6 +4,7 @@ export { describeTask, intentTools, type ConversationMessage, type Intent } from
 export { resolveConflicts, type ConflictOptions } from './conflicts.ts';
 export { parseDiff } from './diff.ts';
 export { suggestTools, type Suggestion } from './suggest.ts';
+export { threadTools, type ThreadListing, type ThreadMessaging } from './threads.ts';
 export { StepActivity, toolTarget } from './activity.ts';
 export { combineTools } from './tools.ts';
 export { runAgent, type AgentOptions, type AgentOutcome } from './loop.ts';

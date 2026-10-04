@@ -10,6 +10,7 @@ export { default as ChangesPanel } from './chat/ChangesPanel.svelte';
 export { default as ChatActivity } from './chat/ChatActivity.svelte';
 export { default as ChatStartup, type StartupStage } from './chat/ChatStartup.svelte';
 export { default as ChatTools, type ToolCallView } from './chat/ChatTools.svelte';
+export { default as ChatThreadMessage } from './chat/ChatThreadMessage.svelte';
 export { default as ChatBanner } from './chat/ChatBanner.svelte';
 export { default as ChatComposer } from './chat/ChatComposer.svelte';
 export { default as ChatDiff } from './chat/ChatDiff.svelte';

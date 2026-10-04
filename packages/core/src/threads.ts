@@ -86,7 +86,17 @@ export type Entry =
 	  }
 	| { type: 'event'; id: string; at: number; text: string }
 	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[] }
-	| { type: 'startup'; id: string; at: number; stages: StartupStage[] };
+	| { type: 'startup'; id: string; at: number; stages: StartupStage[] }
+	| {
+			type: 'thread-message';
+			id: string;
+			at: number;
+			direction: 'in' | 'out';
+			thread: string;
+			headline: string;
+			text: string;
+			steering?: { read: boolean };
+	  };
 
 export interface ThreadSummary {
 	id: string;

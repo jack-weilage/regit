@@ -81,6 +81,7 @@ type ThreadRow = {
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
+const maxThreadMessages = 5;
 
 export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinatorApi {
 	#sql = this.ctx.storage.sql;
@@ -295,6 +296,66 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.exec<ThreadRow>(`${selectThreads} WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC`)
 			.toArray()
 			.map(toSummary);
+	}
+
+	otherThreads(from: string) {
+		return this.threads()
+			.filter((thread) => thread.id !== from && thread.status !== 'discarded')
+			.map(({ id, headline, status }) => ({ id, headline, status }));
+	}
+
+	async messageThread(from: string, to: string, text: string) {
+		if (from === to) throw new Error('That is this thread');
+		const sender = this.#active(from);
+		const recipient = this.#summary(to);
+		if (!recipient || recipient.deleted) throw new Error(`There is no thread ${to}`);
+		const steering = ['running', 'reviewing', 'shipping'].includes(recipient.status);
+		if (!steering && recipient.status !== 'draft') {
+			throw new Error(
+				`Thread ${to} is ${recipient.status} and waiting for a person. Tell your person instead.`
+			);
+		}
+		if (this.#threadMessagesSincePerson(to) >= maxThreadMessages) {
+			throw new Error(
+				`Thread ${to} has had ${maxThreadMessages} thread messages since a person last wrote there. Ask your person before sending more.`
+			);
+		}
+		this.#add(from, {
+			type: 'thread-message',
+			direction: 'out',
+			thread: to,
+			headline: recipient.headline,
+			text
+		});
+		const entry = this.#add(to, {
+			type: 'thread-message',
+			direction: 'in',
+			thread: from,
+			headline: sender.headline,
+			text,
+			...(steering && { steering: { read: false } })
+		});
+		const author = {
+			name: `Thread ${from} (${sender.headline || 'New thread'})`,
+			kind: 'agent' as const
+		};
+		await this.#converse(to, author, text, entry);
+		return steering
+			? 'Delivered. Its agent reads it at its next step.'
+			: 'Delivered. Its agent will reply in this thread.';
+	}
+
+	#threadMessagesSincePerson(thread: string) {
+		const rows = this.#sql
+			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq DESC', thread)
+			.toArray();
+		let count = 0;
+		for (const row of rows) {
+			const entry = JSON.parse(row.body) as Entry;
+			if (entry.type === 'message' && entry.author.kind === 'person') break;
+			if (entry.type === 'thread-message' && entry.direction === 'in') count++;
+		}
+		return count;
 	}
 
 	thread(id: string): ThreadDetail | null {
@@ -588,7 +649,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.toArray();
 		if (!row) return;
 		const entry = JSON.parse(row.body) as Entry;
-		if (entry.type !== 'message' || !entry.steering || entry.steering.read) return;
+		if (entry.type !== 'message' && entry.type !== 'thread-message') return;
+		if (!entry.steering || entry.steering.read) return;
 		const read = { ...entry, steering: { read: true } };
 		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(read), seq);
 		this.#broadcast({ type: 'entry', thread, entry: read });
