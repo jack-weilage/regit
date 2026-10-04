@@ -390,7 +390,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async #converse() {
 		const controller = (this.#conversation = new AbortController());
 		const repo = this.#meta('repo')!;
-		this.#think();
+		this.#think('Starting');
 		const mode = this.#meta('mode') as Mode;
 		const thread = this.ctx.id.name!;
 		try {
@@ -464,7 +464,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
-		if (!resumingReview) this.#think();
+		if (!resumingReview) this.#think('Starting');
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
@@ -831,8 +831,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		});
 	}
 
-	#think() {
-		this.#activity.status = { label: 'Thinking', since: Date.now() };
+	#think(label = 'Thinking') {
+		this.#activity.status = { label, since: Date.now() };
 		this.#publish(true);
 	}
 

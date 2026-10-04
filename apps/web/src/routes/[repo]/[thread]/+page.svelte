@@ -121,7 +121,10 @@
 
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
 	let activity = $derived(params.thread in live ? live[params.thread] : (detail?.activity ?? null));
-	let booting = $derived(activity?.startup?.stages.findLast((stage) => stage.status === 'running'));
+	let booting = $derived(
+		activity?.startup?.stages.findLast((stage) => stage.status === 'running') ??
+			activity?.startup?.stages.at(-1)
+	);
 	let user = $derived(await getUser());
 	let threads = $derived(await getThreads(params.repo));
 
