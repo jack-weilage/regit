@@ -35,6 +35,10 @@
 		overscroll-behavior: contain;
 		scrollbar-gutter: stable;
 
+		@media (width >= 64rem) {
+			scrollbar-gutter: stable both-edges;
+		}
+
 		&:focus-visible {
 			outline: 2px solid var(--color-accent);
 			outline-offset: -2px;
@@ -42,9 +46,13 @@
 	}
 
 	.content {
+		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-7);
+		inline-size: 100%;
+		max-inline-size: var(--thread-width);
+		margin-inline: auto;
 		padding: var(--space-6);
 	}
 </style>

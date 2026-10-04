@@ -33,8 +33,12 @@
 	}
 
 	.bottom {
+		box-sizing: border-box;
 		display: grid;
 		gap: var(--space-3);
+		inline-size: 100%;
+		max-inline-size: var(--thread-width);
+		margin-inline: auto;
 		padding: 0 var(--space-6) var(--space-4);
 	}
 </style>
