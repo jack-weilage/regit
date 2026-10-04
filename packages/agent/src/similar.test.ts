@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { findSimilar, type JevRequest } from './similar.ts';
+import { assessRequest, type JevRequest } from './similar.ts';
 
 const candidates = [
 	{
@@ -19,11 +19,12 @@ const answer = (same: number, overlap: number, related: number) => ({
 
 test('asks how the intent relates to each thread and keeps the meaningful matches', async () => {
 	const requests: JevRequest[] = [];
-	const matches = await findSimilar(
+	const { similar, size } = await assessRequest(
 		async (request) => {
 			requests.push(request);
 			return {
 				answers: {
+					size: { probabilities: { small: 0.1, medium: 0.2, large: 0.7 } },
 					t1: answer(0.93, 0.06, 0.01),
 					t2: answer(0.41, 0.53, 0.06),
 					t3: answer(0, 0.16, 0.57),
@@ -35,7 +36,8 @@ test('asks how the intent relates to each thread and keeps the meaningful matche
 		candidates
 	);
 
-	expect(matches).toEqual([
+	expect(size).toBe('large');
+	expect(similar).toEqual([
 		{ thread: 'members', relation: 'same', probability: 0.93 },
 		{ thread: 'rename', relation: 'overlap', probability: 0.94 },
 		{ thread: 'cache', relation: 'related', probability: 0.73 }
@@ -49,22 +51,30 @@ test('asks how the intent relates to each thread and keeps the meaningful matche
 			t4: 'docs: add a contributing guide'
 		}
 	});
-	expect(Object.keys(requests[0]!.questions)).toEqual(['t1', 't2', 't3', 't4']);
+	expect(Object.keys(requests[0]!.questions)).toEqual(['size', 't1', 't2', 't3', 't4']);
 });
 
 test('treats a likely but uncertain same goal as an overlap', async () => {
-	const matches = await findSimilar(
+	const { similar, size } = await assessRequest(
 		async () => ({ answers: { t1: answer(0.62, 0.1, 0.2) } }),
 		'Page members',
 		candidates.slice(0, 1)
 	);
-	expect(matches).toEqual([{ thread: 'members', relation: 'overlap', probability: 0.72 }]);
+	expect(similar).toEqual([{ thread: 'members', relation: 'overlap', probability: 0.72 }]);
+	expect(size).toBe('medium');
 });
 
-test('skips the call when there is nothing to compare', async () => {
-	const decide = async () => {
-		throw new Error('should not be called');
+test('sizes a request even with no other threads, and skips empty requests', async () => {
+	const requests: JevRequest[] = [];
+	const decide = async (request: JevRequest) => {
+		requests.push(request);
+		return { answers: { size: { probabilities: { small: 0.8, medium: 0.15, large: 0.05 } } } };
 	};
-	expect(await findSimilar(decide, 'Page members', [])).toEqual([]);
-	expect(await findSimilar(decide, '  ', candidates)).toEqual([]);
+	expect(await assessRequest(decide, 'Fix a typo in the README', [])).toEqual({
+		similar: [],
+		size: 'small'
+	});
+	expect(Object.keys(requests[0]!.questions)).toEqual(['size']);
+	expect(await assessRequest(decide, '  ', candidates)).toEqual({ similar: [], size: 'medium' });
+	expect(requests).toHaveLength(1);
 });

@@ -114,3 +114,15 @@
 	}}
 	template={page}
 />
+
+<Story
+	name="Auto"
+	args={{ mode: 'auto', size: 'large', similar: similarThreads.slice(1, 2) }}
+	play={async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'New thread' }));
+		await waitFor(() =>
+			expect(canvas.getByRole('button', { name: 'Mode: Auto · Large' })).toBeVisible()
+		);
+	}}
+	template={page}
+/>

@@ -2,6 +2,8 @@ import type { DiffFile, DiffSummary } from './diff.ts';
 
 export type Mode = 'small' | 'medium' | 'large';
 
+export type ModeChoice = Mode | 'auto';
+
 export const machines = {
 	'standard-1': { vcpu: 0.5, memoryGib: 4, diskGb: 8 },
 	'standard-2': { vcpu: 1, memoryGib: 6, diskGb: 12 },
@@ -109,6 +111,7 @@ export interface ThreadSummary {
 	headline: string;
 	status: ThreadStatus;
 	mode: Mode;
+	auto: boolean;
 	machine: Machine;
 	updatedAt: number;
 	deleted: { at: number; by: string } | null;
@@ -167,7 +170,7 @@ export interface RepoCoordinatorApi {
 		repo: string;
 		author: Author;
 		text: string;
-		mode: Mode;
+		mode: ModeChoice;
 		machine: Machine;
 	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
@@ -183,7 +186,7 @@ export interface RepoCoordinatorApi {
 	dismissSuggestion(thread: string, entry: string, by: Author): void;
 	serviceAction(thread: string, action: 'start' | 'stop' | 'restart', name: string): Promise<void>;
 	serviceLogs(thread: string, name: string): Promise<string>;
-	similar(text: string): Promise<SimilarMatch[]>;
+	assess(text: string): Promise<{ similar: SimilarMatch[]; size: Mode }>;
 	forwardIntent(thread: string, to: string, by: Author): Promise<string>;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;

@@ -6,8 +6,10 @@ export { parseDiff } from './diff.ts';
 export { suggestTools, type Suggestion } from './suggest.ts';
 export { threadTools, type ThreadListing, type ThreadMessaging } from './threads.ts';
 export {
-	findSimilar,
+	assessRequest,
 	maxSimilarCandidates,
+	type Assessment,
+	type Size,
 	type Decide,
 	type JevRequest,
 	type JevResponse,

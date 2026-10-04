@@ -6,7 +6,7 @@
 	import { defaultMachine, type LiveMessage, type Machine, type ThreadActivity } from '@regit/core';
 	import { setLiveActivity } from '#lib/activity.ts';
 	import {
-		findSimilar,
+		assessRequest,
 		getRepos,
 		getThread,
 		getThreads,
@@ -18,7 +18,7 @@
 
 	let { children, params } = $props();
 
-	let mode = $state<Mode>('medium');
+	let mode = $state<Mode>('auto');
 	const activities = $state<Record<string, ThreadActivity | null>>({});
 	setLiveActivity(activities);
 
@@ -56,6 +56,7 @@
 	};
 
 	let similar = $state<SimilarThread[]>([]);
+	let size = $state<Exclude<Mode, 'auto'>>();
 	let searching: ReturnType<typeof setTimeout> | undefined;
 	let latest = 0;
 
@@ -63,14 +64,17 @@
 		clearTimeout(searching);
 		const run = ++latest;
 		searching = setTimeout(async () => {
-			const matches = await findSimilar({ repo, text }).catch(() => []);
-			if (run === latest) similar = similarThreads(repo, matches, summaries);
+			const assessment = await assessRequest({ repo, text }).catch(() => null);
+			if (run !== latest) return;
+			similar = similarThreads(repo, assessment?.similar ?? [], summaries);
+			size = assessment?.size;
 		}, 300);
 	}
 
 	async function start(thread: { text: string; mode: Mode; machine: Machine }) {
 		latest++;
 		similar = [];
+		size = undefined;
 		const summary = await openThread({ repo, ...thread });
 		await goto(`/${repo}/${summary.id}`);
 	}
@@ -93,10 +97,12 @@
 		oncreaterepo={createAndOpen}
 		onstart={start}
 		{similar}
+		{size}
 		onquery={search}
 		onopenthread={(thread) => {
 			latest++;
 			similar = [];
+			size = undefined;
 			if (thread.href) goto(thread.href);
 		}}
 	>

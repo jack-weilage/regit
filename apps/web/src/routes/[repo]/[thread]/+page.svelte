@@ -442,7 +442,7 @@
 					/>
 				{/if}
 				<ChatFooter
-					mode={modes[summary.mode]}
+					mode={summary.auto ? `Auto · ${modes[summary.mode]}` : modes[summary.mode]}
 					context={detail.usage.context}
 					usage={detail.usage.rows.map((row) => ({
 						task: tasks[row.task],

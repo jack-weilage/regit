@@ -1348,6 +1348,51 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 			}
 		}
 	]);
-	const live = await repo.similar('Show members a page at a time');
-	expect(live).toEqual([{ thread: expect.any(String), relation: 'overlap', probability: 0.8 }]);
+	const live = await repo.assess('Show members a page at a time');
+	expect(live).toEqual({
+		similar: [{ thread: expect.any(String), relation: 'overlap', probability: 0.8 }],
+		size: 'medium'
+	});
+});
+
+test('sizes an auto thread when it opens and again when its intent changes', async () => {
+	await seed('sized', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('sized');
+	await scriptDecisions([
+		{ answers: { size: { probabilities: { small: 0.1, medium: 0.2, large: 0.7 } } } },
+		{ answers: { size: { probabilities: { small: 0.85, medium: 0.1, large: 0.05 } } } }
+	]);
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'intent',
+					name: 'propose_intent',
+					arguments: JSON.stringify({
+						headline: 'docs: fix a typo in the notes',
+						purpose: 'The notes misspell "receive".',
+						doneWhen: ['notes.md spells it correctly']
+					})
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const opened = await repo.openThread({
+		repo: 'sized',
+		author: { name: 'Sam', kind: 'person' },
+		text: 'Rework how notes are stored.',
+		mode: 'auto',
+		machine: 'standard-1'
+	});
+	expect(opened).toMatchObject({ mode: 'large', auto: true });
+	await expect
+		.poll(async () => (await repo.thread(opened.id))!.summary.mode, { timeout: 20_000 })
+		.toBe('small');
+	expect((await repo.thread(opened.id))!.summary.auto).toBe(true);
+	const [first] = await decisionRequests();
+	expect(first!.state).toMatchObject({ new_intent: 'Rework how notes are stored.' });
 });

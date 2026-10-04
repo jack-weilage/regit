@@ -19,6 +19,7 @@
 		mode?: Mode;
 		machine?: Machine;
 		similar?: SimilarThread[];
+		size?: Exclude<Mode, 'auto'>;
 		now?: number;
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
@@ -37,6 +38,7 @@
 		mode = $bindable('medium'),
 		machine = $bindable('standard-1'),
 		similar,
+		size,
 		now,
 		onswitchrepo,
 		oncreaterepo,
@@ -130,6 +132,7 @@
 		bind:mode
 		bind:machine
 		{similar}
+		{size}
 		{onquery}
 		onstart={(thread) => {
 			open = false;

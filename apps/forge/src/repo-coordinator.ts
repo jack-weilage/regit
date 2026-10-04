@@ -2,8 +2,9 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
 	describeTask,
-	findSimilar,
+	assessRequest,
 	maxSimilarCandidates,
+	type Assessment,
 	models,
 	modes,
 	type Intent,
@@ -22,9 +23,9 @@ import type {
 	LiveMessage,
 	Machine,
 	Mode,
+	ModeChoice,
 	RepoCoordinatorApi,
 	ShipInput,
-	SimilarMatch,
 	StartupStage,
 	ThreadActivity,
 	ThreadDetail,
@@ -66,6 +67,7 @@ type ThreadRow = {
 	headline: string;
 	status: ThreadStatus;
 	mode: Mode;
+	auto: number | null;
 	machine: Machine | null;
 	updated_at: number;
 	reopen_status: ThreadStatus | null;
@@ -148,7 +150,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			['parent', 'TEXT'],
 			['context', 'TEXT'],
 			['services', 'TEXT'],
-			['preview', 'TEXT']
+			['preview', 'TEXT'],
+			['auto', 'INTEGER']
 		]) {
 			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
 		}
@@ -164,9 +167,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		repo: string;
 		author: Author;
 		text: string;
-		mode: Mode;
+		mode: ModeChoice;
 		machine: Machine;
 	}): Promise<ThreadSummary> {
+		const auto = mode === 'auto';
+		const size = auto ? ((await this.#assess(text))?.size ?? 'medium') : mode;
 		this.#sql.exec(
 			'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT DO NOTHING',
 			'repo',
@@ -174,10 +179,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 		this.#sql.exec(
-			`INSERT INTO threads (id, headline, status, mode, machine, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)`,
+			`INSERT INTO threads (id, headline, status, mode, auto, machine, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?)`,
 			id,
 			headlineFrom(text),
-			mode,
+			size,
+			auto ? 1 : 0,
 			machine,
 			Date.now()
 		);
@@ -398,12 +404,19 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const id = this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
-		const similar = await this.#similar(describeIntent(intent), thread);
+		const assessment = await this.#assess(describeIntent(intent), thread);
+		if (!assessment) return;
+		const { similar, size } = assessment;
 		if (similar.length) this.#replace(thread, { ...this.#entry(thread, id)!, similar } as Entry);
+		const current = this.#summary(thread)!;
+		if (current.auto && current.status === 'draft' && current.mode !== size) {
+			this.#sql.exec('UPDATE threads SET mode = ? WHERE id = ?', size, thread);
+			this.#touch(thread);
+		}
 	}
 
-	similar(text: string) {
-		return this.#similar(text);
+	async assess(text: string) {
+		return (await this.#assess(text)) ?? { similar: [], size: 'medium' as const };
 	}
 
 	async forwardIntent(thread: string, to: string, by: Author) {
@@ -416,7 +429,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 	}
 
-	async #similar(text: string, exclude?: string): Promise<SimilarMatch[]> {
+	async #assess(text: string, exclude?: string): Promise<Assessment | null> {
 		const candidates = this.threads()
 			.filter((thread) => thread.id !== exclude && thread.headline)
 			.slice(0, maxSimilarCandidates)
@@ -430,14 +443,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			});
 		try {
 			return await Promise.race([
-				findSimilar((request) => this.env.MODELS.decide(request), text, candidates),
+				assessRequest((request) => this.env.MODELS.decide(request), text, candidates),
 				new Promise<never>((_, reject) =>
-					setTimeout(() => reject(new Error('Similar threads timed out')), similarTimeoutMs)
+					setTimeout(() => reject(new Error('Assessing the request timed out')), similarTimeoutMs)
 				)
 			]);
 		} catch (error) {
-			console.warn('Could not find similar threads', error);
-			return [];
+			console.warn('Could not assess the request', error);
+			return null;
 		}
 	}
 
@@ -886,6 +899,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		headline: row.headline,
 		status: row.status,
 		mode: row.mode,
+		auto: row.auto === 1,
 		machine: row.machine ?? defaultMachine,
 		updatedAt: row.updated_at,
 		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' },

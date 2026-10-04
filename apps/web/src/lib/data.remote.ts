@@ -50,7 +50,7 @@ export const openThread = command(
 	v.object({
 		repo: name,
 		text,
-		mode: v.picklist(['small', 'medium', 'large']),
+		mode: v.picklist(['auto', 'small', 'medium', 'large']),
 		machine: v.picklist(Object.keys(machines) as Machine[])
 	}),
 	async ({ repo, text, mode, machine }) => {
@@ -152,9 +152,9 @@ export const stopThread = command(thread, async ({ repo, id }) => {
 	getThreads(repo).refresh();
 });
 
-export const findSimilar = query(
+export const assessRequest = query(
 	v.object({ repo: name, text: v.pipe(v.string(), v.trim(), v.maxLength(2000)) }),
-	async ({ repo, text }) => (text.length < 8 ? [] : (await coordinator(repo)).similar(text))
+	async ({ repo, text }) => (text.length < 8 ? null : (await coordinator(repo)).assess(text))
 );
 
 export const forwardIntent = command(

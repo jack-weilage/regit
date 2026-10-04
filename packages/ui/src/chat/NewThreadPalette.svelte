@@ -1,9 +1,10 @@
 <script module lang="ts">
 	import type { Machine } from '@regit/core';
 
-	export type Mode = 'small' | 'medium' | 'large';
+	export type Mode = 'auto' | 'small' | 'medium' | 'large';
 
 	const modes: { id: Mode; label: string; detail: string }[] = [
+		{ id: 'auto', label: 'Auto', detail: 'Sized from the request' },
 		{ id: 'small', label: 'Small', detail: 'Quick fixes' },
 		{ id: 'medium', label: 'Medium', detail: 'Most work' },
 		{ id: 'large', label: 'Large', detail: 'Hard problems' }
@@ -32,6 +33,7 @@
 		id: string;
 		repo: string;
 		similar?: SimilarThread[];
+		size?: Exclude<Mode, 'auto'>;
 		mode?: Mode;
 		machine?: Machine;
 		onquery?: (text: string) => void;
@@ -43,6 +45,7 @@
 		id,
 		repo,
 		similar = [],
+		size,
 		mode = $bindable('medium'),
 		machine = $bindable('standard-1'),
 		onquery,
@@ -60,6 +63,11 @@
 	);
 	let options = $derived([null, ...matches]);
 	let current = $derived(modes.find((option) => option.id === mode)!);
+	let modeLabel = $derived(
+		mode === 'auto' && size
+			? `Auto · ${modes.find((option) => option.id === size)!.label}`
+			: current.label
+	);
 	let currentMachine = $derived(machines.find((option) => option.id === machine)!);
 
 	function choose(option: Mentionable | null) {
@@ -150,8 +158,8 @@
 			}))}
 		>
 			{#snippet trigger(props)}
-				<Button variant="ghost" size="xs" aria-label="Mode: {current.label}" {...props}>
-					{current.label}
+				<Button variant="ghost" size="xs" aria-label="Mode: {modeLabel}" {...props}>
+					{modeLabel}
 					<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"
 						><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg
 					>
