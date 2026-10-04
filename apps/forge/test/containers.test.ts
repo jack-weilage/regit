@@ -67,3 +67,42 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	expect(refreshed!.key).not.toBe(first!.key);
 	expect(refreshed!.id).not.toBe(resized!.id);
 });
+
+test('records the stages of a cold start in the thread', async () => {
+	await seed('cold', { 'README.md': '# Cold\n' });
+	await script([[{ type: 'response.output_text.delta', delta: 'Hello.' }]]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('cold');
+	const { id } = await repo.openThread({
+		repo: 'cold',
+		author: { name: 'Sam', kind: 'person' },
+		text: 'Say hello.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+
+	await expect
+		.poll(
+			async () =>
+				(await repo.thread(id))!.entries.some(
+					(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+				),
+			{
+				timeout: 300_000,
+				interval: 1000
+			}
+		)
+		.toBe(true);
+	const startup = (await repo.thread(id))!.entries.find((entry) => entry.type === 'startup');
+	expect(startup).toMatchObject({
+		stages: [
+			{ label: 'Start a ½ vCPU sandbox', status: 'done' },
+			{ label: 'Clone cold', status: 'done' },
+			{ label: expect.stringMatching(/^Install jq \S+$/), status: 'done' },
+			{ label: 'Save the toolchain', status: 'done' }
+		]
+	});
+	for (const stage of startup!.type === 'startup' ? startup!.stages : []) {
+		expect(stage.finishedAt!).toBeGreaterThanOrEqual(stage.startedAt!);
+	}
+});

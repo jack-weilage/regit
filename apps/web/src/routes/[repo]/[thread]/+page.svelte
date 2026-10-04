@@ -13,6 +13,8 @@
 		ChatMention,
 		ChatMessage,
 		ChatReview,
+		ChatStartup,
+		ChatTools,
 		DeletedThread,
 		Markdown,
 		DeleteThreadDialog,
@@ -27,7 +29,14 @@
 		type IntentStatus,
 		type ThreadAction
 	} from '@regit/ui';
-	import { maxReviewRounds, threadPurgeDelayMs, type Author, type Entry } from '@regit/core';
+	import {
+		maxReviewRounds,
+		threadPurgeDelayMs,
+		type Author,
+		type Entry,
+		type ToolCallRecord
+	} from '@regit/core';
+	import { getLiveActivity, stageActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import {
 		deleteThread,
 		discardThread,
@@ -53,9 +62,16 @@
 				id: string;
 				at: number;
 				author: Author;
-				messages: { id: string; text: string; steering?: { read: boolean } }[];
+				messages: {
+					id: string;
+					text?: string;
+					steering?: { read: boolean };
+					calls?: ToolCallRecord[];
+				}[];
 		  }
-		| Exclude<Entry, { type: 'message' }>;
+		| Exclude<Entry, { type: 'message' | 'tools' }>;
+
+	const agent: Author = { name: 'ReGit', kind: 'agent' };
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
 	const tasks = {
@@ -101,7 +117,11 @@
 	let failure = $state<string | null>(null);
 	let confirming = $state(false);
 
+	const live = getLiveActivity();
+
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
+	let activity = $derived(params.thread in live ? live[params.thread] : (detail?.activity ?? null));
+	let booting = $derived(activity?.startup?.stages.findLast((stage) => stage.status === 'running'));
 	let user = $derived(await getUser());
 	let threads = $derived(await getThreads(params.repo));
 
@@ -226,17 +246,11 @@
 	let blocks = $derived(
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
 			const last = blocks.at(-1);
-			if (entry.type !== 'message') blocks.push(entry);
-			else if (last?.type === 'group' && last.author.name === entry.author.name)
+			const author = entry.type === 'message' ? entry.author : agent;
+			if (entry.type !== 'message' && entry.type !== 'tools') blocks.push(entry);
+			else if (last?.type === 'group' && last.author.name === author.name)
 				last.messages.push(entry);
-			else
-				blocks.push({
-					type: 'group',
-					id: entry.id,
-					at: entry.at,
-					author: entry.author,
-					messages: [entry]
-				});
+			else blocks.push({ type: 'group', id: entry.id, at: entry.at, author, messages: [entry] });
 			return blocks;
 		}, [])
 	);
@@ -283,11 +297,18 @@
 							own={block.author.kind === 'person' && block.author.name === user.name}
 						>
 							{#each block.messages as message (message.id)}
-								<ChatMessage
-									steering={!!message.steering}
-									pending={message.steering?.read === false}
-									><Markdown source={message.text} /></ChatMessage
-								>
+								{#if message.calls}
+									<ChatTools
+										calls={message.calls.map(toolView)}
+										summary={summarizeTools(message.calls)}
+									/>
+								{:else}
+									<ChatMessage
+										steering={!!message.steering}
+										pending={message.steering?.read === false}
+										><Markdown source={message.text ?? ''} /></ChatMessage
+									>
+								{/if}
 							{/each}
 						</ChatGroup>
 					{:else if block.type === 'intent'}
@@ -343,13 +364,32 @@
 								.doneWhen ?? []}
 							checks={block.checks}
 						/>
+					{:else if block.type === 'startup'}
+						<ChatStartup stages={block.stages} />
 					{:else}
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
 				{/each}
-				{#if thinking}
+				{#if activity?.startup?.cold}
+					<ChatStartup stages={activity.startup.stages} />
+				{:else if booting}
+					<ChatActivity since={booting.startedAt}>{stageActivity(booting.label)}</ChatActivity>
+				{/if}
+				{#if activity && (activity.text || activity.calls.length)}
+					<ChatGroup author={agent}>
+						{#if activity.text}
+							<ChatMessage><Markdown source={activity.text} /></ChatMessage>
+						{/if}
+						{#if activity.calls.length}
+							<ChatTools calls={activity.calls.map(toolView)} />
+						{/if}
+					</ChatGroup>
+				{/if}
+				{#if activity?.status}
+					<ChatActivity since={activity.status.since}>{activity.status.label}</ChatActivity>
+				{:else if !activity && thinking}
 					<ChatActivity>ReGit is thinking</ChatActivity>
-				{:else if summary.status === 'running'}
+				{:else if !activity && summary.status === 'running'}
 					<ChatActivity>ReGit is working</ChatActivity>
 				{:else if summary.status === 'reviewing'}
 					<ChatActivity>ReGit is reviewing the work</ChatActivity>

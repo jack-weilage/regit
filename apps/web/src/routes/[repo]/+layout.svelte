@@ -3,13 +3,16 @@
 	import { page } from '$app/state';
 	import { AppShell, type Mode, type ThreadListItem } from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
-	import { defaultMachine, type LiveMessage, type Machine } from '@regit/core';
+	import { defaultMachine, type LiveMessage, type Machine, type ThreadActivity } from '@regit/core';
+	import { setLiveActivity } from '#lib/activity.ts';
 	import { getRepos, getThread, getThreads, getUser, openThread } from '#lib/data.remote.ts';
 	import { createAndOpen } from '#lib/repos.ts';
 
 	let { children, params } = $props();
 
 	let mode = $state<Mode>('medium');
+	const activities = $state<Record<string, ThreadActivity | null>>({});
+	setLiveActivity(activities);
 
 	let repo = $derived(params.repo);
 	let user = $derived(await getUser());
@@ -32,6 +35,10 @@
 		const source = new EventSource(`/${repo}/live`);
 		source.addEventListener('message', (event) => {
 			const message = JSON.parse(event.data) as LiveMessage;
+			if (message.type === 'activity') {
+				activities[message.thread] = message.activity;
+				return;
+			}
 			const thread = message.type === 'entry' ? message.thread : message.summary.id;
 			if (message.type === 'thread') getThreads(repo).refresh();
 			if (thread === page.params.thread) getThread({ repo, id: thread }).refresh();

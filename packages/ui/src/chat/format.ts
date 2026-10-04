@@ -25,3 +25,9 @@ export function formatAgo(at: number, now = Date.now()) {
 	if (Math.abs(minutes) < 60 * 24) return relative.format(Math.round(minutes / 60), 'hour');
 	return relative.format(Math.round(minutes / 60 / 24), 'day');
 }
+
+export function formatDuration(ms: number) {
+	const seconds = Math.max(0, Math.floor(ms / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	return `${Math.floor(seconds / 60)}m${seconds % 60 ? ` ${seconds % 60}s` : ''}`;
+}

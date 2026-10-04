@@ -22,20 +22,25 @@ import type {
 	Mode,
 	RepoCoordinatorApi,
 	ShipInput,
+	StartupStage,
+	ThreadActivity,
 	ThreadDetail,
 	ThreadService,
 	ThreadStatus,
 	ThreadSummary,
 	ThreadUsage,
+	ToolCallRecord,
 	UsageRow
 } from '@regit/core';
 import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
-	| { type: 'step'; step: Step & { checkpoint?: string } }
+	| { type: 'step'; step: Step & { checkpoint?: string }; tools?: ToolCallRecord[] }
 	| { type: 'status'; status: AttemptStatus; error: string | null }
-	| { type: 'reply'; step: Step }
+	| { type: 'reply'; step: Step; tools?: ToolCallRecord[] }
+	| { type: 'activity'; activity: ThreadActivity }
+	| { type: 'startup'; stages: StartupStage[] }
 	| { type: 'conversation-failed'; error: string }
 	| { type: 'read'; entries: string[] }
 	| { type: 'changes'; summary: DiffSummary; base: string | null }
@@ -79,6 +84,7 @@ const agent: Author = { name: 'ReGit', kind: 'agent' };
 
 export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinatorApi {
 	#sql = this.ctx.storage.sql;
+	#activities = new Map<string, ThreadActivity>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -295,7 +301,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#summary(id);
 		if (!summary) return null;
 		if (summary.deleted) {
-			return { summary, entries: [], usage: this.#usage(id, summary.mode, []), services: [] };
+			return {
+				summary,
+				entries: [],
+				usage: this.#usage(id, summary.mode, []),
+				services: [],
+				activity: null
+			};
 		}
 		const rows = this.#sql
 			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq', id)
@@ -304,7 +316,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			summary,
 			entries: rows.map((row) => JSON.parse(row.body) as Entry),
 			usage: this.#usage(id, summary.mode),
-			services: this.#services(id)
+			services: this.#services(id),
+			activity: this.#activities.get(id) ?? null
 		};
 	}
 
@@ -447,7 +460,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			for (const id of update.entries) this.#markRead(thread, id);
 			return;
 		}
+		if (update.type === 'activity') {
+			this.#setActivity(thread, update.activity);
+			return;
+		}
+		if (update.type === 'startup') {
+			this.#add(thread, { type: 'startup', stages: update.stages });
+			return;
+		}
 		if (update.type === 'conversation-failed') {
+			this.#setActivity(thread, null);
 			this.#add(thread, { type: 'event', text: `Couldn't reply: ${update.error}` });
 			return;
 		}
@@ -462,6 +484,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 					this.#add(thread, { type: 'message', author: agent, text: turn.text.trim() });
 				}
 			}
+			if (update.tools?.length) this.#add(thread, { type: 'tools', calls: update.tools });
+			const activity = this.#activities.get(thread);
+			if (activity) this.#setActivity(thread, { ...activity, text: '', calls: [] });
 			if (update.type === 'step' && update.step.checkpoint) {
 				this.#add(thread, {
 					type: 'event',
@@ -485,6 +510,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 		const outcome = outcomes[update.status];
 		if (!outcome) return;
+		this.#setActivity(thread, null);
 		this.#add(thread, { type: 'event', text: outcome[1] });
 		this.#setStatus(thread, outcome[0]);
 	}
@@ -566,6 +592,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const read = { ...entry, steering: { read: true } };
 		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(read), seq);
 		this.#broadcast({ type: 'entry', thread, entry: read });
+	}
+
+	#setActivity(thread: string, activity: ThreadActivity | null) {
+		const idle =
+			!activity ||
+			(!activity.startup && !activity.status && !activity.text && !activity.calls.length);
+		if (idle && !this.#activities.has(thread)) return;
+		if (idle) this.#activities.delete(thread);
+		else this.#activities.set(thread, activity);
+		this.#broadcast({ type: 'activity', thread, activity: idle ? null : activity });
 	}
 
 	#add(thread: string, entry: DistributiveOmit<Entry, 'id' | 'at'>) {

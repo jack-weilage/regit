@@ -1,16 +1,27 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { stopwatch } from './clock.svelte.ts';
+	import { formatDuration } from './format.ts';
 
 	interface Props {
+		since?: number;
+		now?: number;
 		children: Snippet;
 	}
 
-	let { children }: Props = $props();
+	let { since, now, children }: Props = $props();
 </script>
 
 <div class="activity chat-enter" role="status">
 	<span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>
-	{@render children()}
+	<span>
+		{@render children()}
+		{#if since !== undefined}
+			<span class="elapsed" aria-hidden="true"
+				>· {formatDuration((now ?? stopwatch.now) - since)}</span
+			>
+		{/if}
+	</span>
 </div>
 
 <style>
@@ -20,6 +31,10 @@
 		gap: var(--space-4);
 		color: var(--color-muted);
 		font-size: var(--text-meta);
+	}
+
+	.elapsed {
+		font-variant-numeric: tabular-nums;
 	}
 
 	.dots {

@@ -33,6 +33,30 @@ export interface Intent {
 	doneWhen: string[];
 }
 
+export interface ToolCallRecord {
+	id: string;
+	tool: string;
+	target: string;
+	status: 'running' | 'done' | 'failed';
+	startedAt: number;
+	finishedAt?: number;
+	output?: string;
+}
+
+export interface StartupStage {
+	label: string;
+	status: 'pending' | 'running' | 'done' | 'failed';
+	startedAt?: number;
+	finishedAt?: number;
+}
+
+export interface ThreadActivity {
+	startup: { cold: boolean; stages: StartupStage[] } | null;
+	status: { label: string; since: number } | null;
+	text: string;
+	calls: ToolCallRecord[];
+}
+
 export type Entry =
 	| {
 			type: 'review';
@@ -60,7 +84,9 @@ export type Entry =
 			outcome:
 				{ kind: 'dismissed'; by: string } | { kind: 'spun-off'; thread: string; by: string } | null;
 	  }
-	| { type: 'event'; id: string; at: number; text: string };
+	| { type: 'event'; id: string; at: number; text: string }
+	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[] }
+	| { type: 'startup'; id: string; at: number; stages: StartupStage[] };
 
 export interface ThreadSummary {
 	id: string;
@@ -112,10 +138,13 @@ export interface ThreadDetail {
 	entries: Entry[];
 	usage: ThreadUsage;
 	services: ThreadService[];
+	activity: ThreadActivity | null;
 }
 
 export type LiveMessage =
-	{ type: 'entry'; thread: string; entry: Entry } | { type: 'thread'; summary: ThreadSummary };
+	| { type: 'entry'; thread: string; entry: Entry }
+	| { type: 'thread'; summary: ThreadSummary }
+	| { type: 'activity'; thread: string; activity: ThreadActivity | null };
 
 export interface RepoCoordinatorApi {
 	openThread(input: {

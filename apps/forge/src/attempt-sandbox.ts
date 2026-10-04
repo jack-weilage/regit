@@ -8,7 +8,9 @@ import {
 	maxReviewRounds,
 	summarize,
 	type DiffFile,
-	type Machine
+	type Machine,
+	type StartupStage,
+	type ThreadActivity
 } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
@@ -27,6 +29,7 @@ import {
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
+	StepActivity,
 	suggestTools,
 	threadInstructions,
 	type AgentOutcome,
@@ -139,6 +142,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 	#sql = this.ctx.storage.sql;
 	#controller?: AbortController;
 	#conversation?: AbortController;
+	#activity: ThreadActivity = idle();
+	#published = 0;
+	#publishing?: ReturnType<typeof setTimeout>;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -422,16 +428,29 @@ export class AttemptSandbox extends DurableObject<Env> {
 					signal: controller.signal,
 					steer: () => this.#drain(repo)
 				});
+				const step = new StepActivity();
+				this.#think();
 				for await (const event of run) {
-					if (event.type !== 'step') continue;
+					if (event.type !== 'step') {
+						this.#stream(step, event);
+						continue;
+					}
 					this.#saveConversation(event.turns);
-					await this.#report(repo, { type: 'reply', step: event });
+					const tools = step.take();
+					await this.#report(repo, {
+						type: 'reply',
+						step: event,
+						tools: controller.signal.aborted ? [] : tools
+					});
+					this.#stepped(event.turns);
 					await this.#syncServices(fetch, repo);
 				}
 				if (controller.signal.aborted) return;
 			}
+			this.#clearActivity();
 		} catch (error) {
 			this.#sql.exec('DELETE FROM inbox');
+			this.#clearActivity();
 			if (controller.signal.aborted) return;
 			const reason = error instanceof Error ? error.message : String(error);
 			await this.#report(repo, { type: 'conversation-failed', error: reason });
@@ -504,11 +523,20 @@ export class AttemptSandbox extends DurableObject<Env> {
 				steer: () => this.#drain(attempt.repo)
 			});
 
+			const step = new StepActivity();
+			this.#think();
 			let next = await run.next();
 			while (!next.done) {
-				if (next.value.type === 'step') {
+				if (next.value.type !== 'step') this.#stream(step, next.value);
+				else {
 					this.#saveStep(next.value);
-					await this.#report(attempt.repo, { type: 'step', step: next.value });
+					const tools = step.take();
+					await this.#report(attempt.repo, {
+						type: 'step',
+						step: next.value,
+						tools: controller.signal.aborted ? [] : tools
+					});
+					this.#stepped(next.value.turns);
 					await this.#syncServices(fetch, attempt.repo);
 					if (Date.now() > deadline) {
 						await run.return('aborted');
@@ -518,11 +546,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 				}
 				next = await run.next();
 			}
+			this.#clearActivity();
 			if (this.#attempt()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
 			if (next.value === 'finished' && attempt.intent) await this.#review(attempt, fetch);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
+			this.#clearActivity();
 			const status = this.#attempt()?.status;
 			if (status !== 'running' && status !== 'reviewing') return;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
@@ -786,12 +816,82 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #restoreServices(fetch: Fetch) {
 		const workspace = sandboxWorkspace(fetch);
-		for (const service of this.services()) {
-			if (service.status !== 'running' && service.status !== 'starting') continue;
-			await workspace.startService(this.#serviceRequest(service.name)).catch((error: unknown) => {
-				console.warn(`Could not restart ${service.name}`, error);
-			});
+		const services = this.services().filter(
+			(service) => service.status === 'running' || service.status === 'starting'
+		);
+		if (!services.length) return;
+		await this.#stage(`Start ${services.map((service) => service.name).join(', ')}`, async () => {
+			for (const service of services) {
+				await workspace.startService(this.#serviceRequest(service.name)).catch((error: unknown) => {
+					console.warn(`Could not restart ${service.name}`, error);
+				});
+			}
+		});
+	}
+
+	#think() {
+		this.#activity.status = { label: 'Thinking', since: Date.now() };
+		this.#publish(true);
+	}
+
+	#stream(step: StepActivity, event: Parameters<StepActivity['apply']>[0]) {
+		step.apply(event);
+		this.#activity.text = step.text;
+		this.#activity.calls = step.calls;
+		this.#activity.status = null;
+		this.#publish(event.type !== 'text');
+	}
+
+	#stepped(turns: Turn[]) {
+		this.#activity.text = '';
+		this.#activity.calls = [];
+		if (turns.some((turn) => turn.role === 'tool')) this.#think();
+		else this.#activity.status = null;
+	}
+
+	#clearActivity() {
+		this.#activity = idle();
+		this.#publish(true);
+	}
+
+	async #stage<T>(label: string, run: () => Promise<T>, done?: (result: T) => string) {
+		const stage: StartupStage = { label, status: 'running', startedAt: Date.now() };
+		(this.#activity.startup ??= { cold: false, stages: [] }).stages.push(stage);
+		this.#publish(true);
+		try {
+			const result = await run();
+			Object.assign(stage, { status: 'done', label: done?.(result) ?? label });
+			return result;
+		} catch (error) {
+			stage.status = 'failed';
+			throw error;
+		} finally {
+			stage.finishedAt = Date.now();
+			this.#publish(true);
 		}
+	}
+
+	async #startupDone() {
+		const startup = this.#activity.startup;
+		if (!startup) return;
+		this.#activity.startup = null;
+		this.#publish(true);
+		const repo = this.#meta('repo');
+		if (startup.cold && repo) await this.#report(repo, { type: 'startup', stages: startup.stages });
+	}
+
+	#publish(now = false) {
+		const wait = this.#published + publishIntervalMs - Date.now();
+		if (!now && wait > 0) {
+			this.#publishing ??= setTimeout(() => this.#publish(true), wait);
+			return;
+		}
+		clearTimeout(this.#publishing);
+		this.#publishing = undefined;
+		this.#published = Date.now();
+		const repo = this.#meta('repo');
+		if (!repo) return;
+		void this.#report(repo, { type: 'activity', activity: structuredClone(this.#activity) });
 	}
 
 	async #previewHost(repo: string) {
@@ -973,11 +1073,29 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (container.running) {
 			await waitUntilHealthy(fetch);
 			if (this.#meta('workspace') !== target.remote) {
-				await workspace.clone({ remote: target.remote, branch: target.branch });
-				this.#setMeta('workspace', target.remote);
+				this.#activity.startup = { cold: false, stages: [] };
+				try {
+					await this.#stage(`Clone ${target.repo}`, () =>
+						workspace.clone({ remote: target.remote, branch: target.branch })
+					);
+					this.#setMeta('workspace', target.remote);
+				} finally {
+					await this.#startupDone();
+				}
 			}
 			return fetch;
 		}
+		this.#activity.startup = { cold: true, stages: [] };
+		try {
+			return await this.#coldSandbox(target, fetch);
+		} finally {
+			await this.#startupDone();
+		}
+	}
+
+	async #coldSandbox(target: Target, fetch: Fetch): Promise<Fetch> {
+		const container = this.ctx.container!;
+		const workspace = sandboxWorkspace(fetch);
 
 		const image = container.images.sandbox!;
 		const forRepo = eq(toolchainSnapshots.repo, target.repo);
@@ -985,21 +1103,38 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const disk = machines[this.#machine()].diskGb * 1e9;
 		const fits = (cached?.size ?? 0) + snapshotHeadroomBytes <= disk;
 		let restored = cached?.image === image && fits ? cached : null;
+		const { vcpu } = machines[this.#machine()];
+		const boot = `Start a ${vcpu === 0.5 ? '½' : vcpu} vCPU sandbox`;
+		this.#activity.startup!.cold = !restored;
 		try {
-			await this.#start(
-				restored ? { containerSnapshot: { id: restored.snapshotId } } : { image },
-				fetch
+			await this.#stage(restored ? 'Restore the sandbox' : boot, () =>
+				this.#start(
+					restored ? { containerSnapshot: { id: restored.snapshotId } } : { image },
+					fetch
+				)
 			);
 		} catch (error) {
 			if (!restored) throw error;
 			restored = null;
+			this.#activity.startup = { cold: true, stages: [] };
 			await db.delete(toolchainSnapshots).where(forRepo);
-			await this.#start({ image }, fetch);
+			await this.#stage(boot, () => this.#start({ image }, fetch));
 		}
 
-		await workspace.clone({ remote: target.remote, branch: target.branch });
+		await this.#stage(`Clone ${target.repo}`, () =>
+			workspace.clone({ remote: target.remote, branch: target.branch })
+		);
 		this.#setMeta('workspace', target.remote);
-		const tools = await workspace.toolchain();
+		const tools = await this.#stage(
+			'Install toolchains',
+			() => workspace.toolchain(),
+			(tools) =>
+				Object.keys(tools).length
+					? `Install ${Object.entries(tools)
+							.map(([tool, versions]) => `${tool} ${versions.join(', ')}`)
+							.join(', ')}`
+					: 'Check toolchains'
+		);
 		this.#sql.exec(
 			'UPDATE attempt SET toolchain = ?, restored = ?',
 			JSON.stringify(tools),
@@ -1010,9 +1145,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const key = await digest({ image, tools });
 		if (key !== restored?.key) {
 			try {
-				const snapshot = await container.snapshotContainer({
-					name: `toolchain-${key.slice(0, 12)}`
-				});
+				const snapshot = await this.#stage('Save the toolchain', () =>
+					container.snapshotContainer({ name: `toolchain-${key.slice(0, 12)}` })
+				);
 				// TODO: delete superseded snapshots and old deploy images, which share the account's 50 GB image storage
 				const row = {
 					snapshotId: snapshot.id,
@@ -1061,6 +1196,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 			throw error;
 		}
 	}
+}
+
+const publishIntervalMs = 250;
+
+function idle(): ThreadActivity {
+	return { startup: null, status: null, text: '', calls: [] };
 }
 
 async function digest(value: unknown) {

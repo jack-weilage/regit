@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import type { ThreadDetail } from '@regit/core';
+import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
 const { dir, git, worker, script, modelRequests, sh, seed, commit, start, submitReview, settled } =
@@ -201,7 +201,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('notes');
-	const live: { type: string; entry?: { type: string } }[] = [];
+	const live: LiveMessage[] = [];
 	const { webSocket: socket } = await repo.fetch('https://repo/live', {
 		headers: { Upgrade: 'websocket' }
 	});
@@ -263,23 +263,41 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 					? entry.text.replace(/[0-9a-f]{7}$/, 'sha')
 					: entry.type === 'review'
 						? `review ${entry.verdict}`
-						: `intent ${entry.intent.headline}`
+						: entry.type === 'tools'
+							? `tools ${entry.calls.map((call) => `${call.tool} ${call.status}`).join(', ')}`
+							: entry.type === 'intent'
+								? `intent ${entry.intent.headline}`
+								: entry.type
 		)
 	).toEqual([
 		'Sam: The notes need a title.',
 		'intent docs: tidy the notes',
+		'tools propose_intent done',
 		'ReGit: Proposed a tidy-up.',
 		'Sam: Call it Notes.',
 		'intent docs(notes): add a title',
+		'tools update_intent done',
 		'ReGit: Updated it.',
 		'Started the attempt',
 		'ReGit: Adding the title',
+		'tools write_file done',
 		'Checkpoint sha',
 		'ReGit: Added the title.',
 		'review pass',
 		'The attempt finished'
 	]);
 	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
+	const activity = live.flatMap((message) =>
+		message.type === 'activity' && message.thread === opened.id ? [message.activity] : []
+	);
+	expect(activity.some((update) => update?.status?.label === 'Thinking')).toBe(true);
+	expect(
+		activity.some((update) =>
+			update?.calls.some((call) => call.tool === 'write_file' && call.status === 'running')
+		)
+	).toBe(true);
+	expect(activity.at(-1)).toBeNull();
+	expect(detail!.activity).toBeNull();
 	const requests = await modelRequests();
 	expect(
 		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)

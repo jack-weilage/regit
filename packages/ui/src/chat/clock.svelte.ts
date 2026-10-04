@@ -1,13 +1,18 @@
 import { createSubscriber } from 'svelte/reactivity';
 
-const subscribe = createSubscriber((update) => {
-	const timer = setInterval(update, 15_000);
-	return () => clearInterval(timer);
-});
+function ticking(interval: number) {
+	const subscribe = createSubscriber((update) => {
+		const timer = setInterval(update, interval);
+		return () => clearInterval(timer);
+	});
+	return {
+		get now() {
+			subscribe();
+			return Date.now();
+		}
+	};
+}
 
-export const clock = {
-	get now() {
-		subscribe();
-		return Date.now();
-	}
-};
+export const clock = ticking(15_000);
+
+export const stopwatch = ticking(1000);
