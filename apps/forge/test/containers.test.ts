@@ -20,7 +20,8 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 			.first<{ id: string; key: string; size: number }>();
 
 	await start('thread-3', { task: 'Look around', mode: 'small', repo: 'toolchain' });
-	expect(await settled('thread-3')).toMatchObject({
+	// The first container after an image rebuild can take minutes to start locally.
+	expect(await settled('thread-3', 300_000)).toMatchObject({
 		status: 'finished',
 		toolchain: { tools: { jq: [expect.any(String)] }, restored: false }
 	});
@@ -66,7 +67,7 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	const refreshed = await recorded();
 	expect(refreshed!.key).not.toBe(first!.key);
 	expect(refreshed!.id).not.toBe(resized!.id);
-});
+}, 600_000);
 
 test('records the stages of a cold start in the thread', async () => {
 	await seed('cold', { 'README.md': '# Cold\n' });
@@ -90,7 +91,7 @@ test('records the stages of a cold start in the thread', async () => {
 	const { entries } = (await repo.thread(id))!;
 	const startup = entries.find((entry) => entry.type === 'startup');
 	const reply = entries.find((entry) => entry.type === 'message' && entry.author.kind === 'agent');
-	expect(reply && entries.indexOf(reply)).toBeLessThan(entries.indexOf(startup!));
+	expect(entries.indexOf(startup!)).toBeLessThan(entries.indexOf(reply!));
 	expect(startup).toMatchObject({
 		stages: [
 			{ label: 'Start a ½ vCPU sandbox', status: 'done' },

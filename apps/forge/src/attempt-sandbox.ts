@@ -18,6 +18,12 @@ import {
 	askThreadsTools,
 	codingInstructions,
 	combineTools,
+	mergeSkills,
+	servicesSkill,
+	skillTools,
+	threadsSkill,
+	toolchainsSkill,
+	withSkills,
 	intentTools,
 	modes,
 	openaiModel,
@@ -39,6 +45,7 @@ import {
 	type AgentOutcome,
 	type Fetch,
 	type ServiceInfo,
+	type Skill,
 	type Intent,
 	type Mode,
 	type Step,
@@ -397,16 +404,19 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#think('Starting');
 		const mode = this.#meta('mode') as Mode;
 		const thread = this.ctx.id.name!;
-		const { fetch, sandbox } = this.#background(controller, async () => {
+		try {
 			using base = await this.env.ARTIFACTS.get(repo);
 			const info = await base.info();
 			const { plaintext: token } = await base.createToken('read', 60 * 60);
-			return this.#sandbox({ repo, remote: info.remote, branch: info.defaultBranch }, token);
-		});
-		try {
+			const fetch = await this.#sandbox(
+				{ repo, remote: info.remote, branch: info.defaultBranch },
+				token
+			);
 			const { model, effort } = modes[mode];
 			const coordinator = this.env.REPOS.getByName(repo);
+			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill]);
 			const tools = combineTools(
+				skillTools(skills),
 				sandboxTools(fetch, readOnlyTools),
 				intentTools((intent) => coordinator.intentProposed(thread, intent)),
 				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion)),
@@ -432,7 +442,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						metadata: { thread, mode, task: 'conversation' }
 					}),
 					tools,
-					instructions: threadInstructions,
+					instructions: withSkills(threadInstructions, skills),
 					history,
 					signal: controller.signal,
 					steer: () => this.#drain(repo)
@@ -454,18 +464,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 					this.#stepped(event.turns);
 					await this.#syncServices(fetch, repo);
 				}
-				if (controller.signal.aborted) {
-					if (sandbox.failure) throw sandbox.failure;
-					return;
-				}
+				if (controller.signal.aborted) return;
 			}
 			this.#clearActivity();
 		} catch (error) {
 			this.#sql.exec('DELETE FROM inbox');
 			this.#clearActivity();
-			if (controller.signal.aborted && !sandbox.failure) return;
-			const cause = sandbox.failure ?? error;
-			const reason = cause instanceof Error ? cause.message : String(cause);
+			if (controller.signal.aborted) return;
+			const reason = error instanceof Error ? error.message : String(error);
 			await this.#report(repo, { type: 'conversation-failed', error: reason });
 		}
 	}
@@ -477,31 +483,26 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
 		if (!resumingReview) this.#think('Starting');
-		let sandbox: { failure?: unknown } = {};
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
-			const background = this.#background(controller, async () => {
-				const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
-				if (!this.#meta('branch')) {
-					using repo = await this.env.ARTIFACTS.get(attempt.repo);
-					await this.#baseBranch(repo, fetch, 'read');
-					await this.#allowGit(fork, token, false);
-				}
-				if (!attempt.base) {
-					attempt.base = await this.#head(fetch);
-					this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
-				}
-				return fetch;
-			});
-			const { fetch } = background;
-			sandbox = background.sandbox;
-			if (resumingReview) return await this.#review(attempt, await background.sandbox.ready);
+			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+			if (!this.#meta('branch')) {
+				using repo = await this.env.ARTIFACTS.get(attempt.repo);
+				await this.#baseBranch(repo, fetch, 'read');
+				await this.#allowGit(fork, token, false);
+			}
+			if (!attempt.base) {
+				attempt.base = await this.#head(fetch);
+				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
+			}
+			if (resumingReview) return await this.#review(attempt, fetch);
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
+			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill, toolchainsSkill]);
 			const run = runAttempt({
 				model: openaiModel({
 					gateway: { run: (request) => this.env.MODELS.run(request) },
@@ -515,6 +516,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					}
 				}),
 				tools: combineTools(
+					skillTools(skills),
 					sandboxTools(fetch),
 					intentTools(
 						async (intent) => {
@@ -543,7 +545,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				},
 				author,
 				push: { ref: fork.branch },
-				instructions: codingInstructions,
+				instructions: withSkills(codingInstructions, skills),
 				history: this.#history(attempt),
 				signal: controller.signal,
 				steer: () => this.#drain(attempt.repo)
@@ -573,7 +575,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 				next = await run.next();
 			}
 			this.#clearActivity();
-			if (sandbox.failure) throw sandbox.failure;
 			if (this.#attempt()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
 			if (next.value === 'finished' && attempt.intent) await this.#review(attempt, fetch);
@@ -582,9 +583,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			const status = this.#attempt()?.status;
 			if (status !== 'running' && status !== 'reviewing') return;
-			const cause = sandbox.failure ?? error;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
-			await this.#finish(attempt, 'failed', cause instanceof Error ? cause.message : String(cause));
+			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
 		} finally {
 			this.#controller = undefined;
 		}
@@ -857,6 +857,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 		});
 	}
 
+	async #skills(fetch: Fetch, builtIn: Skill[]) {
+		const repo = await sandboxWorkspace(fetch)
+			.skills()
+			.catch((error: unknown) => {
+				console.warn('Could not read the repository skills', error);
+				return [];
+			});
+		return mergeSkills(builtIn, repo);
+	}
+
 	async #askThreads(repo: string, question: string) {
 		const coordinator = this.env.REPOS.getByName(repo);
 		const thread = this.ctx.id.name!;
@@ -879,16 +889,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (usage.length)
 			await this.#report(repo, { type: 'usage', task: 'search', model: searcher.model, usage });
 		return answer;
-	}
-
-	#background(controller: AbortController, start: () => Promise<Fetch>) {
-		const sandbox: { ready: Promise<Fetch>; failure?: unknown } = { ready: start() };
-		sandbox.ready.catch((error: unknown) => {
-			sandbox.failure = error;
-			controller.abort();
-		});
-		const fetch: Fetch = async (url, init) => (await sandbox.ready)(url, init);
-		return { fetch, sandbox };
 	}
 
 	#think(label = 'Thinking') {

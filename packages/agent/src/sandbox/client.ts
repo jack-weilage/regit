@@ -18,6 +18,7 @@ import type {
 	ServiceInfo,
 	ServicesResponse,
 	SquashRequest,
+	SkillsResponse,
 	ToolchainResponse,
 	ToolName,
 	ToolResponse
@@ -135,6 +136,10 @@ export function sandboxWorkspace(fetch: Fetch) {
 		},
 		async abortRebase() {
 			await post(fetch, '/workspace/abort-rebase', '{}');
+		},
+		async skills() {
+			const { skills } = await post<SkillsResponse>(fetch, '/workspace/skills', '{}');
+			return skills;
 		},
 		async toolchain() {
 			const { tools } = await post<ToolchainResponse>(fetch, '/workspace/toolchain', '{}');

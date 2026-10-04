@@ -12,7 +12,8 @@ const targets: Record<string, string> = {
 	update_intent: 'headline',
 	suggest_thread: 'headline',
 	message_thread: 'thread',
-	ask_threads: 'question'
+	ask_threads: 'question',
+	load_skill: 'name'
 };
 
 const kept = 4000;

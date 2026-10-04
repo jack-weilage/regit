@@ -34,6 +34,18 @@ export interface CommitResponse {
 
 export type Toolchain = Record<string, string[]>;
 
+export interface SkillInfo {
+	name: string;
+	description: string;
+	body: string;
+	directory: string;
+	resources: string[];
+}
+
+export interface SkillsResponse {
+	skills: SkillInfo[];
+}
+
 export interface ToolchainResponse {
 	tools: Toolchain;
 }

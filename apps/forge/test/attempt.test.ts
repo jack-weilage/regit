@@ -331,6 +331,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	const tools = (request: (typeof requests)[number]) =>
 		(request.query as { tools: { name: string }[] }).tools.map((tool) => tool.name);
 	expect(tools(requests[0]!)).toEqual([
+		'load_skill',
 		'read_file',
 		'find_files',
 		'search',
@@ -563,20 +564,8 @@ test('stops a running attempt mid tool call', async () => {
 	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
 });
 
-test('asks the model before the sandbox is ready, and reports a sandbox that fails', async () => {
-	await script([
-		[
-			{
-				type: 'response.output_item.done',
-				item: {
-					type: 'function_call',
-					call_id: 'read',
-					name: 'read_file',
-					arguments: JSON.stringify({ path: 'README.md' })
-				}
-			}
-		]
-	]);
+test('reports a sandbox that fails before asking the model', async () => {
+	await script([]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('missing');
 	const { id } = await repo.openThread({
@@ -596,7 +585,7 @@ test('asks the model before the sandbox is ready, and reports a sandbox that fai
 	const requests = (await modelRequests()).filter(
 		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
 	);
-	expect(requests).toHaveLength(1);
+	expect(requests).toHaveLength(0);
 });
 
 test('stops a conversation turn mid tool call', async () => {
@@ -1488,4 +1477,59 @@ test('answers questions about another thread without interrupting it', async () 
 		/^\d+ matches in \d+ entries:\n#\d+ of \d+: /
 	);
 	expect(await repo.threadDiff(target.id)).toBe('No changes.');
+});
+
+test('offers built-in and repository skills, and loads one on request', async () => {
+	await seed('skilled', {
+		'notes.md': 'Some notes\n',
+		'.agents/skills/release/SKILL.md':
+			'---\nname: release\ndescription: Cut a release. Use when asked to publish a version.\n---\n# Release\n\nRun scripts/release.sh, then tag the commit.\n',
+		'.agents/skills/release/scripts/release.sh': 'echo release\n'
+	});
+	await idle();
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'skill',
+					name: 'load_skill',
+					arguments: JSON.stringify({ name: 'release' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Loaded it.' }]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('skilled');
+	const { id } = await repo.openThread({
+		repo: 'skilled',
+		author: { name: 'Sam', kind: 'person' },
+		text: 'How do we cut a release?',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await expect
+		.poll(
+			async () =>
+				(await repo.thread(id))!.entries.some(
+					(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+				),
+			{ timeout: 20_000 }
+		)
+		.toBe(true);
+
+	const requests = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
+	);
+	const first = JSON.stringify(requests[0]!.query);
+	expect(first).toContain('- release: Cut a release. Use when asked to publish a version.');
+	expect(first).toContain('- threads: Work alongside other threads');
+	expect(first).toContain('- services: Run long-running processes');
+	expect(first).not.toContain('- toolchains:');
+	const loaded = JSON.stringify(requests[1]!.query);
+	expect(loaded).toContain('Run scripts/release.sh, then tag the commit.');
+	expect(loaded).toContain('Skill directory: .agents/skills/release');
+	expect(loaded).toContain('<file>scripts/release.sh</file>');
 });

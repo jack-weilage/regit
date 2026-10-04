@@ -18,6 +18,15 @@ export {
 } from './similar.ts';
 export { StepActivity, toolTarget } from './activity.ts';
 export {
+	mergeSkills,
+	servicesSkill,
+	skillTools,
+	threadsSkill,
+	toolchainsSkill,
+	withSkills,
+	type Skill
+} from './skills.ts';
+export {
 	askThreads,
 	askThreadsTools,
 	searchInstructions,

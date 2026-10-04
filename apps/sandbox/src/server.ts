@@ -1,4 +1,5 @@
 import { createServices, type ServicesOptions } from './services.ts';
+import { discoverSkills } from './skills.ts';
 import { isTool, ToolError, tools } from './tools.ts';
 import {
 	abortRebase,
@@ -42,7 +43,8 @@ export function createSandbox(
 		rebase: (body) => rebase(root, body),
 		'continue-rebase': (body) => continueRebase(root, body),
 		'abort-rebase': async () => (await abortRebase(root), {}),
-		toolchain: async () => ({ tools: await toolchain(root, mise) })
+		toolchain: async () => ({ tools: await toolchain(root, mise) }),
+		skills: async () => ({ skills: await discoverSkills(root) })
 	};
 
 	async function handle(request: Request): Promise<Response> {

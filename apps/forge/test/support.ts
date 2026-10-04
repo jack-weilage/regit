@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll } from 'vitest';
 import type { GatewayRequest, JevRequest, JevResponse } from '@regit/agent';
@@ -85,7 +85,10 @@ export async function setup({ containers = false } = {}) {
 	}
 
 	async function commit(work: string, files: Record<string, string>, message: string) {
-		for (const [path, content] of Object.entries(files)) await writeFile(join(work, path), content);
+		for (const [path, content] of Object.entries(files)) {
+			await mkdir(dirname(join(work, path)), { recursive: true });
+			await writeFile(join(work, path), content);
+		}
 		sh(work, 'add', '.');
 		sh(
 			work,
@@ -122,10 +125,10 @@ export async function setup({ containers = false } = {}) {
 		];
 	}
 
-	async function settled(thread: string) {
+	async function settled(thread: string, timeoutMs = 120_000) {
 		const env = await worker.getEnv();
 		let snapshot = null;
-		for (let i = 0; i < 600; i++) {
+		for (let i = 0; i < timeoutMs / 200; i++) {
 			snapshot = await env.ATTEMPTS.getByName(thread).snapshot();
 			if (snapshot && !['queued', 'running'].includes(snapshot.status)) return snapshot;
 			await new Promise((resolve) => setTimeout(resolve, 200));
