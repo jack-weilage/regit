@@ -230,15 +230,19 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		}
 		throw new Error(`The thread never had ${count} intents`);
 	};
+	const said = async (text: string) => {
+		for (let i = 0; i < 100; i++) {
+			const last = (await repo.thread(opened.id))!.entries.at(-1);
+			if (last?.type === 'message' && last.text === text) return;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+	};
 	expect((await drafted(1)).summary.headline).toBe('docs: tidy the notes');
+	await said('Proposed a tidy-up.');
 
 	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
 	await drafted(2);
-	for (let i = 0; i < 100; i++) {
-		const last = (await repo.thread(opened.id))!.entries.at(-1);
-		if (last?.type === 'message' && last.text === 'Updated it.') break;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
+	await said('Updated it.');
 	await repo.start(opened.id);
 
 	let detail = await repo.thread(opened.id);
@@ -539,6 +543,42 @@ test('stops a running attempt mid tool call', async () => {
 	expect(detail!.summary.status).toBe('needs-you');
 	expect(detail!.entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
 	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
+});
+
+test('asks the model before the sandbox is ready, and reports a sandbox that fails', async () => {
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'read',
+					name: 'read_file',
+					arguments: JSON.stringify({ path: 'README.md' })
+				}
+			}
+		]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('missing');
+	const { id } = await repo.openThread({
+		repo: 'missing',
+		author: { name: 'Sam', kind: 'person' },
+		text: 'Read the README.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+
+	await expect
+		.poll(async () => (await repo.thread(id))!.entries.at(-1), { timeout: 20_000 })
+		.toMatchObject({
+			type: 'event',
+			text: expect.stringMatching(/^Couldn't reply: git clone failed/)
+		});
+	const requests = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
+	);
+	expect(requests).toHaveLength(1);
 });
 
 test('stops a conversation turn mid tool call', async () => {

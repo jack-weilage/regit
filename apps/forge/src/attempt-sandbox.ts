@@ -393,14 +393,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#think('Starting');
 		const mode = this.#meta('mode') as Mode;
 		const thread = this.ctx.id.name!;
-		try {
+		const { fetch, sandbox } = this.#background(controller, async () => {
 			using base = await this.env.ARTIFACTS.get(repo);
 			const info = await base.info();
 			const { plaintext: token } = await base.createToken('read', 60 * 60);
-			const fetch = await this.#sandbox(
-				{ repo, remote: info.remote, branch: info.defaultBranch },
-				token
-			);
+			return this.#sandbox({ repo, remote: info.remote, branch: info.defaultBranch }, token);
+		});
+		try {
 			const { model, effort } = modes[mode];
 			const coordinator = this.env.REPOS.getByName(repo);
 			const tools = combineTools(
@@ -446,14 +445,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 					this.#stepped(event.turns);
 					await this.#syncServices(fetch, repo);
 				}
-				if (controller.signal.aborted) return;
+				if (controller.signal.aborted) {
+					if (sandbox.failure) throw sandbox.failure;
+					return;
+				}
 			}
 			this.#clearActivity();
 		} catch (error) {
 			this.#sql.exec('DELETE FROM inbox');
 			this.#clearActivity();
-			if (controller.signal.aborted) return;
-			const reason = error instanceof Error ? error.message : String(error);
+			if (controller.signal.aborted && !sandbox.failure) return;
+			const cause = sandbox.failure ?? error;
+			const reason = cause instanceof Error ? cause.message : String(cause);
 			await this.#report(repo, { type: 'conversation-failed', error: reason });
 		}
 	}
@@ -465,20 +468,26 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
 		if (!resumingReview) this.#think('Starting');
+		let sandbox: { failure?: unknown } = {};
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
-			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
-			if (!this.#meta('branch')) {
-				using repo = await this.env.ARTIFACTS.get(attempt.repo);
-				await this.#baseBranch(repo, fetch, 'read');
-				await this.#allowGit(fork, token, false);
-			}
-			if (!attempt.base) {
-				attempt.base = await this.#head(fetch);
-				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
-			}
-			if (resumingReview) return await this.#review(attempt, fetch);
+			const background = this.#background(controller, async () => {
+				const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+				if (!this.#meta('branch')) {
+					using repo = await this.env.ARTIFACTS.get(attempt.repo);
+					await this.#baseBranch(repo, fetch, 'read');
+					await this.#allowGit(fork, token, false);
+				}
+				if (!attempt.base) {
+					attempt.base = await this.#head(fetch);
+					this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
+				}
+				return fetch;
+			});
+			const { fetch } = background;
+			sandbox = background.sandbox;
+			if (resumingReview) return await this.#review(attempt, await background.sandbox.ready);
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
@@ -549,6 +558,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				next = await run.next();
 			}
 			this.#clearActivity();
+			if (sandbox.failure) throw sandbox.failure;
 			if (this.#attempt()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
 			if (next.value === 'finished' && attempt.intent) await this.#review(attempt, fetch);
@@ -557,8 +567,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			const status = this.#attempt()?.status;
 			if (status !== 'running' && status !== 'reviewing') return;
+			const cause = sandbox.failure ?? error;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
-			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
+			await this.#finish(attempt, 'failed', cause instanceof Error ? cause.message : String(cause));
 		} finally {
 			this.#controller = undefined;
 		}
@@ -829,6 +840,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 				});
 			}
 		});
+	}
+
+	#background(controller: AbortController, start: () => Promise<Fetch>) {
+		const sandbox: { ready: Promise<Fetch>; failure?: unknown } = { ready: start() };
+		sandbox.ready.catch((error: unknown) => {
+			sandbox.failure = error;
+			controller.abort();
+		});
+		const fetch: Fetch = async (url, init) => (await sandbox.ready)(url, init);
+		return { fetch, sandbox };
 	}
 
 	#think(label = 'Thinking') {

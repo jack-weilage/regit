@@ -82,18 +82,15 @@ test('records the stages of a cold start in the thread', async () => {
 	});
 
 	await expect
-		.poll(
-			async () =>
-				(await repo.thread(id))!.entries.some(
-					(entry) => entry.type === 'message' && entry.author.kind === 'agent'
-				),
-			{
-				timeout: 300_000,
-				interval: 1000
-			}
-		)
+		.poll(async () => (await repo.thread(id))!.entries.some((entry) => entry.type === 'startup'), {
+			timeout: 300_000,
+			interval: 1000
+		})
 		.toBe(true);
-	const startup = (await repo.thread(id))!.entries.find((entry) => entry.type === 'startup');
+	const { entries } = (await repo.thread(id))!;
+	const startup = entries.find((entry) => entry.type === 'startup');
+	const reply = entries.find((entry) => entry.type === 'message' && entry.author.kind === 'agent');
+	expect(reply && entries.indexOf(reply)).toBeLessThan(entries.indexOf(startup!));
 	expect(startup).toMatchObject({
 		stages: [
 			{ label: 'Start a ½ vCPU sandbox', status: 'done' },
