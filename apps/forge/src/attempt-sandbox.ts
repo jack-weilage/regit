@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
-import { toolchainSnapshots } from '@regit/db';
+import { previews, toolchainSnapshots } from '@regit/db';
 import { db } from './db.ts';
 import {
 	defaultMachine,
@@ -31,6 +31,7 @@ import {
 	threadInstructions,
 	type AgentOutcome,
 	type Fetch,
+	type ServiceInfo,
 	type Intent,
 	type Mode,
 	type Step,
@@ -226,6 +227,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async start({ task, mode, machine, repo, intent }: AttemptInput) {
 		if (this.#attempt()) throw new Error('This attempt has already started');
+		this.#setMeta('repo', repo);
 		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec(
 			`INSERT INTO attempt (id, task, mode, repo, status, intent) VALUES (1, ?, ?, ?, 'queued', ?)`,
@@ -301,6 +303,67 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
+	services(): ServiceInfo[] {
+		return JSON.parse(this.#meta('services') ?? '[]') as ServiceInfo[];
+	}
+
+	async serviceAction(action: 'start' | 'stop' | 'restart', name: string) {
+		const { fetch, repo } = await this.#wake();
+		const workspace = sandboxWorkspace(fetch);
+		try {
+			if (action === 'start') await workspace.startService(this.#serviceRequest(name));
+			if (action === 'stop') await workspace.stopService(name);
+			if (action === 'restart') await workspace.restartService(name);
+		} finally {
+			await this.#syncServices(fetch, repo);
+		}
+	}
+
+	async serviceLogs(name: string) {
+		const { fetch } = await this.#wake();
+		return sandboxWorkspace(fetch).serviceLogs(name, 200);
+	}
+
+	override async fetch(request: Request) {
+		const url = new URL(request.url);
+		const label = url.hostname.split('.')[0]!;
+		const name = label.slice(label.indexOf('-') + 1);
+		let service = this.services().find((service) => service.name === name);
+		if (!service) return new Response(`There is no service named ${name}`, { status: 404 });
+		if (service.status !== 'running' || !(this.env.SANDBOX_URL || this.ctx.container?.running)) {
+			try {
+				const { fetch, repo } = await this.#wake();
+				service = (await this.#syncServices(fetch, repo)).find((service) => service.name === name);
+				if (service?.status !== 'running') {
+					await sandboxWorkspace(fetch).startService(this.#serviceRequest(name));
+					service = (await this.#syncServices(fetch, repo)).find(
+						(service) => service.name === name
+					);
+				}
+			} catch (error) {
+				return new Response(error instanceof Error ? error.message : String(error), {
+					status: 502
+				});
+			}
+		}
+		if (!service) return new Response(`${name} stopped`, { status: 502 });
+		if (this.env.SANDBOX_URL) {
+			const base = `${this.env.SANDBOX_URL}/${this.ctx.id.name ?? this.ctx.id.toString()}`;
+			return globalThis.fetch(
+				`${base}/preview/${service.port}${url.pathname}${url.search}`,
+				request
+			);
+		}
+		const container = this.ctx.container!;
+		try {
+			return await container.getTcpPort(service.port).fetch(request.url, request.clone());
+		} catch {
+			return container
+				.getTcpPort(sandboxPort)
+				.fetch(`http://sandbox/preview/${service.port}${url.pathname}${url.search}`, request);
+		}
+	}
+
 	changes(): DiffFile[] | null {
 		const changes = this.#meta('changes');
 		return changes ? (JSON.parse(changes) as DiffFile[]) : null;
@@ -358,6 +421,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					if (event.type !== 'step') continue;
 					this.#saveConversation(event.turns);
 					await this.#report(repo, { type: 'reply', step: event });
+					await this.#syncServices(fetch, repo);
 				}
 				if (controller.signal.aborted) return;
 			}
@@ -440,6 +504,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				if (next.value.type === 'step') {
 					this.#saveStep(next.value);
 					await this.#report(attempt.repo, { type: 'step', step: next.value });
+					await this.#syncServices(fetch, attempt.repo);
 					if (Date.now() > deadline) {
 						await run.return('aborted');
 						await this.ctx.storage.setAlarm(Date.now());
@@ -666,6 +731,81 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return { base, branch };
 	}
 
+	async #wake(): Promise<{ fetch: Fetch; repo: string }> {
+		const attempt = this.#attempt();
+		if (attempt?.fork) {
+			const fork = await this.#fork(attempt);
+			const token = await this.#token(fork);
+			return {
+				fetch: await this.#sandbox({ repo: attempt.repo, ...fork }, token),
+				repo: attempt.repo
+			};
+		}
+		const repo = this.#meta('repo');
+		if (!repo) throw new Error("This thread hasn't started a sandbox yet");
+		using base = await this.env.ARTIFACTS.get(repo);
+		const info = await base.info();
+		const { plaintext: token } = await base.createToken('read', 60 * 60);
+		const fetch = await this.#sandbox(
+			{ repo, remote: info.remote, branch: info.defaultBranch },
+			token
+		);
+		return { fetch, repo };
+	}
+
+	#serviceRequest(name: string) {
+		const known = this.services().find((service) => service.name === name);
+		if (!known || known.saved) return { name };
+		const { name: _, command, port, cwd, env } = known;
+		return { name, command, port, ...(cwd && { cwd }), ...(env && { env }) };
+	}
+
+	async #syncServices(fetch: Fetch, repo: string) {
+		try {
+			const services = await sandboxWorkspace(fetch).services();
+			const json = JSON.stringify(services);
+			if (json !== this.#meta('services')) {
+				this.#setMeta('services', json);
+				await this.#report(repo, {
+					type: 'services',
+					services,
+					preview: await this.#previewHost(repo)
+				});
+			}
+			return services;
+		} catch (error) {
+			console.warn('Could not list services', error);
+			return this.services();
+		}
+	}
+
+	async #restoreServices(fetch: Fetch) {
+		const workspace = sandboxWorkspace(fetch);
+		for (const service of this.services()) {
+			if (service.status !== 'running' && service.status !== 'starting') continue;
+			await workspace.startService(this.#serviceRequest(service.name)).catch((error: unknown) => {
+				console.warn(`Could not restart ${service.name}`, error);
+			});
+		}
+	}
+
+	async #previewHost(repo: string) {
+		let id = this.#meta('preview');
+		if (!id) {
+			id = [...crypto.getRandomValues(new Uint8Array(10))]
+				.map((byte) => byte.toString(16).padStart(2, '0'))
+				.join('');
+			await db.insert(previews).values({
+				id,
+				repo,
+				thread: this.ctx.id.name ?? this.ctx.id.toString(),
+				createdAt: new Date()
+			});
+			this.#setMeta('preview', id);
+		}
+		return `${id}-{name}.${this.env.PREVIEW_DOMAIN}`;
+	}
+
 	#setBase(attempt: AttemptRow, base: string) {
 		attempt.base = base;
 		this.#sql.exec('UPDATE attempt SET base = ?', base);
@@ -884,6 +1024,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				console.warn('Could not snapshot the toolchain', error);
 			}
 		}
+		await this.#restoreServices(fetch);
 		return fetch;
 	}
 
@@ -900,7 +1041,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #start(source: { image: string } | { containerSnapshot: { id: string } }, fetch: Fetch) {
 		const container = this.ctx.container!;
-		container.start({ ...source, enableInternet: true, instance: this.#machine() });
+		const repo = this.#meta('repo');
+		container.start({
+			...source,
+			enableInternet: true,
+			instance: this.#machine(),
+			...(repo && { env: { REGIT_PREVIEW_HOST: await this.#previewHost(repo) } })
+		});
 		await container.setInactivityTimeout(idleTimeoutMs);
 		try {
 			await waitUntilHealthy(fetch);

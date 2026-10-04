@@ -11,6 +11,7 @@ RUN apt-get update \
 
 COPY --from=jdxcode/mise:2026.10.0 /usr/local/bin/mise /usr/local/bin/mise
 COPY --from=server /regit-sandbox /usr/local/bin/regit-sandbox
+RUN ln -s /usr/local/bin/regit-sandbox /usr/local/bin/regit
 COPY mise-system.toml /etc/mise/config.toml
 COPY start.sh /usr/local/bin/regit-start
 

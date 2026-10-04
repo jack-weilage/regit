@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import type { ThreadDetail } from '@regit/core';
@@ -1025,4 +1026,48 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 				entry.id === second.id && entry.type === 'suggestion' && entry.outcome?.kind === 'dismissed'
 		)
 	);
+});
+
+test('runs saved services and serves them on preview hosts', async () => {
+	const port = 40_000 + Math.floor(Math.random() * 10_000);
+	const command = `node -e "console.log('booting'); require('http').createServer((q, s) => s.end('hi from ' + q.url)).listen(process.env.PORT)"`;
+	const work = await seed('serving', { 'README.md': '# Serving\n' });
+	mkdirSync(join(work, '.agents'));
+	await commit(
+		work,
+		{ '.agents/services.yml': `services:\n  hello:\n    command: ${command}\n    port: ${port}\n` },
+		'Save a service'
+	);
+	sh(work, 'push', '--quiet', join(dir, 'serving.git'), 'main');
+	await script([[{ type: 'response.output_text.delta', delta: 'Ready.' }]]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('serving');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'serving',
+		author: sam,
+		text: 'Show me the app.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+
+	const listed = await untilThread(repo, id, (detail) => detail.services.length > 0);
+	expect(listed.services).toMatchObject([{ name: 'hello', port, saved: true, status: 'stopped' }]);
+	const preview = new URL(listed.services[0]!.preview);
+	expect(preview.hostname).toMatch(/^[0-9a-f]{20}-hello\.regit\.dev$/);
+
+	await repo.serviceAction(id, 'start', 'hello');
+	expect((await repo.thread(id))!.services[0]).toMatchObject({ status: 'running' });
+	const response = await worker.fetch(new URL('/page?x=1', preview).toString());
+	expect(await response.text()).toBe('hi from /page?x=1');
+	expect(await repo.serviceLogs(id, 'hello')).toBe('booting');
+
+	await repo.serviceAction(id, 'stop', 'hello');
+	expect((await repo.thread(id))!.services[0]).toMatchObject({ status: 'stopped' });
+	const woken = await worker.fetch(preview.toString());
+	expect(await woken.text()).toBe('hi from /');
+	expect((await repo.thread(id))!.services[0]).toMatchObject({ status: 'running' });
+	await repo.serviceAction(id, 'stop', 'hello');
+
+	expect((await worker.fetch('https://0000-hello.regit.dev/')).status).toBe(404);
 });

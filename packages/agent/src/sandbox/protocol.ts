@@ -54,6 +54,33 @@ export interface Identity {
 	email: string;
 }
 
+export interface ServiceSpec {
+	name: string;
+	command: string;
+	port: number;
+	cwd?: string;
+	env?: Record<string, string>;
+}
+
+export interface ServiceInfo extends ServiceSpec {
+	saved: boolean;
+	status: 'stopped' | 'starting' | 'running' | 'exited';
+	exitCode?: number | null;
+	startedAt?: number;
+}
+
+export interface ServicesResponse {
+	services: ServiceInfo[];
+}
+
+export interface ServiceRequest {
+	name: string;
+}
+
+export interface ServiceLogsRequest extends ServiceRequest {
+	lines?: number;
+}
+
 export interface HeadBranchRequest {
 	remote: string;
 	token?: string;

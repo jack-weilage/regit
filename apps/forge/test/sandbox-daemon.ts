@@ -19,7 +19,7 @@ const server = createServer(async (req, res) => {
 	const chunks: Buffer[] = [];
 	for await (const chunk of req) chunks.push(chunk as Buffer);
 	const response = await sandbox(
-		new Request(`http://sandbox/${rest.join('/')}`, {
+		new Request(`http://sandbox/${rest.join('/')}${url.search}`, {
 			method: req.method,
 			headers: req.headers as Record<string, string>,
 			body: chunks.length ? Buffer.concat(chunks) : undefined

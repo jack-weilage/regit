@@ -5,11 +5,12 @@
 
 	interface Props {
 		files: DiffFile[];
+		embedded?: boolean;
 		onship?: () => void;
 		onclose?: () => void;
 	}
 
-	let { files, onship, onclose }: Props = $props();
+	let { files, embedded = false, onship, onclose }: Props = $props();
 
 	const id = $props.id();
 
@@ -18,9 +19,9 @@
 </script>
 
 <section class="panel" aria-labelledby="{id}-title">
-	<header>
+	<header class={{ hidden: embedded && !files.length }}>
 		<div class="title">
-			<h2 id="{id}-title">Changes</h2>
+			<h2 id="{id}-title" class={{ hidden: embedded }}>Changes</h2>
 			<p class="summary">
 				{files.length}
 				{files.length === 1 ? 'file' : 'files'}
@@ -38,7 +39,11 @@
 		{/if}
 	</header>
 	<div class="body">
-		<ChatDiff {files} />
+		{#if files.length}
+			<ChatDiff {files} />
+		{:else}
+			<p class="empty">No changes yet.</p>
+		{/if}
 	</div>
 </section>
 
@@ -98,6 +103,19 @@
 
 	.removed {
 		color: var(--color-removed);
+	}
+
+	.hidden {
+		position: absolute;
+		inline-size: 1px;
+		block-size: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+	}
+
+	.empty {
+		margin: 0;
+		color: var(--color-muted);
 	}
 
 	.body {

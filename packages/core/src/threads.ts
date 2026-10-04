@@ -97,10 +97,21 @@ export interface ThreadUsage {
 	context: { used: number; limit: number };
 }
 
+export interface ThreadService {
+	name: string;
+	command: string;
+	port: number;
+	saved: boolean;
+	status: 'stopped' | 'starting' | 'running' | 'exited';
+	exitCode?: number | null;
+	preview: string;
+}
+
 export interface ThreadDetail {
 	summary: ThreadSummary;
 	entries: Entry[];
 	usage: ThreadUsage;
+	services: ThreadService[];
 }
 
 export type LiveMessage =
@@ -125,6 +136,8 @@ export interface RepoCoordinatorApi {
 	ship(thread: string, input: ShipInput): Promise<void>;
 	spinOff(thread: string, entry: string, by: Author): Promise<ThreadSummary>;
 	dismissSuggestion(thread: string, entry: string, by: Author): void;
+	serviceAction(thread: string, action: 'start' | 'stop' | 'restart', name: string): Promise<void>;
+	serviceLogs(thread: string, name: string): Promise<string>;
 	threads(): ThreadSummary[];
 	thread(id: string): ThreadDetail | null;
 }

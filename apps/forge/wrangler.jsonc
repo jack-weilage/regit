@@ -6,8 +6,9 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },
 	"workers_dev": false,
+	"routes": [{ "pattern": "*.regit.dev/*", "zone_name": "regit.dev" }],
 	"preview_urls": false,
-	"vars": { "AI_GATEWAY": "regit", "SANDBOX_URL": "" },
+	"vars": { "AI_GATEWAY": "regit", "SANDBOX_URL": "", "PREVIEW_DOMAIN": "regit.dev" },
 	"ai": { "binding": "AI", "remote": true },
 	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],
 	"d1_databases": [

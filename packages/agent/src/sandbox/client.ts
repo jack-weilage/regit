@@ -15,6 +15,8 @@ import type {
 	PushResponse,
 	RebaseRequest,
 	RebaseResponse,
+	ServiceInfo,
+	ServicesResponse,
 	SquashRequest,
 	ToolchainResponse,
 	ToolName,
@@ -77,6 +79,37 @@ export function sandboxWorkspace(fetch: Fetch) {
 				JSON.stringify(request)
 			);
 			return branch;
+		},
+		async services() {
+			const { services } = await post<ServicesResponse>(fetch, '/services/list', '{}');
+			return services;
+		},
+		async startService(request: { name: string } | Omit<ServiceInfo, 'saved' | 'status'>) {
+			const { service } = await post<{ service: ServiceInfo }>(
+				fetch,
+				'/services/start',
+				JSON.stringify(request)
+			);
+			return service;
+		},
+		async stopService(name: string) {
+			await post(fetch, '/services/stop', JSON.stringify({ name }));
+		},
+		async restartService(name: string) {
+			const { service } = await post<{ service: ServiceInfo }>(
+				fetch,
+				'/services/restart',
+				JSON.stringify({ name })
+			);
+			return service;
+		},
+		async serviceLogs(name: string, lines?: number) {
+			const { logs } = await post<{ logs: string }>(
+				fetch,
+				'/services/logs',
+				JSON.stringify({ name, lines })
+			);
+			return logs;
 		},
 		async diff(request: DiffRequest) {
 			const { diff } = await post<DiffResponse>(fetch, '/workspace/diff', JSON.stringify(request));

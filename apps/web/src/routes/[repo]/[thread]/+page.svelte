@@ -17,7 +17,10 @@
 		Markdown,
 		DeleteThreadDialog,
 		statuses,
+		ServicesPanel,
 		ShipDialog,
+		ThreadSidebar,
+		type SidebarTab,
 		ThreadView,
 		Button,
 		type CheckState,
@@ -30,6 +33,8 @@
 		discardThread,
 		dismissSuggestion,
 		getChanges,
+		readServiceLogs,
+		serviceAction,
 		getThread,
 		getThreads,
 		getUser,
@@ -63,7 +68,37 @@
 	let { params } = $props();
 
 	let deleting = $state(false);
-	let viewing = $state(false);
+	let open = $state(false);
+	let tab = $state<SidebarTab>('changes');
+	let restored = false;
+
+	$effect(() => {
+		if (!restored) {
+			restored = true;
+			try {
+				const saved = JSON.parse(localStorage.getItem('regit:sidebar') ?? 'null');
+				open = saved?.open ?? false;
+				tab = saved?.tab === 'services' ? 'services' : 'changes';
+			} catch {
+				// Storage is unavailable; start closed.
+			}
+			return;
+		}
+		try {
+			localStorage.setItem('regit:sidebar', JSON.stringify({ open, tab }));
+		} catch {
+			// Storage is unavailable; the panel just won't be remembered.
+		}
+	});
+
+	$effect(() => {
+		JSON.stringify(detail?.summary.changes);
+		if (open && tab === 'changes') getChanges(ref).refresh();
+	});
+	let service = $state<string | null>(null);
+	let logs = $state<string | null>(null);
+	let busy = $state<string | null>(null);
+	let failure = $state<string | null>(null);
 	let confirming = $state(false);
 
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
@@ -149,9 +184,25 @@
 		detail?.summary.status === 'needs-you' && !!detail.summary.changes?.files
 	);
 
+	async function act(action: 'start' | 'stop' | 'restart', name: string) {
+		busy = name;
+		failure = null;
+		try {
+			await serviceAction({ ...ref, action, name });
+		} catch (error) {
+			failure = error instanceof Error ? error.message : String(error);
+		} finally {
+			busy = null;
+		}
+	}
+
+	async function showLogs(name: string) {
+		logs = await readServiceLogs({ ...ref, name }).catch(() => null);
+	}
+
 	function view() {
-		viewing = true;
-		getChanges(ref).refresh();
+		tab = 'changes';
+		open = true;
 	}
 	let actions = $derived.by<ThreadAction[]>(() => {
 		const status = detail?.summary.status;
@@ -206,7 +257,7 @@
 	/>
 {:else if detail}
 	{@const { summary } = detail}
-	<div class={['page', { viewing }]}>
+	<div class="page">
 		<ThreadView>
 			{#snippet header()}
 				<ChatHeader
@@ -332,17 +383,34 @@
 				/>
 			{/snippet}
 		</ThreadView>
-		{#if viewing}
-			<div class="panel">
+		<ThreadSidebar
+			bind:open
+			bind:tab
+			changes={summary.changes}
+			live={detail.services.some((service) => service.status === 'running')}
+		>
+			{#snippet changesTab()}
 				{#await getChanges(ref) then files}
 					<ChangesPanel
 						files={files ?? []}
+						embedded
 						onship={shippable ? () => (confirming = true) : undefined}
-						onclose={() => (viewing = false)}
 					/>
 				{/await}
-			</div>
-		{/if}
+			{/snippet}
+			{#snippet servicesTab()}
+				<ServicesPanel
+					services={detail.services}
+					bind:selected={service}
+					{logs}
+					{busy}
+					error={failure}
+					embedded
+					onaction={act}
+					onlogs={showLogs}
+				/>
+			{/snippet}
+		</ThreadSidebar>
 	</div>
 	{#if intent && summary.changes}
 		<ShipDialog
@@ -359,10 +427,7 @@
 						total: latestReview.checks.length
 					}
 				: null}
-			onship={({ title, body }) => {
-				viewing = false;
-				shipThread({ ...ref, title, body });
-			}}
+			onship={({ title, body }) => shipThread({ ...ref, title, body })}
 		/>
 	{/if}
 	<DeleteThreadDialog
@@ -383,32 +448,12 @@
 <style>
 	.page {
 		container: page / inline-size;
+		position: relative;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
+		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-rows: minmax(0, 1fr);
 		block-size: 100%;
 		min-block-size: 0;
-
-		&.viewing {
-			grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
-		}
-	}
-
-	.panel {
-		min-inline-size: 0;
-		min-block-size: 0;
-		border-inline-start: 1px solid var(--color-border);
-	}
-
-	@container page (width < 60rem) {
-		.viewing > :global(*) {
-			grid-area: 1 / 1 / 2 / -1;
-		}
-
-		.panel {
-			z-index: 2;
-			border-inline-start: 0;
-		}
 	}
 
 	.missing {

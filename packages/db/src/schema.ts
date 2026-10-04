@@ -16,3 +16,10 @@ export const toolchainSnapshots = sqliteTable('toolchain_snapshots', {
 	size: integer(),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull()
 });
+
+export const previews = sqliteTable('previews', {
+	id: text().primaryKey(),
+	repo: text().notNull(),
+	thread: text().notNull(),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull()
+});

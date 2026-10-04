@@ -132,6 +132,20 @@ export const dismissSuggestion = command(suggestion, async ({ repo, id, entry })
 	getThread({ repo, id }).refresh();
 });
 
+const service = v.object({ ...thread.entries, name: v.pipe(v.string(), v.regex(/^[\w.-]+$/)) });
+
+export const serviceAction = command(
+	v.object({ ...service.entries, action: v.picklist(['start', 'stop', 'restart']) }),
+	async ({ repo, id, name, action }) => {
+		await (await coordinator(repo)).serviceAction(id, action, name);
+		getThread({ repo, id }).refresh();
+	}
+);
+
+export const readServiceLogs = command(service, async ({ repo, id, name }) =>
+	(await coordinator(repo)).serviceLogs(id, name)
+);
+
 export const stopThread = command(thread, async ({ repo, id }) => {
 	await (await coordinator(repo)).stop(id, author());
 	getThread({ repo, id }).refresh();

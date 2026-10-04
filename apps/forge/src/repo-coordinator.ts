@@ -6,6 +6,7 @@ import {
 	modes,
 	type Intent,
 	type Step,
+	type ServiceInfo,
 	type Suggestion,
 	type Usage
 } from '@regit/agent';
@@ -22,6 +23,7 @@ import type {
 	RepoCoordinatorApi,
 	ShipInput,
 	ThreadDetail,
+	ThreadService,
 	ThreadStatus,
 	ThreadSummary,
 	ThreadUsage,
@@ -40,6 +42,7 @@ export type AttemptUpdate =
 	| { type: 'conflicts'; files: string[]; base: string }
 	| { type: 'rebased'; base: string }
 	| { type: 'shipped'; sha: string; base: string }
+	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
 	| {
 			type: 'review';
@@ -67,6 +70,8 @@ type ThreadRow = {
 	base: string | null;
 	parent: string | null;
 	context: string | null;
+	services: string | null;
+	preview: string | null;
 	parent_headline?: string | null;
 };
 
@@ -125,7 +130,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			['shipped_at', 'INTEGER'],
 			['base', 'TEXT'],
 			['parent', 'TEXT'],
-			['context', 'TEXT']
+			['context', 'TEXT'],
+			['services', 'TEXT'],
+			['preview', 'TEXT']
 		]) {
 			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
 		}
@@ -287,14 +294,17 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	thread(id: string): ThreadDetail | null {
 		const summary = this.#summary(id);
 		if (!summary) return null;
-		if (summary.deleted) return { summary, entries: [], usage: this.#usage(id, summary.mode, []) };
+		if (summary.deleted) {
+			return { summary, entries: [], usage: this.#usage(id, summary.mode, []), services: [] };
+		}
 		const rows = this.#sql
 			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq', id)
 			.toArray();
 		return {
 			summary,
 			entries: rows.map((row) => JSON.parse(row.body) as Entry),
-			usage: this.#usage(id, summary.mode)
+			usage: this.#usage(id, summary.mode),
+			services: this.#services(id)
 		};
 	}
 
@@ -345,6 +355,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#update(thread, { ...suggestion, outcome: { kind: 'dismissed', by: by.name } });
 	}
 
+	async serviceAction(thread: string, action: 'start' | 'stop' | 'restart', name: string) {
+		this.#active(thread);
+		await this.env.ATTEMPTS.getByName(thread).serviceAction(action, name);
+	}
+
+	serviceLogs(thread: string, name: string) {
+		this.#active(thread);
+		return this.env.ATTEMPTS.getByName(thread).serviceLogs(name) as Promise<string>;
+	}
+
 	changes(thread: string) {
 		this.#active(thread);
 		return this.env.ATTEMPTS.getByName(thread).changes() as Promise<DiffFile[] | null>;
@@ -379,6 +399,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 		if (update.type === 'usage') {
 			for (const usage of update.usage) this.#recordUsage(thread, update.task, update.model, usage);
+			return;
+		}
+		if (update.type === 'services') {
+			this.#sql.exec(
+				'UPDATE threads SET services = ?, preview = ? WHERE id = ?',
+				JSON.stringify(update.services),
+				update.preview,
+				thread
+			);
+			this.#touch(thread);
 			return;
 		}
 		if (update.type === 'conflicts') {
@@ -481,6 +511,27 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text,
 			entry
 		});
+	}
+
+	#services(thread: string): ThreadService[] {
+		const [row] = this.#sql
+			.exec<Pick<ThreadRow, 'services' | 'preview'>>(
+				'SELECT services, preview FROM threads WHERE id = ?',
+				thread
+			)
+			.toArray();
+		if (!row?.services) return [];
+		return (JSON.parse(row.services) as ServiceInfo[]).map(
+			({ name, command, port, saved, status, exitCode }) => ({
+				name,
+				command,
+				port,
+				saved,
+				status,
+				exitCode,
+				preview: row.preview ? `https://${row.preview.replace('{name}', name)}` : ''
+			})
+		);
 	}
 
 	#entry(thread: string, id: string) {

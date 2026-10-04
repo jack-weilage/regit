@@ -1,0 +1,7 @@
+# Long-running services for ReGit threads: start them from a thread's Preview panel,
+# or with `regit services start <name>` in the sandbox.
+services:
+  storybook:
+    command: bun install && bun run storybook --host 0.0.0.0 --ci --no-open
+    cwd: packages/ui
+    port: 6006
