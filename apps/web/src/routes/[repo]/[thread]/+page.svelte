@@ -304,6 +304,7 @@
 		<ShipDialog
 			bind:open={confirming}
 			repo={params.repo}
+			base={summary.base ?? undefined}
 			headline={intent.headline}
 			body={intent.purpose}
 			{...summary.changes}

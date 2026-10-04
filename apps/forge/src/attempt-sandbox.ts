@@ -369,6 +369,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+			if (!this.#meta('branch')) {
+				using repo = await this.env.ARTIFACTS.get(attempt.repo);
+				await this.#baseBranch(repo, fetch, 'read');
+				await this.#allowGit(fork, token, false);
+			}
 			if (!attempt.base) {
 				attempt.base = await this.#head(fetch);
 				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
@@ -524,13 +529,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			lockGit = () => this.#allowGit(fork, token, false);
 			const workspace = sandboxWorkspace(fetch);
 			using repo = await this.env.ARTIFACTS.get(attempt.repo);
-			const base = await repo.info();
-			const { plaintext: baseToken } = await repo.createToken('write', 60 * 60);
-			await this.#allowGit(base, baseToken, true);
-			const branch =
-				(await workspace.headBranch({ remote: base.remote, token: baseToken })) ??
-				base.defaultBranch;
-			const target = { remote: base.remote, branch, token: baseToken };
+			const { base, branch } = await this.#baseBranch(repo, fetch, 'write');
+			const target = { remote: base.remote, branch };
 
 			const message = [request.title, request.body, 'Co-authored-by: ReGit <agent@regit.dev>']
 				.filter(Boolean)
@@ -555,9 +555,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
 					await this.#resolve(attempt, fetch, rebased.conflicts, branch, controller);
 					this.#setBase(attempt, rebased.onto);
-					await this.#push(fork, token, () =>
-						workspace.push({ ref: fork.branch, token, force: true })
-					);
+					await this.#push(fork, token, () => workspace.push({ ref: fork.branch, force: true }));
 					await this.#saveChanges(attempt, fetch);
 					await this.#report(attempt.repo, { type: 'rebased', base: branch });
 					this.#setMeta('cycle', String(this.#reviewCount()));
@@ -566,9 +564,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				this.#setBase(attempt, rebased.onto);
 				try {
 					const sha = await workspace.push({ ref: target.branch, ...target });
-					await this.#push(fork, token, () =>
-						workspace.push({ ref: fork.branch, token, force: true })
-					);
+					await this.#push(fork, token, () => workspace.push({ ref: fork.branch, force: true }));
 					await this.#saveChanges(attempt, fetch);
 					await this.#report(attempt.repo, { type: 'shipped', sha, base: branch });
 					await this.#finish(attempt, 'shipped');
@@ -637,10 +633,24 @@ export class AttemptSandbox extends DurableObject<Env> {
 				files = files.map((file) => ({ ...file, hunks: [], tooLarge: true }));
 			}
 			this.#setMeta('changes', JSON.stringify(files));
-			await this.#report(attempt.repo, { type: 'changes', summary: summarize(files) });
+			await this.#report(attempt.repo, {
+				type: 'changes',
+				summary: summarize(files),
+				base: this.#meta('branch') ?? null
+			});
 		} catch (error) {
 			console.warn('Could not save the changes', error);
 		}
+	}
+
+	async #baseBranch(repo: ArtifactsRepo, fetch: Fetch, scope: 'read' | 'write') {
+		const base = await repo.info();
+		const { plaintext: token } = await repo.createToken(scope, 60 * 60);
+		await this.#allowGit(base, token, scope === 'write');
+		const branch =
+			(await sandboxWorkspace(fetch).headBranch({ remote: base.remote })) ?? base.defaultBranch;
+		this.#setMeta('branch', branch);
+		return { base, branch };
 	}
 
 	#setBase(attempt: AttemptRow, base: string) {

@@ -35,7 +35,7 @@ export type AttemptUpdate =
 	| { type: 'reply'; step: Step }
 	| { type: 'conversation-failed'; error: string }
 	| { type: 'read'; entries: string[] }
-	| { type: 'changes'; summary: DiffSummary }
+	| { type: 'changes'; summary: DiffSummary; base: string | null }
 	| { type: 'conflicts'; files: string[]; base: string }
 	| { type: 'rebased'; base: string }
 	| { type: 'shipped'; sha: string; base: string }
@@ -63,6 +63,7 @@ type ThreadRow = {
 	shipped_sha: string | null;
 	shipped_by: string | null;
 	shipped_at: number | null;
+	base: string | null;
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
@@ -117,7 +118,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			['changes', 'TEXT'],
 			['shipped_sha', 'TEXT'],
 			['shipped_by', 'TEXT'],
-			['shipped_at', 'INTEGER']
+			['shipped_at', 'INTEGER'],
+			['base', 'TEXT']
 		]) {
 			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
 		}
@@ -323,8 +325,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (!summary) return;
 		if (update.type === 'changes') {
 			this.#sql.exec(
-				'UPDATE threads SET changes = ? WHERE id = ?',
+				'UPDATE threads SET changes = ?, base = COALESCE(?, base) WHERE id = ?',
 				JSON.stringify(update.summary),
+				update.base,
 				thread
 			);
 			this.#touch(thread);
@@ -599,6 +602,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		updatedAt: row.updated_at,
 		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' },
 		changes: row.changes ? (JSON.parse(row.changes) as DiffSummary) : null,
+		base: row.base,
 		shipped:
 			row.shipped_sha && row.shipped_at
 				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }

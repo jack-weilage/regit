@@ -62,6 +62,7 @@ export interface ThreadSummary {
 	updatedAt: number;
 	deleted: { at: number; by: string } | null;
 	changes: DiffSummary | null;
+	base: string | null;
 	shipped: { sha: string; by: string; at: number } | null;
 }
 

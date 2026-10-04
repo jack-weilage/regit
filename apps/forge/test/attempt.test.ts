@@ -854,6 +854,7 @@ test('ships reviewed work as one commit on main', async () => {
 		'Readers need a title.\n\nCo-authored-by: ReGit <agent@regit.dev>'
 	);
 	expect(sh(join(dir, 'shipping.git'), 'show', 'main:notes.md')).toBe('# Notes');
+	expect((await git.requests()).some((headers) => headers.authorization)).toBe(false);
 
 	await repo.reply(id, { author: sam, text: 'Where is the title?' });
 	const answered = await untilThread(repo, id, (detail) =>
@@ -925,11 +926,12 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 		],
 		'master'
 	);
-	await untilThread(
+	const ready = await untilThread(
 		repo,
 		id,
 		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 1
 	);
+	expect(ready.summary.base).toBe('master');
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
