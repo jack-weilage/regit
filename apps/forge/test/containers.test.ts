@@ -104,3 +104,140 @@ test('records the stages of a cold start in the thread', async () => {
 		expect(stage.finishedAt!).toBeGreaterThanOrEqual(stage.startedAt!);
 	}
 });
+
+test('runs native commands with the workspace environment, bounded output and process-tree deadlines', async () => {
+	await seed('native-run', { 'README.md': '# Native run\n' });
+	const calls = [
+		{
+			command:
+				'printf "%s\\n" "$PWD" "$MISE_DATA_DIR" "$MISE_CACHE_DIR" "$REGIT_PREVIEW_HOST"; jq -n 42; printf diagnostic >&2; exit 7'
+		},
+		{
+			command: "printf HEAD; printf 'α%.0s' {1..11000}; printf 'β%.0s' {1..23001}; printf TAIL"
+		},
+		{ command: 'exit 124' },
+		{ command: 'exit 137' },
+		{ command: '(sleep 2; touch foreground-survived) & wait', timeout_seconds: 1 },
+		{ command: '(sleep 2; touch background-survived) & printf begun', timeout_seconds: 1 },
+		{
+			command:
+				'sleep 2; test ! -e foreground-survived && test ! -e background-survived && printf stopped'
+		}
+	];
+	await script([
+		calls.map((args, index) => ({
+			type: 'response.output_item.done',
+			item: {
+				type: 'function_call',
+				call_id: `native-${index}`,
+				name: 'run',
+				arguments: JSON.stringify(args)
+			}
+		})),
+		[{ type: 'response.output_text.delta', delta: 'Checked native commands.' }]
+	]);
+	await start('native-run-thread', { task: 'Run checks', mode: 'small', repo: 'native-run' });
+	const snapshot = await settled('native-run-thread');
+	expect(snapshot).toMatchObject({ status: 'finished', error: null });
+	const outputs = snapshot.steps.flatMap((step) =>
+		step.turns.flatMap((turn) => (turn.role === 'tool' ? turn.results.map((r) => r.output) : []))
+	);
+	expect(outputs).toHaveLength(calls.length);
+	expect(outputs[0]).toMatch(
+		/^exit code 7\n\/workspace\n\/opt\/mise\n\/opt\/mise\/cache\n\w+-\{name\}\.regit\.dev\n/
+	);
+	expect(outputs[0]).toContain('42');
+	expect(outputs[0]).toContain('diagnostic');
+	expect(outputs[1]).toBe(
+		`exit code 0\nHEAD${'α'.repeat(9996)}\n… 14009 characters omitted …\n${'β'.repeat(9996)}TAIL`
+	);
+	expect(outputs.slice(2)).toEqual([
+		'exit code 124',
+		'exit code 137',
+		'timed out after 1s',
+		'timed out after 1s\nbegun',
+		'exit code 0\nstopped'
+	]);
+
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'restored',
+					name: 'run',
+					arguments: JSON.stringify({ command: 'jq -n 43' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Checked the restored toolchain.' }]
+	]);
+	await start('native-restored-thread', { task: 'Run again', mode: 'small', repo: 'native-run' });
+	const restored = await settled('native-restored-thread');
+	expect(restored).toMatchObject({
+		status: 'finished',
+		error: null,
+		toolchain: { restored: true }
+	});
+	expect(restored.steps[0]!.turns).toContainEqual({
+		role: 'tool',
+		results: [{ callId: 'restored', output: 'exit code 0\n43' }]
+	});
+});
+
+test('stopping a native command kills its children without destroying the workspace', async () => {
+	await seed('native-stop', { 'README.md': '# Native stop\n' });
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'start-child',
+					name: 'run',
+					arguments: JSON.stringify({
+						command: 'touch started; (sleep 4; touch survived) & wait',
+						timeout_seconds: 30
+					})
+				}
+			}
+		]
+	]);
+	await start('native-stop-thread', { task: 'Run a build', mode: 'small', repo: 'native-stop' });
+	await expect.poll(async () => (await modelRequests()).length, { timeout: 120_000 }).toBe(1);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	const env = await worker.getEnv();
+	const attempt = env.ATTEMPTS.getByName('native-stop-thread');
+	await attempt.stop();
+	expect(await attempt.snapshot()).toMatchObject({ status: 'interrupted' });
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'check-child',
+					name: 'run',
+					arguments: JSON.stringify({
+						command: 'sleep 4; test -e started && test ! -e survived && printf stopped'
+					})
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'The child was stopped.' }]
+	]);
+	await attempt.converse({
+		repo: 'native-stop',
+		mode: 'small',
+		author: 'Sam',
+		text: 'Check that the build stopped',
+		entry: 'stop-check'
+	});
+	const resumed = await settled('native-stop-thread');
+	expect(resumed).toMatchObject({ status: 'finished', error: null });
+	expect(resumed.steps.flatMap((step) => step.turns)).toContainEqual({
+		role: 'tool',
+		results: [{ callId: 'check-child', output: 'exit code 0\nstopped' }]
+	});
+});

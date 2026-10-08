@@ -20,6 +20,7 @@ import type {
 	SquashRequest,
 	SkillsResponse,
 	ToolchainResponse,
+	ToolArguments,
 	ToolName,
 	ToolResponse
 } from './protocol.ts';
@@ -41,10 +42,15 @@ async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortS
 
 export const readOnlyTools: ToolName[] = ['read_file', 'find_files', 'search', 'run'];
 
-export function sandboxTools(fetch: Fetch, only?: ToolName[]): ToolExecutor {
+export function sandboxTools(
+	fetch: Fetch,
+	only?: ToolName[],
+	run?: (args: ToolArguments['run'], signal?: AbortSignal) => Promise<string>
+): ToolExecutor {
 	return {
 		specs: only ? toolSpecs.filter((spec) => only.includes(spec.name)) : toolSpecs,
 		async execute(call, signal) {
+			if (call.name === 'run' && run) return run(JSON.parse(call.arguments), signal);
 			const { output } = await post<ToolResponse>(
 				fetch,
 				`/tools/${call.name}`,

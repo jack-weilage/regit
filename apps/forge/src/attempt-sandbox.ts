@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
 import { previews, toolchainSnapshots } from '@regit/db';
 import { db } from './db.ts';
+import { containerRun } from './container-run.ts';
 import {
 	defaultMachine,
 	machines,
@@ -49,6 +50,7 @@ import {
 	type Intent,
 	type Mode,
 	type Step,
+	type ToolName,
 	type Toolchain,
 	type Turn
 } from '@regit/agent';
@@ -417,7 +419,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill]);
 			const tools = combineTools(
 				skillTools(skills),
-				sandboxTools(fetch, readOnlyTools),
+				this.#tools(fetch, readOnlyTools),
 				intentTools((intent) => coordinator.intentProposed(thread, intent)),
 				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion)),
 				threadTools({
@@ -517,7 +519,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				}),
 				tools: combineTools(
 					skillTools(skills),
-					sandboxTools(fetch),
+					this.#tools(fetch),
 					intentTools(
 						async (intent) => {
 							attempt.intent = JSON.stringify(intent);
@@ -617,7 +619,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				sessionId: `${thread}/review`,
 				metadata: { thread, mode: attempt.mode, task: 'review' }
 			}),
-			tools: sandboxTools(fetch, readOnlyTools),
+			tools: this.#tools(fetch, readOnlyTools),
 			intent,
 			base: attempt.base,
 			summary: this.#summary(),
@@ -751,7 +753,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					sessionId: `${thread}/conflicts`,
 					metadata: { thread, mode: attempt.mode, task: 'conflicts' }
 				}),
-				tools: sandboxTools(fetch),
+				tools: this.#tools(fetch),
 				intent: JSON.parse(attempt.intent!) as Intent,
 				base: branch,
 				files,
@@ -979,8 +981,24 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#sql.exec('UPDATE attempt SET base = ?', base);
 	}
 
+	#tools(fetch: Fetch, only?: ToolName[]) {
+		return sandboxTools(
+			fetch,
+			only,
+			this.env.SANDBOX_URL
+				? undefined
+				: async (args, signal) =>
+						containerRun(
+							this.ctx.container!,
+							args,
+							{ REGIT_PREVIEW_HOST: await this.#previewHost(this.#meta('repo')!) },
+							signal
+						)
+		);
+	}
+
 	async #head(fetch: Fetch) {
-		const output = await sandboxTools(fetch).execute({
+		const output = await this.#tools(fetch).execute({
 			id: 'base',
 			name: 'run',
 			arguments: JSON.stringify({ command: 'git rev-parse HEAD' })
@@ -1252,6 +1270,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			...(repo && { env: { REGIT_PREVIEW_HOST: await this.#previewHost(repo) } })
 		});
 		await container.setInactivityTimeout(idleTimeoutMs);
+		// TODO: observe startup failures with container.monitor(), accounting for its eviction delay in the idle policy.
 		try {
 			await waitUntilHealthy(fetch);
 		} catch (error) {
