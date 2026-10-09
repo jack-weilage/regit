@@ -24,7 +24,10 @@ const {
 beforeEach(() => idle());
 
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
-	await seed('greeting', { 'greeting.ts': "export const greeting = 'hello';\n" });
+	await seed('greeting', {
+		'greeting.ts': "export const greeting = 'hello';\n",
+		'AGENTS.md': 'Greeting project convention: use single quotes.'
+	});
 	await script([
 		[
 			{ type: 'response.output_text.delta', delta: 'Say hi instead' },
@@ -62,6 +65,9 @@ test('runs the agent on a fork of the repository, checkpointing its work', async
 	expect((await git.requests()).some((headers) => headers.authorization)).toBe(false);
 
 	const [first, second] = await modelRequests();
+	expect(JSON.stringify(first!.query)).toContain('Greeting project convention: use single quotes.');
+	expect(JSON.stringify(first!.query)).toContain('verifying-changes');
+	expect(JSON.stringify(first!.query)).not.toContain('Derive expected results from the contract');
 	expect(first).toMatchObject({
 		provider: 'openai',
 		endpoint: 'responses',
@@ -339,6 +345,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'find_files',
 		'search',
 		'run',
+		'read_guidance',
 		'propose_intent',
 		'update_intent',
 		'suggest_thread',

@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { reviewFeedback, reviewIntent } from './review.ts';
+import { verificationSkill } from './skills.ts';
 import { fakeTools, scriptedModel } from './testing.ts';
 
 const usage = { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 5 };
@@ -77,6 +78,42 @@ test('fails when the reviewer never submits', async () => {
 	await expect(
 		reviewIntent({ model, tools: fakeTools({}).tools, intent, base: null, summary: '' })
 	).rejects.toThrow('did not submit a review');
+});
+
+test('gives reviewers repository context and loads verification instructions on demand', async () => {
+	const { model, requests } = scriptedModel([
+		[
+			{
+				type: 'call',
+				call: { id: 'skill', name: 'load_skill', arguments: '{"name":"verifying-changes"}' }
+			}
+		],
+		[
+			submit({
+				checks: intent.doneWhen.map(() => ({
+					state: 'unverified',
+					evidence: 'No conclusive measurement available.'
+				})),
+				findings: [],
+				verdict: 'needs-human'
+			})
+		]
+	]);
+	const { review } = await reviewIntent({
+		model,
+		tools: fakeTools({}).tools,
+		intent,
+		base: 'abc',
+		summary: '',
+		guidance: 'Repository guidance: AGENTS.md\nUse bun test.',
+		skills: [verificationSkill]
+	});
+	expect(requests[0]!.instructions).toContain('Use bun test.');
+	expect(requests[0]!.instructions).not.toContain(verificationSkill.body);
+	expect(JSON.stringify(requests[1]!.history)).toContain(
+		'Derive expected results from the contract'
+	);
+	expect(review.verdict).toBe('needs-human');
 });
 
 test('turns a review into feedback for the coding agent', () => {

@@ -27,6 +27,8 @@ import {
 	skillTools,
 	threadsSkill,
 	toolchainsSkill,
+	verificationSkill,
+	repositoryGuidance,
 	withSkills,
 	intentTools,
 	modes,
@@ -381,6 +383,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if ((await this.#head(fetch)) !== candidate.sha)
 			throw new Error('Candidate HEAD does not match');
 		await workspace.toolchain();
+		const guidance = await repositoryGuidance(tools);
+		const skills = await this.#skills(fetch, [verificationSkill, servicesSkill, toolchainsSkill]);
 		const { model, effort } = reviewers[input.mode];
 		const { review } = await reviewIntent({
 			model: openaiModel({
@@ -390,7 +394,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 				sessionId: `${this.ctx.id.name}/assessment`,
 				metadata: { thread: input.proposal, mode: input.mode, task: 'review' }
 			}),
-			tools,
+			tools: guidance.tools,
+			guidance: guidance.instructions,
+			skills,
 			intent: input.intent,
 			base: candidate.expectedHead,
 			summary:
@@ -563,10 +569,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 			);
 			const { model, effort } = modes[mode];
 			const coordinator = this.env.REPOS.getByName(repo);
-			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill]);
+			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill, verificationSkill]);
+			const guidance = await repositoryGuidance(this.#tools(fetch, readOnlyTools));
 			const tools = combineTools(
 				skillTools(skills),
-				this.#tools(fetch, readOnlyTools),
+				guidance.tools,
 				intentTools((intent) => coordinator.intentProposed(thread, intent)),
 				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion)),
 				threadTools({
@@ -591,7 +598,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						metadata: { thread, mode, task: 'conversation' }
 					}),
 					tools,
-					instructions: withSkills(threadInstructions, skills),
+					instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
 					history,
 					signal: controller.signal,
 					steer: () => this.#drain(repo)
@@ -664,7 +671,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 			if (pending.length) this.#saveStep({ turns: pending });
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
-			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill, toolchainsSkill]);
+			const skills = await this.#skills(fetch, [
+				threadsSkill,
+				servicesSkill,
+				toolchainsSkill,
+				verificationSkill
+			]);
+			const guidance = await repositoryGuidance(this.#tools(fetch));
 			const run = runAttempt({
 				model: openaiModel({
 					gateway: { run: (request) => this.env.MODELS.run(request) },
@@ -679,7 +692,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				}),
 				tools: combineTools(
 					skillTools(skills),
-					this.#tools(fetch),
+					guidance.tools,
 					intentTools(
 						async (intent) => {
 							await this.env.REPOS.getByName(attempt.repo).intentProposed(this.#proposal(), intent);
@@ -702,7 +715,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				},
 				author,
 				push: { ref: fork.branch },
-				instructions: withSkills(codingInstructions, skills),
+				instructions: withSkills(`${codingInstructions}\n\n${guidance.instructions}`, skills),
 				history: this.#history(attempt),
 				signal: controller.signal,
 				steer: () => this.#drain(attempt.repo)
@@ -766,6 +779,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const round = total - Number(this.#meta('cycle') ?? 0);
 		const { model, effort } = reviewers[attempt.mode];
 		const thread = this.ctx.id.name ?? this.ctx.id.toString();
+		const guidance = await repositoryGuidance(this.#tools(fetch, readOnlyTools));
+		const skills = await this.#skills(fetch, [verificationSkill, servicesSkill, toolchainsSkill]);
 		const { review, usage } = await reviewIntent({
 			model: openaiModel({
 				gateway: { run: (request) => this.env.MODELS.run(request) },
@@ -774,7 +789,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 				sessionId: `${thread}/review`,
 				metadata: { thread, mode: attempt.mode, task: 'review' }
 			}),
-			tools: this.#tools(fetch, readOnlyTools),
+			tools: guidance.tools,
+			guidance: guidance.instructions,
+			skills,
 			intent,
 			base: attempt.base,
 			summary: this.#summary(),
