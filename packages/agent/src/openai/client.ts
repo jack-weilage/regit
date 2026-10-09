@@ -16,6 +16,7 @@ export interface OpenAIModelOptions {
 	effort?: ReasoningEffort;
 	metadata?: Metadata;
 	maxRetries?: number;
+	resolveImage?: (url: string) => Promise<string>;
 }
 
 export class ModelError extends Error {
@@ -38,7 +39,8 @@ export function openaiModel({
 	sessionId,
 	effort = 'medium',
 	metadata,
-	maxRetries
+	maxRetries,
+	resolveImage = async (url) => url
 }: OpenAIModelOptions): ModelClient {
 	if (sessionId.length > 64) throw new Error(`Session ids are at most 64 characters: ${sessionId}`);
 	const client = new OpenAI({
@@ -58,7 +60,9 @@ export function openaiModel({
 						store: false,
 						input: [
 							{ type: 'message', role: 'developer', content: [cached(instructions)] },
-							...withBreakpoint(history.flatMap(toInput))
+							...withBreakpoint(
+								(await Promise.all(history.map((turn) => toInput(turn, resolveImage)))).flat()
+							)
 						],
 						tools: tools.map((tool) => ({ type: 'function', strict: false, ...tool })),
 						tool_choice: 'auto',
@@ -94,6 +98,11 @@ function withBreakpoint(items: ResponseInputItem[]) {
 	const last = items.at(-1);
 	if (last?.type === 'function_call_output' && typeof last.output === 'string') {
 		items[items.length - 1] = { ...last, output: [cached(last.output)] };
+	} else if (last?.type === 'function_call_output' && Array.isArray(last.output)) {
+		const output = [...last.output];
+		const text = output.at(-1);
+		if (text?.type === 'input_text') output[output.length - 1] = cached(text.text);
+		items[items.length - 1] = { ...last, output };
 	} else if (last?.type === 'message' && last.role === 'user' && typeof last.content !== 'string') {
 		const content = [...last.content];
 		const text = content.at(-1);
@@ -103,7 +112,10 @@ function withBreakpoint(items: ResponseInputItem[]) {
 	return items;
 }
 
-function toInput(turn: Turn): ResponseInputItem[] {
+async function toInput(
+	turn: Turn,
+	resolveImage: (url: string) => Promise<string>
+): Promise<ResponseInputItem[]> {
 	switch (turn.role) {
 		case 'user':
 			return [
@@ -123,11 +135,22 @@ function toInput(turn: Turn): ResponseInputItem[] {
 				}))
 			];
 		case 'tool':
-			return turn.results.map((result) => ({
-				type: 'function_call_output' as const,
-				call_id: result.callId,
-				output: result.output
-			}));
+			return Promise.all(
+				turn.results.map(async (result): Promise<ResponseInputItem> => ({
+					type: 'function_call_output' as const,
+					call_id: result.callId,
+					output: result.imageUrl
+						? [
+								{
+									type: 'input_image',
+									image_url: await resolveImage(result.imageUrl),
+									detail: 'auto'
+								},
+								{ type: 'input_text', text: result.output }
+							]
+						: result.output
+				}))
+			);
 	}
 }
 

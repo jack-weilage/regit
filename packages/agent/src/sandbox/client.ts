@@ -47,7 +47,7 @@ async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortS
 	return result as T;
 }
 
-export const readOnlyTools: ToolName[] = ['read_file', 'find_files', 'search', 'run'];
+export const readOnlyTools: ToolName[] = ['read_file', 'view_image', 'find_files', 'search', 'run'];
 
 export function sandboxTools(
 	fetch: Fetch,

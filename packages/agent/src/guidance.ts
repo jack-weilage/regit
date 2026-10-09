@@ -21,11 +21,12 @@ export async function repositoryGuidance(tools: ToolExecutor) {
 				const path = scope ? `${scope}/${name}` : name;
 				let text: string;
 				try {
-					text = await tools.execute({
+					const output = await tools.execute({
 						id: 'repository-guidance',
 						name: 'read_file',
 						arguments: JSON.stringify({ path, limit: 400 })
 					});
+					text = typeof output === 'string' ? output : output.text;
 				} catch (error) {
 					if (error instanceof Error && error.message === `Could not read ${path}`) continue;
 					throw error;

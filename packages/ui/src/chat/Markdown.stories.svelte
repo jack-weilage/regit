@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect } from 'storybook/test';
+	import { expect, waitFor } from 'storybook/test';
 	import ChatGroup from './ChatGroup.svelte';
 	import ChatMessage from './ChatMessage.svelte';
 	import Markdown from './Markdown.svelte';
@@ -51,6 +51,59 @@ See the [Svelte docs](https://svelte.dev/docs) for \`$state\`.`;
 		</ChatGroup>
 	</div>
 </Story>
+
+<Story
+	name="Image in a message"
+	asChild
+	play={async ({ canvas }) => {
+		const image = canvas.getByRole('img', { name: 'Verified chat rendering' }) as HTMLImageElement;
+		await waitFor(() => expect(image.naturalWidth).toBeGreaterThan(0));
+		await expect(image).toBeVisible();
+		await expect(canvas.getByRole('link', { name: 'Verified chat rendering' })).toHaveAttribute(
+			'href',
+			'/demo/images/00000000-0000-0000-0000-000000000001'
+		);
+		await expect(image.getBoundingClientRect().width).toBeLessThanOrEqual(
+			image.parentElement!.getBoundingClientRect().width
+		);
+	}}
+>
+	<div style="inline-size: min(36rem, 100%)">
+		<ChatGroup author={{ name: 'ReGit', kind: 'agent' }}>
+			<ChatMessage
+				><Markdown
+					source={'Verified the chat rendering, including the table and checklist.\n\n![Verified chat rendering](/demo/images/00000000-0000-0000-0000-000000000001)\n\nOpen the image to inspect it at full size.'}
+				/></ChatMessage
+			>
+		</ChatGroup>
+	</div>
+</Story>
+
+<Story
+	name="Unavailable image"
+	args={{
+		source: '![Capture no longer available](/demo/images/00000000-0000-0000-0000-000000000002)'
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('img', { name: 'Capture no longer available' })).toBeVisible();
+	}}
+/>
+
+<Story
+	name="External images stay links"
+	args={{
+		source:
+			'![External capture](https://example.com/capture.png)\n\n![Inline data](data:image/png;base64,aW1hZ2U=)\n\n![Network path](//example.com/capture.png)'
+	}}
+	play={async ({ canvas, canvasElement }) => {
+		await expect(canvasElement.querySelector('img')).toBeNull();
+		await expect(canvas.getByRole('link', { name: 'External capture' })).toHaveAttribute(
+			'href',
+			'https://example.com/capture.png'
+		);
+		await expect(canvas.getAllByRole('link')).toHaveLength(1);
+	}}
+/>
 
 <Story name="Own message" asChild>
 	<div style="inline-size: 36rem">

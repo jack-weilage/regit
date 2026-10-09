@@ -1,5 +1,8 @@
+import type { ToolOutput } from '../types.ts';
+
 export interface ToolArguments {
 	read_file: { path: string; offset?: number; limit?: number };
+	view_image: { path: string };
 	write_file: { path: string; content: string };
 	edit_file: { path: string; old_string: string; new_string: string; replace_all?: boolean };
 	find_files: { pattern: string };
@@ -10,7 +13,7 @@ export interface ToolArguments {
 export type ToolName = keyof ToolArguments;
 
 export interface ToolResponse {
-	output: string;
+	output: ToolOutput;
 }
 
 export interface ErrorResponse {

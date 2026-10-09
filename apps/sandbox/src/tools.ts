@@ -1,15 +1,53 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { ToolArguments, ToolName } from '@regit/agent';
+import type { ToolArguments, ToolName, ToolOutput } from '@regit/agent';
 import { exec, truncate } from './exec.ts';
 
 export class ToolError extends Error {}
 
-type Tools = { [Name in ToolName]: (root: string, args: ToolArguments[Name]) => Promise<string> };
+type Tools = {
+	[Name in ToolName]: (root: string, args: ToolArguments[Name]) => Promise<ToolOutput>;
+};
 
 const pageSize = 2000;
 
 export const tools: Tools = {
+	async view_image(root, { path }) {
+		let file;
+		try {
+			const canonicalRoot = await realpath(root);
+			const canonicalFile = await realpath(inside(root, path));
+			file = await open(inside(canonicalRoot, canonicalFile), 'r');
+			const stat = await file.stat();
+			const max = 4 * 1024 * 1024;
+			if (!stat.isFile() || stat.size > max)
+				throw new ToolError('Images must be files up to 4 MiB');
+			const bytes = Buffer.alloc(max + 1);
+			let length = 0;
+			while (length < bytes.length) {
+				const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+				if (!bytesRead) break;
+				length += bytesRead;
+			}
+			if (length > max) throw new ToolError('Images must be files up to 4 MiB');
+			const data = bytes.subarray(0, length);
+			const mime = data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+				? 'image/png'
+				: data.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))
+					? 'image/jpeg'
+					: data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP'
+						? 'image/webp'
+						: null;
+			if (!mime) throw new ToolError('Only PNG, JPEG and WebP images are supported');
+			return { text: `Image: ${path}`, imageUrl: `data:${mime};base64,${data.toString('base64')}` };
+		} catch (error) {
+			if (error instanceof ToolError) throw error;
+			throw new ToolError(`Could not read image ${path}`);
+		} finally {
+			await file?.close();
+		}
+	},
+
 	async read_file(root, { path, offset = 1, limit = pageSize }) {
 		const lines = (await read(root, path)).split('\n');
 		const start = Math.max(offset, 1);

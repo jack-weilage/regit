@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { Buffer } from 'node:buffer';
 import { eq } from 'drizzle-orm';
 import { previews, toolchainSnapshots } from '@regit/db';
 import { db } from './db.ts';
@@ -23,6 +24,7 @@ import {
 	codingInstructions,
 	combineTools,
 	mergeSkills,
+	browserSkill,
 	servicesSkill,
 	skillTools,
 	threadsSkill,
@@ -54,6 +56,7 @@ import {
 	type Intent,
 	type Mode,
 	type Step,
+	type ToolExecutor,
 	type ToolName,
 	type Toolchain,
 	type Turn
@@ -372,13 +375,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const workspace = sandboxWorkspace(fetch);
 		for (const service of await workspace.services()) await workspace.stopService(service.name);
 		await workspace.clone({ remote: info.remote, branch: candidate.branch });
-		const tools = sandboxTools(fetch, readOnlyTools);
+		const tools = this.#imageTools(sandboxTools(fetch, readOnlyTools), input.repo, input.proposal);
 		const command = (command: string) =>
 			tools.execute({ id: 'verify', name: 'run', arguments: JSON.stringify({ command }) });
 		const pinned = await command(
 			`git checkout --detach ${candidate.sha} && git reset --hard ${candidate.sha} && git clean -fdx`
 		);
-		if (!pinned.startsWith('exit code 0\n'))
+		if (typeof pinned !== 'string' || !pinned.startsWith('exit code 0\n'))
 			throw new Error('Could not pin the candidate workspace');
 		if ((await this.#head(fetch)) !== candidate.sha)
 			throw new Error('Candidate HEAD does not match');
@@ -390,6 +393,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const { model, effort } = reviewers[input.mode];
 		const { review } = await reviewIntent({
 			model: openaiModel({
+				resolveImage: (url) => this.#resolveImage(input.repo, url),
 				gateway: { run: (request) => this.env.MODELS.run(request) },
 				model,
 				effort,
@@ -407,7 +411,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const clean = await command(
 			'status=$(git status --porcelain --untracked-files=all) && test -z "$status" && echo REGIT_CLEAN'
 		);
-		if ((await this.#head(fetch)) !== candidate.sha || !clean.split('\n').includes('REGIT_CLEAN')) {
+		if (
+			(await this.#head(fetch)) !== candidate.sha ||
+			typeof clean !== 'string' ||
+			!clean.split('\n').includes('REGIT_CLEAN')
+		) {
 			throw new Error('The reviewer mutated the candidate workspace');
 		}
 		const assessment: Assessment = {
@@ -593,6 +601,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					.flatMap((row) => JSON.parse(row.turns) as Turn[]);
 				const run = runAgent({
 					model: openaiModel({
+						resolveImage: (url) => this.#resolveImage(repo, url),
 						gateway: { run: (request) => this.env.MODELS.run(request) },
 						model,
 						effort,
@@ -682,6 +691,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const guidance = await repositoryGuidance(this.#tools(fetch));
 			const run = runAttempt({
 				model: openaiModel({
+					resolveImage: (url) => this.#resolveImage(attempt.repo, url),
 					gateway: { run: (request) => this.env.MODELS.run(request) },
 					model,
 					effort,
@@ -785,6 +795,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const skills = await this.#skills(fetch, [verificationSkill, servicesSkill, toolchainsSkill]);
 		const { review, usage } = await reviewIntent({
 			model: openaiModel({
+				resolveImage: (url) => this.#resolveImage(attempt.repo, url),
 				gateway: { run: (request) => this.env.MODELS.run(request) },
 				model,
 				effort,
@@ -932,7 +943,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				console.warn('Could not read the repository skills', error);
 				return [];
 			});
-		return mergeSkills(builtIn, repo);
+		return mergeSkills([...builtIn, browserSkill], repo);
 	}
 
 	async #askThreads(repo: string, question: string) {
@@ -1053,8 +1064,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return `${id}-{name}.${this.env.PREVIEW_DOMAIN}`;
 	}
 
-	#tools(fetch: Fetch, only?: ToolName[]) {
-		return sandboxTools(
+	async #resolveImage(repo: string, url: string) {
+		const prefix = `/${encodeURIComponent(repo)}/images/`;
+		if (!url.startsWith(prefix) || !/^[0-9a-f-]{36}$/.test(url.slice(prefix.length))) {
+			throw new Error('Invalid repository image reference');
+		}
+		const image = await this.env.REPOS.getByName(repo).image(url.slice(prefix.length));
+		if (!image) throw new Error('Image is no longer available');
+		return `data:${image.mime};base64,${Buffer.from(image.data).toString('base64')}`;
+	}
+
+	#tools(fetch: Fetch, only?: ToolName[]): ToolExecutor {
+		const tools = sandboxTools(
 			fetch,
 			only,
 			this.env.SANDBOX_URL
@@ -1067,6 +1088,20 @@ export class AttemptSandbox extends DurableObject<Env> {
 							signal
 						)
 		);
+		return this.#imageTools(tools, this.#meta('repo')!, this.#proposal());
+	}
+
+	#imageTools(tools: ToolExecutor, repo: string, thread: string): ToolExecutor {
+		return {
+			specs: tools.specs,
+			execute: async (call, signal) => {
+				const output = await tools.execute(call, signal);
+				if (typeof output === 'string') return output;
+				const id = await this.env.REPOS.getByName(repo).saveImage(thread, output.imageUrl);
+				const imageUrl = `/${encodeURIComponent(repo)}/images/${id}`;
+				return { text: `${output.text}\nShare with ![description](${imageUrl})`, imageUrl };
+			}
+		};
 	}
 
 	async #head(fetch: Fetch) {
@@ -1076,7 +1111,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			name: 'run',
 			arguments: JSON.stringify({ command: 'git rev-parse HEAD' })
 		});
-		return output.split('\n')[1]?.trim() || null;
+		return (typeof output === 'string' ? output : output.text).split('\n')[1]?.trim() || null;
 	}
 
 	#summary() {

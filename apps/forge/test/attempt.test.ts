@@ -23,6 +23,61 @@ const {
 
 beforeEach(() => idle());
 
+test('replays image pixels after the source is removed and keeps durable references in chat', async () => {
+	const png =
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jS1sAAAAASUVORK5CYII=';
+	await seed('images', { '.agents/setup': `echo '${png}' | base64 -d > .git/capture.png\n` });
+	const call = (id: string, name: string, args: object) => [
+		{
+			type: 'response.output_item.done',
+			item: {
+				type: 'function_call',
+				call_id: id,
+				name,
+				arguments: JSON.stringify(args)
+			}
+		}
+	];
+	await script([
+		call('pixels', 'view_image', { path: '.git/capture.png' }),
+		call('remove', 'run', { command: 'rm .git/capture.png' }),
+		[{ type: 'response.output_text.delta', delta: 'Image inspected.' }]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('images');
+	const { id } = await repo.openThread({
+		repo: 'images',
+		author: { name: 'Sam', kind: 'person' },
+		text: 'Inspect the capture',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await expect
+		.poll(async () => JSON.stringify((await repo.thread(id))!.entries), { timeout: 30_000 })
+		.toContain('Image inspected.');
+	const requests = await modelRequests();
+	const input = JSON.stringify(requests.at(-1)!.query);
+	expect(input).toContain(`data:image/png;base64,${png}`);
+	expect(JSON.stringify((await repo.thread(id))!.entries)).not.toContain(png);
+	const imageId = /\/images\/([0-9a-f-]{36})/.exec(input)![1]!;
+	const image = await repo.image(imageId);
+	expect(image!.mime).toBe('image/png');
+	expect(Buffer.from(image!.data).toString('base64')).toBe(png);
+	expect(await env.REPOS.getByName('other-images').image(imageId)).toBeNull();
+	await script([
+		[
+			{
+				type: 'response.output_text.delta',
+				delta: `![Inspected capture](/images/images/${imageId})`
+			}
+		]
+	]);
+	await repo.reply(id, { author: { name: 'Sam', kind: 'person' }, text: 'Show it' });
+	await expect
+		.poll(async () => JSON.stringify((await repo.thread(id))!.entries), { timeout: 30_000 })
+		.toContain(`![Inspected capture](/images/images/${imageId})`);
+});
+
 test('prepares the workspace before the agent and blocks it on hook failure', async () => {
 	await seed('hooks', {
 		'.agents/setup': 'echo setup >> .git/hooks-ran\n',
@@ -192,6 +247,10 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 		mode: 'small',
 		machine: 'standard-1'
 	});
+	const pixels = Buffer.alloc(600_000);
+	for (let i = 0; i < pixels.length; i++) pixels[i] = i % 251;
+	const imageId = await repo.saveImage(id, `data:image/png;base64,${pixels.toString('base64')}`);
+	expect(Buffer.from((await repo.image(imageId))!.data)).toEqual(pixels);
 
 	await repo.discard(id, sam);
 	expect((await repo.thread(id))!.summary.status).toBe('discarded');
@@ -203,6 +262,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	);
 
 	await repo.delete(id, sam);
+	expect(await repo.image(imageId)).toBeNull();
 	expect(await repo.threads()).toEqual([]);
 	expect(await repo.thread(id)).toMatchObject({
 		summary: { deleted: { by: 'Sam' } },
@@ -213,6 +273,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	).rejects.toThrow();
 
 	await repo.restore(id);
+	expect(Buffer.from((await repo.image(imageId))!.data)).toEqual(pixels);
 	expect(await repo.threads()).toMatchObject([{ id, deleted: null }]);
 
 	await repo.delete(id, sam);
@@ -231,6 +292,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	expect(await repo.thread(id)).toBeNull();
+	expect(await repo.image(imageId)).toBeNull();
 	expect(await repo.thread(later.id)).toMatchObject({ summary: { deleted: { by: 'Sam' } } });
 });
 
@@ -392,6 +454,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		(request.query as { tools: { name: string }[] }).tools.map((tool) => tool.name);
 	expect(tools(requests[0]!)).toEqual([
 		'load_skill',
+		'view_image',
 		'read_file',
 		'find_files',
 		'search',

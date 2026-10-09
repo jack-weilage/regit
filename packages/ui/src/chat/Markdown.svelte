@@ -4,6 +4,14 @@
 	function safeHref(href: string) {
 		return /^(https?:|mailto:)/i.test(href.trim()) ? href : undefined;
 	}
+
+	function imageHref(href: string) {
+		return /^\/[A-Za-z0-9._-]+\/images\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+			href
+		)
+			? href
+			: undefined;
+	}
 </script>
 
 <script lang="ts">
@@ -106,7 +114,12 @@
 		{:else if token.type === 'image'}
 			{@const image = token as Tokens.Image}
 			{@const href = safeHref(image.href)}
-			{#if href}
+			{@const src = imageHref(image.href)}
+			{#if src}
+				<a href={src} target="_blank" rel="noreferrer" class="image">
+					<img {src} alt={image.text || 'Agent image'} loading="lazy" />
+				</a>
+			{:else if href}
 				<a {href} target="_blank" rel="noreferrer">{image.text || href}</a>
 			{:else}
 				{image.text}
@@ -145,6 +158,20 @@
 
 	.heading {
 		font-weight: 600;
+	}
+
+	a.image {
+		display: block;
+		margin-block: var(--space-3);
+	}
+
+	img {
+		display: block;
+		box-sizing: border-box;
+		max-inline-size: 100%;
+		block-size: auto;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
 	}
 
 	ul,

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sandboxTools, sandboxWorkspace, type ToolArguments, type ToolName } from '@regit/agent';
@@ -72,6 +72,32 @@ test('runs optional lifecycle scripts from the root without an executable bit an
 });
 
 describe('tools', () => {
+	test('reads image pixels, rejects unsupported or oversized files and resolves path boundaries', async () => {
+		const png =
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jS1sAAAAASUVORK5CYII=';
+		await writeFile(join(root, 'capture.png'), Buffer.from(png, 'base64'));
+		expect(await call('view_image', { path: 'capture.png' })).toEqual({
+			text: 'Image: capture.png',
+			imageUrl: `data:image/png;base64,${png}`
+		});
+		await expect(call('view_image', { path: 'greeting.ts' })).rejects.toThrow(
+			'Only PNG, JPEG and WebP'
+		);
+		await writeFile(join(root, 'large.png'), Buffer.alloc(4 * 1024 * 1024 + 1));
+		await expect(call('view_image', { path: 'large.png' })).rejects.toThrow('up to 4 MiB');
+		await writeFile(join(dir, 'outside.png'), Buffer.from(png, 'base64'));
+		await symlink(join(dir, 'outside.png'), join(root, 'escape.png'));
+		await expect(call('view_image', { path: 'escape.png' })).rejects.toThrow(
+			'outside the repository'
+		);
+		await expect(call('view_image', { path: '../outside.png' })).rejects.toThrow(
+			'outside the repository'
+		);
+		await expect(call('view_image', { path: 'missing.png' })).rejects.toThrow(
+			'Could not read image'
+		);
+	});
+
 	test('reads files, paging long ones', async () => {
 		expect(await call('read_file', { path: 'greeting.ts' })).toBe(
 			"export const greeting = 'hello';\n"

@@ -20,6 +20,7 @@ export {
 export { StepActivity, toolTarget } from './activity.ts';
 export {
 	mergeSkills,
+	browserSkill,
 	servicesSkill,
 	skillTools,
 	threadsSkill,

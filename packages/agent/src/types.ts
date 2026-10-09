@@ -13,7 +13,10 @@ export interface ToolCall {
 export interface ToolResult {
 	callId: string;
 	output: string;
+	imageUrl?: string;
 }
+
+export type ToolOutput = string | { text: string; imageUrl: string };
 
 export type Turn =
 	| { role: 'user'; text: string }
@@ -45,7 +48,7 @@ export interface ModelClient {
 
 export interface ToolExecutor {
 	specs: ToolSpec[];
-	execute(call: ToolCall, signal?: AbortSignal): Promise<string>;
+	execute(call: ToolCall, signal?: AbortSignal): Promise<ToolOutput>;
 }
 
 export interface Step {

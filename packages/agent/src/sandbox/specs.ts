@@ -5,6 +5,16 @@ const path = { type: 'string', description: 'Path relative to the repository roo
 
 export const toolSpecs: (ToolSpec & { name: ToolName })[] = [
 	{
+		name: 'view_image',
+		description:
+			'Inspect a PNG, JPEG or WebP image in the repository (up to 4 MiB). Returns its pixels and, when available, a durable URL to embed in your reply with ![description](url).',
+		parameters: {
+			type: 'object',
+			properties: { path },
+			required: ['path']
+		}
+	},
+	{
 		name: 'read_file',
 		description: 'Read a text file. Long files are returned in pages of lines.',
 		parameters: {

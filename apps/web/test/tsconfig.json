@@ -1,7 +1,8 @@
 {
 	"extends": "../../../tsconfig.base.json",
 	"compilerOptions": {
+		"rootDirs": ["..", "../.svelte-kit/types"],
 		"types": ["node", "../worker-configuration.d.ts"]
 	},
-	"include": ["."]
+	"include": [".", "../src/app.d.ts"]
 }

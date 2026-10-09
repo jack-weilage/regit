@@ -169,6 +169,7 @@ export type LiveMessage =
 	| { type: 'activity'; thread: string; activity: ThreadActivity | null };
 
 export interface RepoCoordinatorApi {
+	image(id: string): { mime: string; data: Uint8Array<ArrayBuffer> } | null;
 	openThread(input: {
 		repo: string;
 		author: Author;

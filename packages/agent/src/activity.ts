@@ -3,6 +3,7 @@ import type { AgentEvent } from './types.ts';
 
 const targets: Record<string, string> = {
 	read_file: 'path',
+	view_image: 'path',
 	write_file: 'path',
 	edit_file: 'path',
 	find_files: 'pattern',

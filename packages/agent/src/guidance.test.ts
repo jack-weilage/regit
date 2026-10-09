@@ -34,7 +34,7 @@ test('loads root fallback and scoped guidance before edits, without leaking sibl
 		name: 'write_file',
 		arguments: JSON.stringify({ path: 'src/ui/button.ts', content: 'new' })
 	};
-	const guidance = await tools.execute(edit);
+	const guidance = String(await tools.execute(edit));
 	expect(guidance).toContain('NOT executed');
 	expect(guidance).toContain('Source conventions');
 	expect(guidance).toContain('UI conventions');

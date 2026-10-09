@@ -41,6 +41,7 @@ import { promotionProblem, type Promotion, type DependencyPin } from '@regit/cor
 import { canAccessRepository } from '@regit/db';
 import { db } from './db.ts';
 import { Acceptance } from './acceptance.ts';
+import { Images } from './images.ts';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
@@ -158,6 +159,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#sql = this.ctx.storage.sql;
 	#activities = new Map<string, ThreadActivity>();
 	#acceptance = new Acceptance(this.#sql);
+	#images = new Images(this.#sql);
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -564,11 +566,21 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			for (const run of this.#acceptance.control(id).runs)
 				await this.env.ATTEMPTS.getByName(run.id).destroy();
 			await this.env.ATTEMPTS.getByName(id).destroy();
+			this.#images.purge(id);
 			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM usage WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM threads WHERE id = ?', id);
 		}
 		await this.#schedulePurge();
+	}
+
+	saveImage(thread: string, dataUrl: string) {
+		this.#active(thread);
+		return this.ctx.storage.transactionSync(() => this.#images.put(thread, dataUrl));
+	}
+
+	image(id: string) {
+		return this.#images.get(id);
 	}
 
 	threads(): ThreadSummary[] {

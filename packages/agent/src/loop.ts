@@ -72,7 +72,10 @@ export async function* runAgent({
 			const output = await tools
 				.execute(call, signal)
 				.catch((error: unknown) => `Error: ${errorMessage(error)}`);
-			const result = { callId: call.id, output };
+			const result: ToolResult =
+				typeof output === 'string'
+					? { callId: call.id, output }
+					: { callId: call.id, output: output.text, imageUrl: output.imageUrl };
 			results.push(result);
 			yield { type: 'result', result };
 		}

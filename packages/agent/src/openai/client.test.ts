@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import type { ModelEvent, ModelRequest } from '../types.ts';
 import { ModelError, openaiModel } from './client.ts';
 import { completed, eventStream, fakeGateway } from './testing.ts';
+import { runAgent } from '../loop.ts';
 
 const request: ModelRequest = {
 	instructions: 'Be brief',
@@ -25,6 +26,59 @@ function setup(...responses: Response[]) {
 const breakpoint = { mode: 'explicit' };
 
 describe('openaiModel', () => {
+	test('sends tool images as pixels with the call ID and preserves replayable references', async () => {
+		const dataUrl = 'data:image/png;base64,aW1hZ2U=';
+		const url = '/demo/images/00000000-0000-0000-0000-000000000001';
+		const { gateway, requests } = fakeGateway(
+			eventStream([
+				{
+					type: 'response.output_item.done',
+					item: {
+						type: 'function_call',
+						call_id: 'image-1',
+						name: 'view_image',
+						arguments: '{"path":"capture.png"}'
+					}
+				},
+				completed
+			]),
+			eventStream([completed])
+		);
+		const model = openaiModel({
+			gateway,
+			model: 'gpt-6-luna',
+			sessionId: 'images',
+			resolveImage: async (ref) => {
+				expect(ref).toBe(url);
+				return dataUrl;
+			}
+		});
+		const events = await Array.fromAsync(
+			runAgent({
+				model,
+				instructions: '',
+				history: [],
+				tools: {
+					specs: [{ name: 'view_image', description: '', parameters: {} }],
+					execute: async () => ({ text: 'Captured page', imageUrl: url })
+				}
+			})
+		);
+		expect((requests[1]!.query as { input: unknown[] }).input.at(-1)).toEqual({
+			type: 'function_call_output',
+			call_id: 'image-1',
+			output: [
+				{ type: 'input_image', image_url: dataUrl, detail: 'auto' },
+				{ type: 'input_text', text: 'Captured page', prompt_cache_breakpoint: breakpoint }
+			]
+		});
+		expect(events).toContainEqual({
+			type: 'result',
+			result: { callId: 'image-1', output: 'Captured page', imageUrl: url }
+		});
+		expect(JSON.stringify(events)).not.toContain(dataUrl);
+	});
+
 	test('sends Responses requests through the gateway with metadata and no key', async () => {
 		const { respond, requests } = setup(eventStream([completed]));
 		await respond();
