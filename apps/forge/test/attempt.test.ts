@@ -23,6 +23,57 @@ const {
 
 beforeEach(() => idle());
 
+test('prepares the workspace before the agent and blocks it on hook failure', async () => {
+	await seed('hooks', {
+		'.agents/setup': 'echo setup >> .git/hooks-ran\n',
+		'.agents/resume': 'test "$(cat .git/hooks-ran)" = setup\necho resume >> .git/hooks-ran\n'
+	});
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'hooks',
+					name: 'run',
+					arguments: JSON.stringify({ command: 'cat .git/hooks-ran' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Ready.' }]
+	]);
+	await start('hooks-ok', { task: 'Check setup', mode: 'small', repo: 'hooks' });
+	expect(await settled('hooks-ok')).toMatchObject({ status: 'finished', error: null });
+	const requests = await modelRequests();
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain('exit code 0\\nsetup\\nresume');
+
+	await seed('hooks-fail', {
+		'.agents/setup': 'echo missing-dependency >&2\nexit 7\n',
+		'.agents/resume': 'echo should-not-run >&2\nexit 8\n'
+	});
+	await start('hooks-failed', { task: 'Must not run', mode: 'small', repo: 'hooks-fail' });
+	expect(await settled('hooks-failed')).toMatchObject({
+		status: 'failed',
+		error: '.agents/setup failed (exit code 7)\nmissing-dependency',
+		steps: []
+	});
+	expect(await modelRequests()).toHaveLength(requests.length);
+	const env = await worker.getEnv();
+	await env.ATTEMPTS.getByName('hooks-failed').converse({
+		repo: 'hooks-fail',
+		mode: 'small',
+		author: 'Sam',
+		text: 'Retry',
+		entry: 'retry-hooks'
+	});
+	expect(await settled('hooks-failed')).toMatchObject({
+		status: 'failed',
+		error: '.agents/setup failed (exit code 7)\nmissing-dependency',
+		steps: []
+	});
+	expect(await modelRequests()).toHaveLength(requests.length);
+});
+
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
 	await seed('greeting', {
 		'greeting.ts': "export const greeting = 'hello';\n",
@@ -626,7 +677,11 @@ test('stops a conversation turn mid tool call', async () => {
 });
 
 test('resumes a finished run without letting the coding agent replace its accepted intent', async () => {
-	await seed('resume', { 'notes.md': 'Some notes\n' });
+	await seed('resume', {
+		'notes.md': 'Some notes\n',
+		'.agents/setup': 'test ! -e .git/setup-ran\ntouch .git/setup-ran\n',
+		'.agents/resume': 'test ! -e .git/resume-ran\ntouch .git/resume-ran\n'
+	});
 	await idle();
 	await script([
 		[{ type: 'response.output_text.delta', delta: 'Sure.' }],

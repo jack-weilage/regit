@@ -8,6 +8,7 @@ import {
 	continueRebase,
 	diff,
 	headBranch,
+	hook,
 	prepareCandidate,
 	promoteCandidate,
 	publishProvenance,
@@ -40,7 +41,7 @@ export function createSandbox(
 		'prepare-candidate': (body) => prepareCandidate(root, body),
 		'promote-candidate': (body) => promoteCandidate(root, body),
 		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
-		clone: async (body) => (await services.pausedDuring(() => clone(root, body)), {}),
+		clone: (body) => services.pausedDuring(() => clone(root, body)),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),
 		diff: async (body) => ({ diff: await diff(root, body) }),
@@ -50,6 +51,7 @@ export function createSandbox(
 		'continue-rebase': (body) => continueRebase(root, body),
 		'abort-rebase': async () => (await abortRebase(root), {}),
 		toolchain: async () => ({ tools: await toolchain(root, mise) }),
+		hook: (body) => hook(root, body),
 		skills: async () => ({ skills: await discoverSkills(root) })
 	};
 

@@ -37,7 +37,7 @@
 		type Entry,
 		type ToolCallRecord
 	} from '@regit/core';
-	import { getLiveActivity, stageActivity, summarizeTools, toolView } from '#lib/activity.ts';
+	import { getLiveActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import {
 		acceptThreadIntent,
@@ -128,10 +128,6 @@
 
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
 	let activity = $derived(params.thread in live ? live[params.thread] : (detail?.activity ?? null));
-	let booting = $derived(
-		activity?.startup?.stages.findLast((stage) => stage.status === 'running') ??
-			activity?.startup?.stages.at(-1)
-	);
 	let user = $derived(await getUser());
 	let threads = $derived(await getThreads(params.repo));
 
@@ -424,10 +420,8 @@
 						onunpin={(dependency) => unpinThreadDependency({ ...ref, dependency })}
 					/>
 				{/if}
-				{#if activity?.startup?.cold}
+				{#if activity?.startup}
 					<ChatStartup stages={activity.startup.stages} />
-				{:else if booting}
-					<ChatActivity since={booting.startedAt}>{stageActivity(booting.label)}</ChatActivity>
 				{/if}
 				{#if activity && (activity.text || activity.calls.length)}
 					<ChatGroup author={agent}>

@@ -21,6 +21,16 @@ export interface CloneRequest {
 	remote: string;
 	branch?: string;
 	token?: string;
+	preserveSetup?: boolean;
+}
+
+export interface HookRequest {
+	name: 'setup' | 'resume';
+}
+
+export interface HookResponse {
+	ran: boolean;
+	output: string;
 }
 
 export interface CommitRequest {

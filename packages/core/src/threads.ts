@@ -57,6 +57,7 @@ export interface StartupStage {
 	status: 'pending' | 'running' | 'done' | 'failed';
 	startedAt?: number;
 	finishedAt?: number;
+	output?: string;
 }
 
 export interface ThreadActivity {

@@ -11,6 +11,8 @@ import type {
 	Fetch,
 	HeadBranchRequest,
 	HeadBranchResponse,
+	HookRequest,
+	HookResponse,
 	PrepareCandidateRequest,
 	PrepareCandidateResponse,
 	PromoteCandidateRequest,
@@ -87,7 +89,10 @@ export function sandboxWorkspace(fetch: Fetch) {
 			await post(fetch, '/workspace/publish-provenance', JSON.stringify(request));
 		},
 		async clone(request: CloneRequest) {
-			await post(fetch, '/workspace/clone', JSON.stringify(request));
+			return post<{ preserved: boolean }>(fetch, '/workspace/clone', JSON.stringify(request));
+		},
+		hook(name: HookRequest['name']) {
+			return post<HookResponse>(fetch, '/workspace/hook', JSON.stringify({ name }));
 		},
 		async commit(request: CommitRequest) {
 			const { sha } = await post<CommitResponse>(

@@ -383,6 +383,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if ((await this.#head(fetch)) !== candidate.sha)
 			throw new Error('Candidate HEAD does not match');
 		await workspace.toolchain();
+		await workspace.hook('setup');
+		await workspace.hook('resume');
 		const guidance = await repositoryGuidance(tools);
 		const skills = await this.#skills(fetch, [verificationSkill, servicesSkill, toolchainsSkill]);
 		const { model, effort } = reviewers[input.mode];
@@ -982,16 +984,26 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#publish(true);
 	}
 
-	async #stage<T>(label: string, run: () => Promise<T>, done?: (result: T) => string) {
+	async #stage<T>(
+		label: string,
+		run: () => Promise<T>,
+		done?: (result: T) => string,
+		output?: (result: T) => string
+	) {
 		const stage: StartupStage = { label, status: 'running', startedAt: Date.now() };
 		(this.#activity.startup ??= { cold: false, stages: [] }).stages.push(stage);
 		this.#publish(true);
 		try {
 			const result = await run();
-			Object.assign(stage, { status: 'done', label: done?.(result) ?? label });
+			Object.assign(stage, {
+				status: 'done',
+				label: done?.(result) ?? label,
+				output: output?.(result)
+			});
 			return result;
 		} catch (error) {
 			stage.status = 'failed';
+			stage.output = error instanceof Error ? error.message : String(error);
 			throw error;
 		} finally {
 			stage.finishedAt = Date.now();
@@ -1227,9 +1239,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 			if (this.#meta('workspace') !== target.remote) {
 				this.#activity.startup = { cold: false, stages: [] };
 				try {
-					await this.#stage(`Clone ${target.repo}`, () =>
-						workspace.clone({ remote: target.remote, branch: target.branch })
-					);
+					await this.#cloneWorkspace(target, fetch);
+					await this.#stage('Install toolchains', () => workspace.toolchain());
+					await this.#hooks(fetch);
+					await this.#restoreServices(fetch);
 					this.#setMeta('workspace', target.remote);
 				} finally {
 					await this.#startupDone();
@@ -1259,7 +1272,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		let restored = cached?.image === image && fits ? cached : null;
 		const { vcpu } = machines[this.#machine()];
 		const boot = `Start a ${vcpu === 0.5 ? '½' : vcpu} vCPU sandbox`;
-		this.#activity.startup!.cold = !restored;
 		try {
 			await this.#stage(restored ? 'Restore the sandbox' : boot, () =>
 				this.#start(
@@ -1275,10 +1287,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			await this.#stage(boot, () => this.#start({ image }, fetch));
 		}
 
-		await this.#stage(`Clone ${target.repo}`, () =>
-			workspace.clone({ remote: target.remote, branch: target.branch })
-		);
-		this.#setMeta('workspace', target.remote);
+		const { preserved } = await this.#cloneWorkspace(target, fetch, !!restored);
 		if (this.#verifying) return fetch;
 		const tools = await this.#stage(
 			'Install toolchains',
@@ -1297,30 +1306,69 @@ export class AttemptSandbox extends DurableObject<Env> {
 		);
 
 		// TODO: if image updates keep making snapshots cold, back up /opt/mise per toolchain key with @cloudflare/sandbox's DirectoryBackup, which restores into newer images
-		const key = await digest({ image, tools });
-		if (!this.#verifying && key !== restored?.key) {
-			try {
-				const snapshot = await this.#stage('Save the toolchain', () =>
-					container.snapshotContainer({ name: `toolchain-${key.slice(0, 12)}` })
-				);
-				// TODO: delete superseded snapshots and old deploy images, which share the account's 50 GB image storage
-				const row = {
-					snapshotId: snapshot.id,
-					key,
-					image,
-					size: snapshot.size,
-					createdAt: new Date()
-				};
-				await db
-					.insert(toolchainSnapshots)
-					.values({ repo: target.repo, ...row })
-					.onConflictDoUpdate({ target: toolchainSnapshots.repo, set: row });
-			} catch (error) {
-				console.warn('Could not snapshot the toolchain', error);
-			}
+		const key = await digest({ image, tools, revision: await this.#head(fetch) });
+		if (preserved && key === restored?.key) {
+			await this.#stage('Use cached setup', async () => {});
+		} else {
+			await this.#hook(fetch, 'setup');
+			await this.#stage(
+				'Cache the prepared sandbox',
+				async () => {
+					try {
+						const snapshot = await container.snapshotContainer({
+							name: `setup-${key.slice(0, 12)}`
+						});
+						// TODO: delete superseded snapshots and old deploy images, which share the account's 50 GB image storage
+						const row = {
+							snapshotId: snapshot.id,
+							key,
+							image,
+							size: snapshot.size,
+							createdAt: new Date()
+						};
+						await db
+							.insert(toolchainSnapshots)
+							.values({ repo: target.repo, ...row })
+							.onConflictDoUpdate({ target: toolchainSnapshots.repo, set: row });
+						return { saved: true, output: '' };
+					} catch (error) {
+						console.warn('Could not cache the prepared sandbox', error);
+						return { saved: false, output: error instanceof Error ? error.message : String(error) };
+					}
+				},
+				(result) =>
+					result.saved ? 'Cache the prepared sandbox' : 'Continue without a setup cache',
+				(result) => result.output
+			);
 		}
+		await this.#hook(fetch, 'resume');
 		await this.#restoreServices(fetch);
+		this.#setMeta('workspace', target.remote);
 		return fetch;
+	}
+
+	async #cloneWorkspace(target: Target, fetch: Fetch, preserveSetup = false) {
+		this.#setMeta('workspace', '');
+		const workspace = sandboxWorkspace(fetch);
+		for (const service of await workspace.services()) await workspace.stopService(service.name);
+		return this.#stage(`Clone ${target.repo}`, () =>
+			workspace.clone({ remote: target.remote, branch: target.branch, preserveSetup })
+		);
+	}
+
+	async #hooks(fetch: Fetch) {
+		for (const name of ['setup', 'resume'] as const) {
+			await this.#hook(fetch, name);
+		}
+	}
+
+	async #hook(fetch: Fetch, name: 'setup' | 'resume') {
+		return this.#stage(
+			`Run .agents/${name}`,
+			() => sandboxWorkspace(fetch).hook(name),
+			(result) => `${result.ran ? 'Run' : 'No'} .agents/${name}`,
+			(result) => result.output
+		);
 	}
 
 	async #localSandbox(target: Target): Promise<Fetch> {
@@ -1328,8 +1376,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const fetch: Fetch = (url, init) =>
 			globalThis.fetch(`${base}${new URL(String(url)).pathname}`, init);
 		if (this.#meta('workspace') !== target.remote) {
-			await sandboxWorkspace(fetch).clone({ remote: target.remote, branch: target.branch });
-			this.#setMeta('workspace', target.remote);
+			this.#activity.startup = { cold: false, stages: [] };
+			try {
+				await this.#cloneWorkspace(target, fetch);
+				if (!this.#verifying) {
+					await this.#stage('Install toolchains', () => sandboxWorkspace(fetch).toolchain());
+					await this.#hooks(fetch);
+					await this.#restoreServices(fetch);
+					this.#setMeta('workspace', target.remote);
+				}
+			} finally {
+				await this.#startupDone();
+			}
 		}
 		return fetch;
 	}

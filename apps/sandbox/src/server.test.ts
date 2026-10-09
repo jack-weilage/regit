@@ -44,6 +44,33 @@ beforeEach(async () => {
 
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
+test('runs optional lifecycle scripts from the root without an executable bit and reports failures', async () => {
+	expect(await workspace.hook('setup')).toEqual({ ran: false, output: '' });
+	await call('write_file', {
+		path: '.agents/setup',
+		content: 'printf "prepared" > .git/setup-result\necho setup-out\necho setup-err >&2\n'
+	});
+	await call('write_file', {
+		path: '.agents/resume',
+		content: 'test "$(cat .git/setup-result)" = prepared\necho resumed\n'
+	});
+	expect(await workspace.hook('setup')).toEqual({ ran: true, output: 'setup-out\nsetup-err' });
+	expect(await workspace.hook('resume')).toEqual({ ran: true, output: 'resumed' });
+	await call('write_file', {
+		path: '.agents/setup',
+		content: 'echo dependency-unavailable >&2\nfalse\necho should-not-run\n'
+	});
+	await expect(workspace.hook('setup')).rejects.toThrow(
+		'.agents/setup failed (exit code 1)\ndependency-unavailable'
+	);
+	const invalid = await fetch('http://sandbox/workspace/hook', {
+		method: 'POST',
+		body: JSON.stringify({ name: '../greeting.ts' })
+	});
+	expect(invalid.ok).toBe(false);
+	expect(await invalid.json()).toEqual({ error: 'Unknown lifecycle hook' });
+});
+
 describe('tools', () => {
 	test('reads files, paging long ones', async () => {
 		expect(await call('read_file', { path: 'greeting.ts' })).toBe(
@@ -163,6 +190,33 @@ describe('workspace', () => {
 		await workspace.clone({ remote, token: 'token', branch: 'main' });
 		expect(await git(root, ['remote', 'get-url', 'origin'])).toBe(remote);
 		await expect(readFile(join(root, 'stale.ts'), 'utf8')).rejects.toThrow();
+	});
+
+	test('preserves prepared files across fork restores only at the same revision', async () => {
+		await call('write_file', { path: '.gitignore', content: '.cache/\n' });
+		await call('write_file', {
+			path: '.agents/setup',
+			content: 'mkdir -p .cache\necho prepared > .cache/ready\n'
+		});
+		await workspace.commit({ message: 'Add setup', author });
+		const fork = join(dir, 'fork.git');
+		await git(dir, ['clone', '--bare', root, fork]);
+		await workspace.hook('setup');
+		expect(await workspace.clone({ remote: fork, branch: 'work', preserveSetup: true })).toEqual({
+			preserved: true
+		});
+		expect(await readFile(join(root, '.cache/ready'), 'utf8')).toBe('prepared\n');
+		expect(await git(root, ['remote', 'get-url', 'origin'])).toBe(fork);
+		expect(await git(root, ['branch', '--show-current'])).toBe('work');
+		await call('write_file', { path: 'greeting.ts', content: 'changed\n' });
+		await workspace.commit({ message: 'Change setup inputs', author });
+		await git(root, ['push', fork, 'HEAD:main']);
+		await git(root, ['reset', '--hard', 'HEAD~1']);
+		expect(await workspace.clone({ remote: fork, branch: 'main', preserveSetup: true })).toEqual({
+			preserved: false
+		});
+		await expect(readFile(join(root, '.cache/ready'), 'utf8')).rejects.toThrow();
+		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe('changed\n');
 	});
 
 	test('installs and reports the toolchain with mise', async () => {

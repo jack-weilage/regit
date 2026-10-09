@@ -97,6 +97,35 @@ async function candidate(name: string) {
 	return { ...run, ready: detail, promotion };
 }
 
+test('verification prepares the pinned candidate rather than the branch tip', async () => {
+	const name = 'candidate-hooks';
+	const work = await seed(name, {
+		'notes.md': '# Notes\n',
+		'.agents/setup': 'echo candidate-setup > .git/prepared\n',
+		'.agents/resume':
+			'test "$(cat .git/prepared)" = candidate-setup\necho resumed >> .git/prepared\n'
+	});
+	const sha = sh(work, 'rev-parse', 'HEAD');
+	await commit(work, { '.agents/setup': 'echo wrong-tip >&2\nexit 9\n' }, 'Advance tip');
+	sh(work, 'push', join(dir, `${name}.git`), 'main');
+	await idle();
+	await script([tool('run', { command: 'cat .git/prepared' }), submitReview('pass', ['met'])]);
+	const env = await worker.getEnv();
+	const result = await env.ATTEMPTS.getByName('verify-hooks').assessCandidate({
+		repo: name,
+		proposal: 'hooks',
+		intentVersion: 'hooks-v1',
+		intent,
+		candidate: { repository: name, branch: 'main', sha, expectedHead: sha },
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	expect(result).toMatchObject({ revision: sha, verdict: 'pass' });
+	expect(JSON.stringify((await modelRequests()).at(-1)!.query)).toContain(
+		'exit code 0\\ncandidate-setup\\nresumed'
+	);
+});
+
 test('only an owner can queue and approve the exact isolated, assessed candidate', async () => {
 	const { repo, id, detail, canonical, original } = await finishedRun('accept-exact');
 	const input = {

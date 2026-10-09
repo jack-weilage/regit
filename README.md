@@ -52,6 +52,25 @@ bun run dev
 
 Git hooks run through lefthook: pre-commit formats staged files, and pre-push runs `check`.
 
+## Repository lifecycle scripts
+
+ReGit runs optional `.agents/setup` and `.agents/resume` Bash scripts from the repository root, after installing the repository's mise toolchains and before restoring services or starting the agent. An executable bit is not required. Each runs with `bash -e`, the sandbox environment, and a 15-minute deadline; use `set -euo pipefail` if pipelines should fail too. Exports do not persist into other processes: put persistent configuration in files or service definitions.
+
+- **Setup** installs dependencies and prepares disposable local data. Successful setup is snapshotted before resume or services run. Matching restores preserve setup-created files, including across run forks, and skip setup. The cache is scoped to the repository and keyed by container image, installed toolchain versions, and exact Git revision; any tracked change invalidates it. A missing, oversized, or unrestorable snapshot falls back to setup.
+- **Resume** runs after setup or a matching cache restore. Use it for per-run configuration and readiness checks that must not be cached. Keep long-running processes in `.agents/services.yml`, managed by `regit services`, rather than backgrounding them in a script.
+- Reusing an already-ready workspace does not rerun either script. Edits to scripts take effect on the next reconstruction; an agent can run them explicitly when needed. Write both scripts to be idempotent, since failed startup can be retried.
+- A missing script is skipped. A nonzero exit or timeout blocks the agent and automatic service restoration; the failure includes bounded stdout/stderr. A failed workspace is not marked ready.
+- Startup shows setup execution or cache reuse, snapshot creation, and resume. Expand a script's output after it completes; failed output opens automatically. Output is not streamed while the script runs. Never print secrets or write credentials into a cached setup environment.
+
+For example, `.agents/setup` in a Bun repository could contain:
+
+```bash
+set -euo pipefail
+bun install --frozen-lockfile
+```
+
+The local `SANDBOX_URL` path uses the same toolchain/setup/resume ordering without container snapshots. Independent candidate verification bypasses the cache and runs scripts from the exact pinned candidate, not the moving branch tip, and still rejects a modified candidate workspace. Git-only publication does not execute these scripts. Hooks execute repository-controlled code with the sandbox's existing permissions; they do not grant deployment or canonical publication authority. Do not use production credentials or shared databases in setup; use disposable local fixtures.
+
 ## Deploying the acceptance migration
 
 This release needs a coordinated maintenance window; do not deploy web and forge independently while users are starting or shipping work.

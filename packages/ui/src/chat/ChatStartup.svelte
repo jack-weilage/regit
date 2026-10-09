@@ -4,6 +4,7 @@
 		status: 'pending' | 'running' | 'done' | 'failed';
 		startedAt?: number;
 		finishedAt?: number;
+		output?: string;
 	}
 </script>
 
@@ -45,6 +46,12 @@
 				<span class="label">{stage.label}</span>
 				{#if took(stage) !== null}
 					<span class="took">{formatDuration(took(stage)!)}</span>
+				{/if}
+				{#if stage.output}
+					<details class="output" open={stage.status === 'failed'}>
+						<summary>Output for {stage.label}</summary>
+						<pre>{stage.output}</pre>
+					</details>
 				{/if}
 			</li>
 		{/each}
@@ -107,7 +114,8 @@
 	}
 
 	li {
-		display: flex;
+		display: grid;
+		grid-template-columns: 1em minmax(0, 1fr) auto;
 		align-items: center;
 		gap: var(--space-3);
 		padding-block: var(--space-1);
@@ -127,5 +135,22 @@
 
 	li .took {
 		margin-inline-start: auto;
+	}
+
+	.output {
+		grid-column: 2 / -1;
+		min-inline-size: 0;
+	}
+
+	pre {
+		max-block-size: 14em;
+		overflow: auto;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		margin: var(--space-2) 0;
+		padding: var(--space-3);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		font-size: inherit;
 	}
 </style>

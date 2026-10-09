@@ -5,13 +5,41 @@ import { setup } from './support.ts';
 const { dir, git, worker, script, modelRequests, sh, seed, commit, start, submitReview, settled } =
 	await setup({ containers: true });
 
-test('snapshots the toolchain, restores it, and refreshes it when the tools change', async () => {
-	const work = await seed('toolchain', { 'README.md': '# Toolchain\n' });
+test('caches setup, resumes restores, and refreshes when tools or source change', async () => {
+	const work = await seed('toolchain', {
+		'README.md': '# Toolchain\n',
+		'.agents/setup': 'test ! -e .git/setup-ran\necho setup > .git/setup-ran\n',
+		'.agents/resume':
+			'test "$(cat .git/setup-ran)" = setup\ntest ! -e .git/resume-ran\ntouch .git/resume-ran\n'
+	});
 	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'fresh-hooks',
+					name: 'run',
+					arguments: JSON.stringify({ command: 'cat .git/setup-ran' })
+				}
+			}
+		],
 		[{ type: 'response.output_text.delta', delta: 'Nothing to do.' }],
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'restored-hooks',
+					name: 'run',
+					arguments: JSON.stringify({ command: 'cat .git/setup-ran' })
+				}
+			}
+		],
 		[{ type: 'response.output_text.delta', delta: 'Still nothing.' }],
 		[{ type: 'response.output_text.delta', delta: 'Nothing here either.' }],
-		[{ type: 'response.output_text.delta', delta: 'All set.' }]
+		[{ type: 'response.output_text.delta', delta: 'All set.' }],
+		[{ type: 'response.output_text.delta', delta: 'New source ready.' }]
 	]);
 	const env = await worker.getEnv();
 	const recorded = () =>
@@ -38,6 +66,8 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 		status: 'finished',
 		toolchain: { restored: true }
 	});
+	const hookResults = JSON.stringify(await modelRequests());
+	expect(hookResults.match(/exit code 0\\nsetup/g)).toHaveLength(2);
 	expect(await recorded()).toEqual(first);
 
 	await env.DB.prepare('UPDATE toolchain_snapshots SET size = ? WHERE repo = ?')
@@ -68,10 +98,15 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	const refreshed = await recorded();
 	expect(refreshed!.key).not.toBe(first!.key);
 	expect(refreshed!.id).not.toBe(resized!.id);
+	await commit(work, { 'README.md': '# Updated source\n' }, 'Change source only');
+	sh(work, 'push', '--quiet', join(dir, 'toolchain.git'), 'main');
+	await start('thread-5b', { task: 'Check new source', mode: 'small', repo: 'toolchain' });
+	expect(await settled('thread-5b')).toMatchObject({ status: 'finished', error: null });
+	expect((await recorded())!.key).not.toBe(refreshed!.key);
 }, 600_000);
 
 test('records the stages of a cold start in the thread', async () => {
-	await seed('cold', { 'README.md': '# Cold\n' });
+	await seed('cold', { 'README.md': '# Cold\n', '.agents/setup': 'echo dependencies-ready\n' });
 	await script([[{ type: 'response.output_text.delta', delta: 'Hello.' }]]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('cold');
@@ -98,7 +133,9 @@ test('records the stages of a cold start in the thread', async () => {
 			{ label: 'Start a ½ vCPU sandbox', status: 'done' },
 			{ label: 'Clone cold', status: 'done' },
 			{ label: expect.stringMatching(/^Install jq \S+$/), status: 'done' },
-			{ label: 'Save the toolchain', status: 'done' }
+			{ label: 'Run .agents/setup', status: 'done', output: 'dependencies-ready' },
+			{ label: 'Cache the prepared sandbox', status: 'done' },
+			{ label: 'No .agents/resume', status: 'done' }
 		]
 	});
 	for (const stage of startup!.type === 'startup' ? startup!.stages : []) {

@@ -1,4 +1,4 @@
-import { access, readdir, readFile, rm } from 'node:fs/promises';
+import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
 	CloneRequest,
@@ -6,6 +6,8 @@ import type {
 	ContinueRebaseRequest,
 	DiffRequest,
 	HeadBranchRequest,
+	HookRequest,
+	HookResponse,
 	Identity,
 	PrepareCandidateRequest,
 	PrepareCandidateResponse,
@@ -29,25 +31,38 @@ function auth(token?: string) {
 	};
 }
 
-export async function clone(root: string, { remote, token, branch }: CloneRequest) {
+export async function clone(root: string, { remote, token, branch, preserveSetup }: CloneRequest) {
 	if (await exists(join(root, '.git'))) {
 		const origin = await git(root, ['remote', 'get-url', 'origin']).catch(() => '');
-		if (origin === remote) {
+		if (preserveSetup) {
+			const refs = branch
+				? await git(root, ['ls-remote', '--heads', remote, branch], auth(token))
+				: '';
+			await git(root, ['fetch', remote, refs ? branch! : 'HEAD'], auth(token));
+			const revision = await git(root, ['rev-parse', 'FETCH_HEAD']);
+			if (revision === (await git(root, ['rev-parse', 'HEAD']))) {
+				await git(root, ['remote', 'set-url', 'origin', remote]);
+				if (branch) await git(root, ['checkout', '-B', branch]);
+				return { preserved: true };
+			}
+		}
+		if (origin === remote && !preserveSetup) {
 			await git(root, ['fetch', 'origin', branch ?? 'HEAD'], auth(token));
 			await git(root, ['reset', '--hard', 'FETCH_HEAD']);
 			await git(root, ['clean', '-fd']);
-			return;
+			return { preserved: false };
 		}
 		for (const entry of await readdir(root)) {
 			await rm(join(root, entry), { recursive: true, force: true });
 		}
 	}
 	await git(root, ['clone', remote, '.'], auth(token));
-	if (!branch) return;
+	if (!branch) return { preserved: false };
 	const remoteBranch = await git(root, ['rev-parse', '--verify', `origin/${branch}`]).catch(
 		() => null
 	);
 	await git(root, ['checkout', '-B', branch, ...(remoteBranch ? [`origin/${branch}`] : [])]);
+	return { preserved: false };
 }
 
 function exists(path: string) {
@@ -270,6 +285,25 @@ async function rebased(root: string, code: number | null, output: string) {
 		throw new Error(`git rebase failed: ${output.trim()}`);
 	}
 	return { sha: null, conflicts };
+}
+
+export async function hook(root: string, { name }: HookRequest): Promise<HookResponse> {
+	if (name !== 'setup' && name !== 'resume') throw new Error('Unknown lifecycle hook');
+	const path = `.agents/${name}`;
+	try {
+		if (!(await stat(join(root, path))).isFile()) throw new Error(`${path} must be a file`);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ran: false, output: '' };
+		throw error;
+	}
+	const result = await exec('bash', ['-e', path], { cwd: root, timeout: 15 * 60 * 1000 });
+	const output = truncate(result.output.trim());
+	if (result.timedOut || result.code !== 0) {
+		throw new Error(
+			`${path} ${result.timedOut ? 'timed out after 15 minutes' : `failed (exit code ${result.code})`}\n${output}`
+		);
+	}
+	return { ran: true, output };
 }
 
 export async function toolchain(root: string, mise: string): Promise<Toolchain> {
