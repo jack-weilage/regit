@@ -90,12 +90,12 @@ test('starts a saved service, serves it through the preview path and stops it', 
 
 test('runs one-off services from the CLI', async () => {
 	const port = await freePort();
-	const options = { fetch, base: 'http://sandbox', preview: 'p1-{name}.regit.dev' };
+	const options = { fetch, base: 'http://sandbox', preview: 'p1-{name}.regit.run' };
 
 	const started = await cli(['run', 'api', '--port', String(port), '--', server('api')], options);
 	expect(started).toEqual({
 		code: 0,
-		output: `api  running  :${port}  one-off  https://p1-api.regit.dev`
+		output: `api  running  :${port}  one-off  https://p1-api.regit.run`
 	});
 	expect((await cli([], options)).output).toContain('api  running');
 	expect(await cli(['logs', 'api', '--lines', '5'], options)).toEqual({

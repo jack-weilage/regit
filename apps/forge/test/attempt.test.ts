@@ -1147,7 +1147,10 @@ test('runs saved services and serves them on preview hosts', async () => {
 	const listed = await untilThread(repo, id, (detail) => detail.services.length > 0);
 	expect(listed.services).toMatchObject([{ name: 'hello', port, saved: true, status: 'stopped' }]);
 	const preview = new URL(listed.services[0]!.preview);
-	expect(preview.hostname).toMatch(/^[0-9a-f]{20}-hello\.regit\.dev$/);
+	expect(preview.hostname).toMatch(/^[0-9a-f]{20}-hello\.regit\.run$/);
+	expect((await worker.fetch(preview.toString().replace('.regit.run', '.regit.dev'))).status).toBe(
+		404
+	);
 
 	await repo.serviceAction(id, 'start', 'hello');
 	expect((await repo.thread(id))!.services[0]).toMatchObject({ status: 'running' });
@@ -1164,7 +1167,7 @@ test('runs saved services and serves them on preview hosts', async () => {
 	expect((await repo.thread(id))!.services[0]).toMatchObject({ status: 'running' });
 	await repo.serviceAction(id, 'stop', 'hello');
 
-	expect((await worker.fetch('https://0000-hello.regit.dev/')).status).toBe(404);
+	expect((await worker.fetch('https://0000-hello.regit.run/')).status).toBe(404);
 });
 
 test("delivers a thread's message to another thread's agent", async () => {

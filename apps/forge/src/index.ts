@@ -16,7 +16,6 @@ export default {
 		if (!env.PREVIEW_DOMAIN || !host.endsWith(`.${env.PREVIEW_DOMAIN}`)) {
 			return new Response(null, { status: 404 });
 		}
-		// TODO: serve previews from a separate registrable domain so agent-run code can't set cookies on regit.dev
 		const id = host.split('.')[0]!.split('-')[0]!;
 		const [preview] = await db.select().from(previews).where(eq(previews.id, id));
 		if (!preview) return new Response('This preview does not exist', { status: 404 });

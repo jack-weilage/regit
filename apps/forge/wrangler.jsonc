@@ -8,13 +8,13 @@
 	"workers_dev": false,
 	"routes": [
 		{ "pattern": "git.regit.dev/*", "zone_name": "regit.dev" },
-		{ "pattern": "*.regit.dev/*", "zone_name": "regit.dev" }
+		{ "pattern": "*.regit.run/*", "zone_name": "regit.run" }
 	],
 	"preview_urls": false,
 	"vars": {
 		"AI_GATEWAY": "regit",
 		"SANDBOX_URL": "",
-		"PREVIEW_DOMAIN": "regit.dev",
+		"PREVIEW_DOMAIN": "regit.run",
 		"GIT_HOST": "git.regit.dev"
 	},
 	"ai": { "binding": "AI", "remote": true },
