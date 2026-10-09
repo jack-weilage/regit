@@ -106,6 +106,24 @@ export const approveThreadPromotion = command(
 	}
 );
 
+export const pinThreadDependency = command(
+	v.object({ ...thread.entries, dependency: name }),
+	async ({ repo, id, dependency }) => {
+		await (await coordinator(repo, 'editor')).pinDependency(id, dependency, author());
+		getThread({ repo, id }).refresh();
+		getThreads(repo).refresh();
+	}
+);
+
+export const unpinThreadDependency = command(
+	v.object({ ...thread.entries, dependency: name }),
+	async ({ repo, id, dependency }) => {
+		await (await coordinator(repo, 'editor')).unpinDependency(id, dependency, author());
+		getThread({ repo, id }).refresh();
+		getThreads(repo).refresh();
+	}
+);
+
 export const discardThread = command(thread, async ({ repo, id }) => {
 	await (await coordinator(repo, 'editor')).discard(id, author());
 	getThread({ repo, id }).refresh();

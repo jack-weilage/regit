@@ -1,6 +1,7 @@
 import type {
 	AcceptedIntent,
 	Assessment,
+	DependencyState,
 	Promotion,
 	ProposalControl,
 	Revision,
@@ -54,9 +55,42 @@ export class Acceptance {
 		return this.list<Promotion>('promotions');
 	}
 
+	dependsOn(proposal: string, target: string, seen = new Set<string>()): boolean {
+		if (proposal === target) return true;
+		if (seen.has(proposal)) return false;
+		seen.add(proposal);
+		return (this.intent(proposal)?.dependencies ?? []).some((pin) =>
+			this.dependsOn(pin.proposal, target, seen)
+		);
+	}
+
+	dependencies(proposal: string): DependencyState[] {
+		return (this.intent(proposal)?.dependencies ?? []).map((pin) => {
+			if (this.intent(pin.proposal)?.id !== pin.intent)
+				return {
+					pin,
+					status: 'stale',
+					reason: 'Accepted intent changed; repin and start a new run.'
+				};
+			if (this.dependencies(pin.proposal).some((dependency) => dependency.status !== 'ready'))
+				return {
+					pin,
+					status: 'stale',
+					reason: 'An upstream dependency is blocked; resolve it and repin.'
+				};
+			const published = this.promotions().find(
+				(p) => p.proposal === pin.proposal && p.revision === pin.revision && p.status === 'shipped'
+			)?.candidate?.sha;
+			return published
+				? { pin, status: 'ready', reason: 'Pinned revision published.', published }
+				: { pin, status: 'waiting', reason: 'Waiting for this exact revision to publish.' };
+		});
+	}
+
 	control(proposal: string): ProposalControl {
 		return {
 			acceptedIntent: this.intent(proposal),
+			dependencies: this.dependencies(proposal),
 			runs: this.list<RunRecord>('runs', proposal),
 			revisions: this.list<Revision>('revisions', proposal),
 			assessments: this.list<Assessment>('assessments', proposal),

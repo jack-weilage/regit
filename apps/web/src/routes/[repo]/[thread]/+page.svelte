@@ -42,6 +42,8 @@
 	import {
 		acceptThreadIntent,
 		approveThreadPromotion,
+		pinThreadDependency,
+		unpinThreadDependency,
 		shipThread,
 		startThread,
 		deleteThread,
@@ -414,6 +416,12 @@
 						onstart={() => startThread(ref)}
 						onprepare={(commit) => shipThread({ ...ref, ...commit })}
 						onapprove={(promotion) => approveThreadPromotion({ ...ref, promotion })}
+						proposals={threads.filter(
+							(thread) =>
+								thread.id !== summary.id && !thread.deleted && thread.status !== 'discarded'
+						)}
+						onpin={(dependency) => pinThreadDependency({ ...ref, dependency })}
+						onunpin={(dependency) => unpinThreadDependency({ ...ref, dependency })}
 					/>
 				{/if}
 				{#if activity?.startup?.cold}

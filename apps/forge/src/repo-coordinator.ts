@@ -37,7 +37,7 @@ import type {
 	UsageRow
 } from '@regit/core';
 import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
-import { promotionProblem, type Promotion } from '@regit/core';
+import { promotionProblem, type Promotion, type DependencyPin } from '@regit/core';
 import { canAccessRepository } from '@regit/db';
 import { db } from './db.ts';
 import { Acceptance } from './acceptance.ts';
@@ -280,12 +280,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async acceptIntent(thread: string, by: Author) {
 		this.#active(thread);
+		this.#assertDependencyChangeAllowed(thread);
 		const intent = this.#latestIntent(thread);
 		if (!intent) throw new Error('There is no proposed intent');
-		if (
-			this.#acceptance.promotions().some((p) => p.proposal === thread && p.status === 'publishing')
-		)
-			throw new Error('Publication is being reconciled; wait before changing intent');
 		const current = this.#acceptance.intent(thread);
 		if (current && JSON.stringify(current.intent) === JSON.stringify(intent)) return;
 		this.#acceptance.putIntent({
@@ -293,6 +290,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			proposal: thread,
 			intent,
 			acceptedBy: by,
+			dependencies: current?.dependencies ?? [],
 			at: Date.now()
 		});
 		for (const p of this.#acceptance
@@ -307,6 +305,113 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				error: 'The accepted intent changed'
 			});
 		this.#add(thread, { type: 'event', text: `${by.name} accepted the intent` });
+		this.#invalidateDependencies(thread);
+	}
+
+	async pinDependency(thread: string, dependency: string, by: Author) {
+		await this.#dependencyEditor(by);
+		const accepted = this.#editableDependencies(thread);
+		this.#active(dependency);
+		if (this.#acceptance.dependsOn(dependency, thread)) throw new Error('Dependency cycle');
+		const run = this.#acceptance.run(dependency);
+		const revision = await this.#executor(dependency).revision();
+		this.#editableDependencies(thread);
+		this.#active(dependency);
+		if (this.#acceptance.intent(thread)?.id !== accepted.id)
+			throw new Error('Intent changed while pinning; try again');
+		if (this.#acceptance.dependsOn(dependency, thread)) throw new Error('Dependency cycle');
+		if (
+			!run ||
+			!revision ||
+			this.#acceptance.run(dependency)?.id !== run.id ||
+			revision.intent !== this.#acceptance.intent(dependency)?.id
+		)
+			throw new Error('Dependency needs a stable revision of its accepted intent');
+		this.#acceptance.putRevision(revision);
+		const pin = {
+			proposal: dependency,
+			revision: revision.id,
+			intent: revision.intent,
+			sha: revision.sha
+		};
+		const pins = accepted.dependencies ?? [];
+		if (pins.some((p) => p.proposal === dependency && p.revision === revision.id)) return;
+		this.#saveDependencies(thread, [...pins.filter((p) => p.proposal !== dependency), pin], by);
+	}
+
+	async unpinDependency(thread: string, dependency: string, by: Author) {
+		await this.#dependencyEditor(by);
+		const accepted = this.#editableDependencies(thread);
+		const pins = accepted.dependencies ?? [];
+		if (!pins.some((p) => p.proposal === dependency)) return;
+		this.#saveDependencies(
+			thread,
+			pins.filter((p) => p.proposal !== dependency),
+			by
+		);
+	}
+
+	async #dependencyEditor(by: Author) {
+		if (by.kind !== 'person' || !(await canAccessRepository(db, this.#repo(), by.id, 'editor')))
+			throw new Error('Repository editor permission is required');
+	}
+
+	#editableDependencies(thread: string) {
+		if (!['draft', 'needs-you'].includes(this.#active(thread).status))
+			throw new Error('Stop the current work before changing dependencies');
+		this.#assertDependencyChangeAllowed(thread);
+		const accepted = this.#acceptance.intent(thread);
+		if (!accepted) throw new Error('Accept the intent before pinning dependencies');
+		return accepted;
+	}
+
+	#saveDependencies(thread: string, dependencies: DependencyPin[], by: Author) {
+		const accepted = this.#editableDependencies(thread);
+		this.#cancelPromotions(thread);
+		this.#acceptance.putIntent({
+			...accepted,
+			id: crypto.randomUUID(),
+			dependencies,
+			acceptedBy: by,
+			at: Date.now()
+		});
+		this.#add(thread, {
+			type: 'event',
+			text: `${by.name} changed dependency pins; start a new run.`
+		});
+		this.#invalidateDependencies(thread);
+	}
+
+	#assertDependencyChangeAllowed(thread: string) {
+		if (
+			this.#acceptance
+				.promotions()
+				.some((p) => p.status === 'publishing' && this.#acceptance.dependsOn(p.proposal, thread))
+		)
+			throw new Error('A dependent publication is being reconciled; wait before changing intent');
+	}
+
+	#requireDependencies(thread: string) {
+		const states = this.#acceptance.dependencies(thread);
+		const blocked = states.find((dependency) => dependency.status !== 'ready');
+		if (blocked) throw new Error(`Dependency ${blocked.pin.proposal}: ${blocked.reason}`);
+		return states.map((dependency) => dependency.published!);
+	}
+
+	#invalidateDependencies(upstream: string) {
+		for (const p of this.#acceptance.promotions()) {
+			if (!['queued', 'preparing', 'reviewing', 'ready'].includes(p.status)) continue;
+			if (!this.#acceptance.dependencies(p.proposal).some((d) => d.status !== 'ready')) continue;
+			this.#acceptance.putPromotion({
+				...p,
+				status: 'cancelled',
+				error: 'Dependency changed; repin and start a new run.'
+			});
+			if (this.#summary(p.proposal)?.status === 'shipping')
+				this.#setStatus(p.proposal, 'needs-you');
+		}
+		for (const summary of this.threads())
+			if (this.#acceptance.dependsOn(summary.id, upstream)) this.#touch(summary.id);
 	}
 
 	async start(thread: string, by: Author = { name: 'Repository member', kind: 'person' }) {
@@ -318,6 +423,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			throw new Error('Another run has already started');
 		this.#cancelPromotions(thread);
 		const accepted = this.#acceptance.intent(thread)!;
+		const requiredCommits = this.#requireDependencies(thread);
 		const previous = this.#acceptance.run(thread)?.id ?? thread;
 		const run = {
 			id: crypto.randomUUID().replaceAll('-', ''),
@@ -338,6 +444,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			JSON.stringify({
 				proposal: thread,
 				intentVersion: accepted.id,
+				requiredCommits,
 				task: describeTask(accepted.intent, this.#conversation(thread)),
 				mode: summary.mode,
 				machine: summary.machine,
@@ -763,6 +870,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const accepted = this.#acceptance.intent(thread);
 		if (!accepted || revision.intent !== accepted.id)
 			throw new Error('This revision implements an older intent');
+		this.#requireDependencies(thread);
 		if (
 			this.#acceptance
 				.promotions()
@@ -810,6 +918,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			control.revisions.find((r) => r.id === promotion.revision)
 		);
 		if (problem) throw new Error(problem);
+		this.#requireDependencies(thread);
 		if (this.#acceptance.promotions().some((p) => p.status === 'publishing'))
 			throw new Error('Another publication is being reconciled. Try again when it completes.');
 		this.#acceptance.putPromotion({ ...promotion, status: 'publishing', requestedBy: by });
@@ -891,13 +1000,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 					type: 'event',
 					text: `Promoted ${p.candidate!.sha.slice(0, 7)} to ${p.candidate!.branch}. Outcome confirmation remains a human decision.`
 				});
+				this.#invalidateDependencies(p.proposal);
 				return;
 			}
 			if (!revision || !control.acceptedIntent || control.acceptedIntent.id !== p.intent)
 				throw new Error('The accepted intent or source revision changed');
+			const requiredCommits = this.#requireDependencies(p.proposal);
 			if (!p.candidate) {
 				this.#acceptance.putPromotion({ ...p, status: 'preparing' });
-				const candidate = await publisher.prepare(repo, revision, p);
+				const candidate = await publisher.prepare(repo, revision, p, requiredCommits);
 				if (current().status === 'cancelled') return;
 				this.#acceptance.putPromotion({ ...p, candidate, status: 'reviewing' });
 				return;

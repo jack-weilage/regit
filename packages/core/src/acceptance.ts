@@ -1,11 +1,26 @@
 import type { Author, Intent, Mode, Machine, ReviewVerdict, CheckVerdict } from './threads.ts';
 
+export interface DependencyPin {
+	proposal: string;
+	revision: string;
+	intent: string;
+	sha: string;
+}
+
+export interface DependencyState {
+	pin: DependencyPin;
+	status: 'waiting' | 'ready' | 'stale';
+	reason: string;
+	published?: string;
+}
+
 export interface AcceptedIntent {
 	id: string;
 	proposal: string;
 	intent: Intent;
 	acceptedBy: Author;
 	at: number;
+	dependencies?: DependencyPin[];
 }
 
 export interface RunRecord {
@@ -75,6 +90,7 @@ export interface Promotion {
 
 export interface ProposalControl {
 	acceptedIntent: AcceptedIntent | null;
+	dependencies?: DependencyState[];
 	runs: RunRecord[];
 	revisions: Revision[];
 	assessments: Assessment[];

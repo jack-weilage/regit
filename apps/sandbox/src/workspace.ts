@@ -105,7 +105,16 @@ async function canonicalHead(root: string, remote: string, ref: string) {
 
 export async function prepareCandidate(
 	root: string,
-	{ sourceSha, base, remote, branch, message, author, committer }: PrepareCandidateRequest
+	{
+		sourceSha,
+		base,
+		remote,
+		branch,
+		message,
+		author,
+		committer,
+		requiredCommits = []
+	}: PrepareCandidateRequest
 ): Promise<PrepareCandidateResponse> {
 	exactSha(sourceSha);
 	exactSha(base);
@@ -117,6 +126,11 @@ export async function prepareCandidate(
 	const sha = await squash(root, { base, message, author, committer });
 	if (!sha) throw new Error('Candidate has no changes');
 	const expectedHead = await canonicalHead(root, remote, ref);
+	for (const required of requiredCommits) {
+		exactSha(required);
+		await git(root, ['merge-base', '--is-ancestor', required, base]);
+		await git(root, ['merge-base', '--is-ancestor', required, expectedHead]);
+	}
 	const result = await exec(
 		'git',
 		[...noHooks, 'rebase', '--empty=stop', '--onto', expectedHead, base],

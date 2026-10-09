@@ -178,6 +178,8 @@ export interface RepoCoordinatorApi {
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
 	start(thread: string, by?: Author): Promise<void>;
 	acceptIntent(thread: string, by: Author): Promise<void>;
+	pinDependency(thread: string, dependency: string, by: Author): Promise<void>;
+	unpinDependency(thread: string, dependency: string, by: Author): Promise<void>;
 	approvePromotion(thread: string, promotion: string, by: Author): Promise<void>;
 	discard(thread: string, by: Author): Promise<void>;
 	reopen(thread: string, by: Author): void;

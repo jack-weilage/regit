@@ -26,7 +26,9 @@ Preparing a candidate does not publish it. A separate Git-only publisher constru
 
 After publication, `refs/notes/regit` records the source revision, accepted intent, assessment and authorizing principal. Notes publication retries independently of the code update. Operational state remains in SQLite; Git notes are exported provenance, not the mutable coordination database.
 
-This is the acceptance/publication foundation, not the entire platform roadmap. Pinned dependencies between proposals, alternative-revision selection, standing policies and budgets, an attention inbox, and explicit outcome confirmation are not implemented yet. Local CLI and other-agent contribution access remain TODO.
+Proposals can pin exact revisions of other proposals in the same repository. Runs wait until every prerequisite revision has published; their bases and publication candidates must contain those published commits. Changing pins versions the accepted intent and requires a new run. Accepted upstream intent changes stale dependent pins; pins never advance automatically, and cycles are rejected. Dependency pins are included in the accepted intent exported to Git notes.
+
+This is prerequisite execution, not speculative stacked execution on unpublished revisions. Stacked execution, alternative-revision selection, standing policies and budgets, an attention inbox, and explicit outcome confirmation are not implemented yet. Local CLI and other-agent contribution access remain TODO.
 
 ## Develop
 

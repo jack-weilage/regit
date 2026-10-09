@@ -13,7 +13,10 @@
 		onaccept,
 		onstart,
 		onprepare,
-		onapprove
+		onapprove,
+		proposals = [],
+		onpin,
+		onunpin
 	}: {
 		control?: ProposalControl;
 		intent?: Intent;
@@ -23,7 +26,15 @@
 		onstart: () => Promise<unknown>;
 		onprepare: (commit: { title: string; body: string }) => Promise<unknown>;
 		onapprove: (promotion: string) => Promise<unknown>;
+		proposals?: { id: string; headline: string }[];
+		onpin?: (proposal: string) => Promise<unknown>;
+		onunpin?: (proposal: string) => Promise<unknown>;
 	} = $props();
+	let dependency = $state('');
+	let blocked = $derived(control?.dependencies?.some((d) => d.status !== 'ready') ?? false);
+	let needsRun = $derived(
+		!!control?.runs.length && control.runs.at(-1)?.intent !== control.acceptedIntent?.id
+	);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 	let preparing = $state(false);
@@ -106,6 +117,62 @@
 	{/if}
 	{#if error || promotion?.error}<p class="error" role="alert">{error ?? promotion?.error}</p>{/if}
 
+	{#if control?.dependencies?.length || (onpin && control?.acceptedIntent)}
+		<div class="dependencies">
+			<strong>Dependencies</strong>
+			<p class="meta">
+				Runs wait for these exact revisions to publish. Pins never advance automatically.
+			</p>
+			{#each control?.dependencies ?? [] as item (item.pin.proposal)}
+				<div class="dependency">
+					<p>
+						{proposals.find((p) => p.id === item.pin.proposal)?.headline ?? item.pin.proposal} ·
+						<code>{item.pin.sha.slice(0, 12)}</code>
+					</p>
+					<p class="meta">{item.status} · {item.reason}</p>
+					{#if canStart && onunpin && onpin}
+						<div class="actions">
+							<Button size="sm" disabled={busy} onclick={() => act(() => onpin!(item.pin.proposal))}
+								>Update pin</Button
+							>
+							<Button
+								size="sm"
+								disabled={busy}
+								onclick={() => act(() => onunpin!(item.pin.proposal))}>Remove dependency</Button
+							>
+						</div>
+					{/if}
+				</div>
+			{/each}
+			{#if canStart && onpin && proposals.length}
+				<form
+					onsubmit={(event) => {
+						event.preventDefault();
+						act(() => onpin!(dependency));
+					}}
+				>
+					<label
+						>Prerequisite proposal
+						<select bind:value={dependency} required>
+							<option value="" disabled>Select a proposal</option>
+							{#each proposals as proposal (proposal.id)}<option value={proposal.id}
+									>{proposal.headline}</option
+								>{/each}
+						</select>
+					</label>
+					<div class="actions">
+						<Button type="submit" size="sm" disabled={busy || !dependency}
+							>Pin current revision</Button
+						>
+					</div>
+				</form>
+			{/if}
+		</div>
+	{/if}
+	{#if needsRun}<p class="warning">
+			Intent or dependency pins changed. Start a new run before preparing a candidate.
+		</p>{/if}
+
 	{#if preparing}
 		<form
 			onsubmit={(event) => {
@@ -124,7 +191,8 @@
 					type="submit"
 					variant="primary"
 					size="sm"
-					disabled={busy || pending || status !== 'needs-you'}>Prepare candidate</Button
+					disabled={busy || blocked || needsRun || pending || status !== 'needs-you'}
+					>Prepare candidate</Button
 				>
 			</div>
 		</form>
@@ -191,7 +259,7 @@
 				<Button
 					size="sm"
 					variant={changed && promotion?.status !== 'ready' ? 'primary' : 'quiet'}
-					disabled={busy}
+					disabled={busy || blocked}
 					onclick={() => act(onstart)}
 					>{changed ? 'Accept intent and start new run' : 'Start new run'}</Button
 				>
@@ -200,7 +268,7 @@
 				<Button
 					size="sm"
 					variant="primary"
-					disabled={busy}
+					disabled={busy || blocked || needsRun}
 					onclick={() => act(() => onapprove(promotion!.id))}
 					>Approve and publish {promotion.candidate.sha.slice(0, 12)}</Button
 				>
@@ -208,7 +276,7 @@
 				<Button
 					size="sm"
 					variant="primary"
-					disabled={busy}
+					disabled={busy || blocked || needsRun}
 					onclick={() => {
 						title = intent?.headline ?? '';
 						body = intent?.purpose ?? '';
@@ -316,6 +384,7 @@
 	}
 	.proposed,
 	.assessment,
+	.dependencies,
 	.details-body,
 	form {
 		display: grid;
@@ -391,6 +460,12 @@
 		color: var(--color-muted);
 		font-size: var(--text-meta);
 	}
+	.dependency {
+		padding: var(--space-4) var(--space-5);
+		border-radius: var(--radius);
+		background: var(--color-surface);
+	}
+	select,
 	input,
 	textarea {
 		box-sizing: border-box;
@@ -404,6 +479,7 @@
 		border-radius: var(--radius);
 		padding: 0.5em 0.75em;
 	}
+	select:focus-visible,
 	input:focus-visible,
 	textarea:focus-visible {
 		outline: 2px solid var(--color-accent);
