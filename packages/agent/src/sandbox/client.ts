@@ -11,6 +11,11 @@ import type {
 	Fetch,
 	HeadBranchRequest,
 	HeadBranchResponse,
+	PrepareCandidateRequest,
+	PrepareCandidateResponse,
+	PromoteCandidateRequest,
+	PromoteCandidateResponse,
+	PublishProvenanceRequest,
 	PushRequest,
 	PushResponse,
 	RebaseRequest,
@@ -64,6 +69,23 @@ export function sandboxTools(
 
 export function sandboxWorkspace(fetch: Fetch) {
 	return {
+		prepareCandidate(request: PrepareCandidateRequest) {
+			return post<PrepareCandidateResponse>(
+				fetch,
+				'/workspace/prepare-candidate',
+				JSON.stringify(request)
+			);
+		},
+		promoteCandidate(request: PromoteCandidateRequest) {
+			return post<PromoteCandidateResponse>(
+				fetch,
+				'/workspace/promote-candidate',
+				JSON.stringify(request)
+			);
+		},
+		async publishProvenance(request: PublishProvenanceRequest) {
+			await post(fetch, '/workspace/publish-provenance', JSON.stringify(request));
+		},
 		async clone(request: CloneRequest) {
 			await post(fetch, '/workspace/clone', JSON.stringify(request));
 		},

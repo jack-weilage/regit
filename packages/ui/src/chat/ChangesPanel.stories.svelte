@@ -9,7 +9,7 @@
 		component: ChangesPanel,
 		tags: ['!autodocs'],
 		parameters: { layout: 'fullscreen' },
-		args: { files: diffFiles, onship: fn(), onclose: fn() }
+		args: { files: diffFiles, onclose: fn() }
 	});
 </script>
 
@@ -19,6 +19,7 @@
 		await expect(canvas.getByRole('region', { name: 'Changes' })).toHaveTextContent(
 			/4\s*files\s*\+23\s*−8/
 		);
+		await expect(canvas.queryByRole('button', { name: 'Ship' })).toBeNull();
 		await userEvent.click(canvas.getByRole('button', { name: 'Close changes' }));
 		await expect(args.onclose).toHaveBeenCalledOnce();
 	}}

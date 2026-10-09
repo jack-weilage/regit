@@ -18,7 +18,7 @@ test('proposes and updates intents, trimming what the model wrote', async () => 
 		'Proposed'
 	);
 	expect(await tools.execute({ id: 'c2', name: 'update_intent', arguments: args })).toBe(
-		'Updated the intent.'
+		'Proposed the revised intent. The accepted intent for this run is unchanged.'
 	);
 	expect(intents).toEqual([
 		{

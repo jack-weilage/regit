@@ -11,7 +11,9 @@
 	import ChatLog from './ChatLog.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import { mentionables, similarThreads, threads } from './fixtures.ts';
+	import AcceptancePanel from './AcceptancePanel.svelte';
+	import { acceptance, readyPromotion, mentionables, similarThreads } from './fixtures.ts';
+	import type { ProposalControl, ThreadStatus } from '@regit/core';
 	import type { Author, Mentionable, SimilarThread } from './types.ts';
 
 	interface Intent {
@@ -37,9 +39,7 @@
 
 	const revisions: Intent[] = [
 		{
-			headline: 'perf(settings): render org settings without loading every member',
-			purpose: 'Large orgs wait several seconds before the settings page shows anything.',
-			doneWhen: ['Settings loads in under a second for an org with 5,000 members.'],
+			...acceptance.acceptedIntent!.intent,
 			similar: [similarThreads[3]!]
 		},
 		{
@@ -94,6 +94,15 @@
 	]);
 	let refining = $state(false);
 	let started = $state(false);
+	let status = $state<ThreadStatus>('draft');
+	let control = $state<ProposalControl>({
+		acceptedIntent: null,
+		runs: [],
+		revisions: [],
+		assessments: [],
+		promotions: []
+	});
+	let intent = $derived(entries.findLast((entry) => entry.type === 'intent')!.intent);
 
 	let latestIntent = $derived(entries.findLast((entry) => entry.type === 'intent')?.id);
 	let latestHeadline = $derived(
@@ -126,15 +135,23 @@
 		}, 1200);
 	}
 
-	function start() {
+	async function accept() {
+		control.acceptedIntent = { ...acceptance.acceptedIntent!, intent };
+	}
+
+	async function start() {
+		await accept();
 		started = true;
+		status = 'needs-you';
+		control.runs = acceptance.runs;
+		control.revisions = acceptance.revisions;
 		add(
-			{ type: 'event', id: id(), text: 'Attempt 1 started' },
+			{ type: 'event', id: id(), text: 'Run 1 finished · revision captured' },
 			{
 				type: 'message',
 				id: id(),
 				author: agent,
-				text: 'Found the slow query. Running checks next.'
+				text: 'Updated the member query and captured a revision. Ready to prepare an exact candidate.'
 			},
 			{ type: 'handoff', id: id(), intent: separateWork }
 		);
@@ -151,7 +168,7 @@
 	<div class="frame">
 		<ChatHeader
 			headline={latestHeadline}
-			status={started ? 'running' : 'draft'}
+			{status}
 			people={[sam, lin]}
 			onpreview={started ? () => {} : undefined}
 			actions={[
@@ -177,7 +194,14 @@
 					<ChatIntent
 						{...block.intent}
 						superseded={block.id !== latestIntent}
-						onstart={started || refining ? undefined : start}
+						status={status === 'shipped' ? 'shipped' : started ? 'ready' : undefined}
+						note={status === 'shipped'
+							? 'Shipped in a1b2c3d'
+							: control.promotions.length
+								? 'Exact candidate awaits owner approval'
+								: started
+									? 'Model reviewed · ready to prepare candidate'
+									: undefined}
 					/>
 				{:else if block.type === 'handoff'}
 					{#if block.outcome === 'dismissed'}
@@ -202,16 +226,31 @@
 					<ChatEvent>{block.text}</ChatEvent>
 				{/if}
 			{/each}
+			<AcceptancePanel
+				{control}
+				{intent}
+				{status}
+				hasChanges={started}
+				onaccept={accept}
+				onstart={start}
+				onprepare={async (commit) => {
+					control.promotions = [{ ...readyPromotion, ...commit }];
+				}}
+				onapprove={async () => {
+					control.promotions = [
+						{ ...control.promotions[0]!, status: 'shipped', notesPublished: true }
+					];
+					status = 'shipped';
+				}}
+			/>
 			{#if refining}
 				<ChatActivity>Refining intent</ChatActivity>
-			{:else if started}
-				<ChatActivity>Running checks</ChatActivity>
 			{/if}
 		</ChatLog>
 		<div class="composer">
 			<ChatComposer
 				mentions={mentionables}
-				placeholder={started ? 'Reply to the thread' : 'Reply to refine the intent, or press Start'}
+				placeholder={started ? 'Reply to the thread' : 'Reply to refine the intent'}
 				onsend={send}
 			/>
 			<ChatFooter
@@ -241,9 +280,10 @@
 	name="Start and spin off"
 	asChild
 	play={async ({ canvas, userEvent }) => {
-		await userEvent.click(canvas.getByRole('button', { name: 'Start' }));
-		await waitFor(() => expect(canvas.getByText('Attempt 1 started')).toBeVisible());
-		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: 'Accept intent and start new run' }));
+		await waitFor(() =>
+			expect(canvas.getByText('Run 1 finished · revision captured')).toBeVisible()
+		);
 		await userEvent.click(canvas.getByRole('button', { name: 'Spin off' }));
 		await waitFor(() => expect(canvas.getByText(/Spun off/)).toBeVisible());
 		await expect(
@@ -253,6 +293,26 @@
 >
 	{@render thread()}
 </Story>
+
+<Story
+	name="Prepare and publish"
+	asChild
+	play={async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'Accept intent and start new run' }));
+		await userEvent.click(canvas.getByRole('button', { name: 'Prepare candidate' }));
+		await expect(canvas.getByRole('textbox', { name: 'Commit title' })).toHaveValue(
+			revisions[0]!.headline
+		);
+		await userEvent.click(canvas.getByRole('button', { name: 'Prepare candidate' }));
+		await waitFor(() =>
+			expect(canvas.getByText('Exact candidate awaits owner approval')).toBeVisible()
+		);
+		await expect(canvas.queryByText('Published', { exact: true })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: 'Approve and publish a1b2c3d4e5f6' }));
+		await waitFor(() => expect(canvas.getByText('Published', { exact: true })).toBeVisible());
+		await expect(canvas.queryByRole('button', { name: /^Approve and publish/ })).toBeNull();
+	}}>{@render thread()}</Story
+>
 
 <style>
 	.frame {

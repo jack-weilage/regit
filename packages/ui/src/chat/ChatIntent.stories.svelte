@@ -31,8 +31,7 @@
 <Story
 	name="Suggested"
 	args={{
-		similar: similarThreads.slice(2),
-		onstart: fn()
+		similar: similarThreads.slice(2)
 	}}
 	play={async ({ args, canvas, userEvent }) => {
 		await expect(
@@ -40,8 +39,7 @@
 		).toBeVisible();
 		await userEvent.click(canvas.getByText('Related · 2'));
 		await expect(canvas.getByRole('link', { name: /Cache org settings/ })).toBeVisible();
-		await userEvent.click(canvas.getByRole('button', { name: 'Start' }));
-		await expect(args.onstart).toHaveBeenCalledOnce();
+		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
 	}}
 />
 
@@ -65,8 +63,7 @@
 			'New threads show a suggested reviewer within a minute.',
 			'The suggestion comes from people who landed changes in the same area.',
 			'Dismissing a suggestion never assigns anyone.'
-		],
-		onstart: fn()
+		]
 	}}
 />
 
@@ -76,7 +73,6 @@
 			headline="refactor(auth): move session checks into hooks"
 			purpose="Every route repeats the same session lookup."
 			doneWhen={['No route handler reads the session cookie directly.', 'All existing tests pass.']}
-			onstart={fn()}
 		/>
 	</div>
 </Story>
@@ -152,16 +148,14 @@
 		...progress,
 		status: 'ready',
 		checks: ['met', 'met', 'met'],
-		note: 'Reviewed · ready to ship',
+		note: 'Model reviewed · ready to prepare candidate',
 		changes: { files: 4, additions: 23, deletions: 8 },
-		onship: fn(),
 		onchanges: fn()
 	}}
 	play={async ({ args, canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: /View changes: 4 files/ }));
 		await expect(args.onchanges).toHaveBeenCalledOnce();
-		await userEvent.click(canvas.getByRole('button', { name: 'Ship' }));
-		await expect(args.onship).toHaveBeenCalledOnce();
+		await expect(canvas.queryByRole('button', { name: 'Ship' })).toBeNull();
 	}}
 />
 
@@ -171,7 +165,7 @@
 		...progress,
 		status: 'shipping',
 		checks: ['met', 'met', 'met'],
-		note: 'Shipping to main',
+		note: 'Preparing candidate or publishing approved SHA',
 		changes: { files: 4, additions: 23, deletions: 8 }
 	}}
 />
@@ -231,14 +225,14 @@
 
 <Story
 	name="Duplicate"
-	args={{ similar: similarThreads, onstart: fn(), onmessage: fn() }}
+	args={{ similar: similarThreads, onmessage: fn() }}
 	play={async ({ args, canvas, userEvent }) => {
 		await expect(canvas.getByRole('note')).toHaveTextContent(
 			'Same goal as perf(settings): load org members in pages Running'
 		);
 		await userEvent.click(canvas.getByRole('button', { name: /Message perf\(settings\)/ }));
 		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[0]);
-		await expect(canvas.getByRole('button', { name: 'Start anyway' })).toBeVisible();
+		await expect(canvas.queryByRole('button', { name: 'Start anyway' })).toBeNull();
 	}}
 />
 
@@ -249,7 +243,6 @@
 			{ ...similarThreads[0]!, status: 'shipped', detail: 'Shipped in 4f2a91c' },
 			similarThreads[3]!
 		],
-		onstart: fn(),
 		onmessage: fn()
 	}}
 	play={async ({ canvas }) => {
@@ -260,10 +253,15 @@
 
 <Story
 	name="Overlaps"
-	args={{ similar: [similarThreads[1]!], onstart: fn(), onmessage: fn() }}
+	args={{ similar: [similarThreads[1]!], onmessage: fn() }}
 	play={async ({ args, canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: /Message feat\(api\)/ }));
 		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[1]);
-		await expect(canvas.getByRole('button', { name: 'Start' })).toBeVisible();
+		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
 	}}
+/>
+
+<Story
+	name="Awaiting approval"
+	args={{ ...progress, status: 'ready', note: 'Exact candidate awaits owner approval' }}
 />

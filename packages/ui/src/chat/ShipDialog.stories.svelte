@@ -4,7 +4,7 @@
 	import ShipDialog from './ShipDialog.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Chat/Ship dialog',
+		title: 'Legacy/Ship dialog',
 		component: ShipDialog,
 		tags: ['!autodocs'],
 		parameters: { layout: 'fullscreen' },

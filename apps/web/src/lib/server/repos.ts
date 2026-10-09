@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { repos } from '@regit/db';
+import { repos, repoMembers } from '@regit/db';
 import { eq } from 'drizzle-orm';
 import { db } from './db.ts';
 
@@ -21,19 +21,23 @@ export async function repoExists(name: string) {
 export async function createRepo({
 	name,
 	source,
-	createdBy
+	createdBy,
+	principalId
 }: {
 	name: string;
 	source?: string;
 	createdBy: string;
+	principalId?: string;
 }) {
 	const [claimed] = await db()
 		.insert(repos)
-		.values({ name, source, createdBy, createdAt: new Date() })
+		.values({ name, source, createdBy, creatorPrincipalId: principalId, createdAt: new Date() })
 		.onConflictDoNothing()
 		.returning();
 	if (!claimed) throw new RepoError(`${name} already exists.`);
 	try {
+		if (principalId)
+			await db().insert(repoMembers).values({ repo: name, principalId, role: 'owner' });
 		await (source
 			? env.ARTIFACTS.import({ source: { url: source }, target: { name } })
 			: env.ARTIFACTS.create(name));

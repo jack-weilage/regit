@@ -66,6 +66,39 @@ export interface Identity {
 	email: string;
 }
 
+export interface PrepareCandidateRequest {
+	sourceSha: string;
+	base: string;
+	remote: string;
+	branch: string;
+	message: string;
+	author: Identity;
+	committer: Identity;
+}
+
+export interface PrepareCandidateResponse {
+	sha: string;
+	expectedHead: string;
+}
+
+export interface PromoteCandidateRequest {
+	sha: string;
+	expectedHead: string;
+	remote: string;
+	branch: string;
+}
+
+export interface PromoteCandidateResponse {
+	sha: string;
+}
+
+export interface PublishProvenanceRequest {
+	sha: string;
+	ref?: string;
+	note: string;
+	remote?: string;
+}
+
 export interface ServiceSpec {
 	name: string;
 	command: string;

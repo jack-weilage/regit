@@ -274,6 +274,123 @@ describe('shipping', () => {
 		base = await git(root, ['rev-parse', 'HEAD']);
 	});
 
+	async function prepare(sourceSha: string) {
+		return workspace.prepareCandidate({
+			sourceSha,
+			base,
+			remote,
+			branch: 'main',
+			message: 'Trusted squash',
+			author: sam,
+			committer: author
+		});
+	}
+
+	test('assembles the exact source tree, retains identities and retries a successful promotion', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'First');
+		await writeFile(join(root, 'source-only.txt'), 'source\n');
+		const sourceSha = (await workspace.commit({ message: 'Second', author }))!;
+		await checkpoint("export const greeting = 'not selected';\n", 'Unselected');
+		const elsewhere = join(dir, 'canonical');
+		await git(dir, ['clone', remote, elsewhere]);
+		await writeFile(join(elsewhere, 'canonical-only.txt'), 'canonical\n');
+		await git(elsewhere, ['add', '.']);
+		await git(elsewhere, [
+			'-c',
+			'user.name=Lin',
+			'-c',
+			'user.email=lin@example.com',
+			'commit',
+			'-m',
+			'Independent'
+		]);
+		await git(elsewhere, ['push', 'origin', 'main']);
+		const candidate = await prepare(sourceSha);
+		expect(candidate.expectedHead).toBe(await git(remote, ['rev-parse', 'main']));
+		expect(await git(root, ['rev-list', '--parents', '-1', candidate.sha])).toBe(
+			`${candidate.sha} ${candidate.expectedHead}`
+		);
+		expect(await git(root, ['show', `${candidate.sha}:greeting.ts`])).toContain("'hi'");
+		expect(await git(root, ['show', `${candidate.sha}:source-only.txt`])).toBe('source');
+		expect(await git(root, ['show', `${candidate.sha}:canonical-only.txt`])).toBe('canonical');
+		expect(await git(root, ['log', '-1', '--format=%an|%ae|%cn|%ce', candidate.sha])).toBe(
+			'Sam Rivera|sam@example.com|ReGit|agent@regit.dev'
+		);
+		const request = { ...candidate, remote, branch: 'main' };
+		expect(await workspace.promoteCandidate(request)).toEqual({ sha: candidate.sha });
+		expect(await workspace.promoteCandidate(request)).toEqual({ sha: candidate.sha });
+		expect(await git(remote, ['rev-list', '--count', `${base}..main`])).toBe('2');
+	});
+
+	test('refuses a stale candidate without regenerating it', async () => {
+		const sourceSha = (await checkpoint("export const greeting = 'hi';\n", 'Source'))!;
+		const candidate = await prepare(sourceSha);
+		await landOnMain("export const greeting = 'canonical';\n");
+		const head = await git(remote, ['rev-parse', 'main']);
+		await expect(
+			workspace.promoteCandidate({ ...candidate, remote, branch: 'main' })
+		).rejects.toThrow('Stale candidate');
+		expect(await git(remote, ['rev-parse', 'main'])).toBe(head);
+		expect(await git(root, ['rev-parse', 'HEAD'])).toBe(candidate.sha);
+	});
+
+	test('aborts trusted conflicts and rejects empty or invalid candidates', async () => {
+		await expect(prepare(base)).rejects.toThrow('no changes');
+		const sourceSha = (await checkpoint("export const greeting = 'hi';\n", 'Source'))!;
+		await landOnMain("export const greeting = 'conflict';\n");
+		await expect(prepare(sourceSha)).rejects.toThrow('Candidate rebase failed');
+		await expect(readFile(join(root, '.git/rebase-merge/head-name'))).rejects.toThrow();
+		await expect(readFile(join(root, '.git/rebase-apply/head-name'))).rejects.toThrow();
+		expect(await git(root, ['diff', '--name-only', '--diff-filter=U'])).toBe('');
+		await expect(
+			workspace.promoteCandidate({
+				sha: sourceSha,
+				expectedHead: sourceSha,
+				remote,
+				branch: 'main'
+			})
+		).rejects.toThrow('parent');
+		await expect(
+			workspace.promoteCandidate({ sha: sourceSha, expectedHead: base, remote, branch: '--all' })
+		).rejects.toThrow('Invalid branch');
+	});
+
+	test('explicitly synchronizes notes without losing another publisher notes', async () => {
+		const sourceSha = (await checkpoint("export const greeting = 'hi';\n", 'Source'))!;
+		const candidate = await prepare(sourceSha);
+		await workspace.promoteCandidate({ ...candidate, remote, branch: 'main' });
+		await workspace.publishProvenance({ sha: candidate.sha, remote, note: '{"attempt":1}' });
+		const elsewhere = join(dir, 'notes-publisher');
+		await git(dir, ['clone', remote, elsewhere]);
+		await git(elsewhere, ['fetch', 'origin', 'refs/notes/regit:refs/notes/regit']);
+		await git(elsewhere, [
+			'-c',
+			'user.name=Lin',
+			'-c',
+			'user.email=lin@example.com',
+			'notes',
+			'--ref=regit',
+			'add',
+			'-m',
+			'{"other":true}',
+			base
+		]);
+		await git(elsewhere, ['push', 'origin', 'refs/notes/regit']);
+		await workspace.publishProvenance({ sha: candidate.sha, note: '{"attempt":2}' });
+		expect(await git(remote, ['notes', '--ref=regit', 'show', base])).toBe('{"other":true}');
+		expect(await git(remote, ['notes', '--ref=regit', 'show', candidate.sha])).toBe(
+			'{"attempt":2}'
+		);
+		await expect(
+			workspace.publishProvenance({
+				sha: candidate.sha,
+				remote: join(dir, 'missing.git'),
+				note: '{}'
+			})
+		).rejects.toThrow('Notes discovery failed');
+		expect(await git(remote, ['rev-parse', 'main'])).toBe(candidate.sha);
+	});
+
 	test("finds the branch a remote's HEAD points to", async () => {
 		expect(await workspace.headBranch({ remote })).toBe('main');
 		await git(remote, ['symbolic-ref', 'HEAD', 'refs/heads/trunk']);

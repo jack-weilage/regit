@@ -25,6 +25,7 @@ export type CheckVerdict = 'met' | 'unmet' | 'unverified';
 export const maxReviewRounds = 3;
 
 export interface Author {
+	id?: string;
 	name: string;
 	kind: 'person' | 'agent';
 }
@@ -158,6 +159,7 @@ export interface ThreadDetail {
 	usage: ThreadUsage;
 	services: ThreadService[];
 	activity: ThreadActivity | null;
+	control?: import('./acceptance.ts').ProposalControl;
 }
 
 export type LiveMessage =
@@ -174,7 +176,9 @@ export interface RepoCoordinatorApi {
 		machine: Machine;
 	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
-	start(thread: string): Promise<void>;
+	start(thread: string, by?: Author): Promise<void>;
+	acceptIntent(thread: string, by: Author): Promise<void>;
+	approvePromotion(thread: string, promotion: string, by: Author): Promise<void>;
 	discard(thread: string, by: Author): Promise<void>;
 	reopen(thread: string, by: Author): void;
 	delete(thread: string, by: Author): Promise<void>;

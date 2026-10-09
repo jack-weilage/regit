@@ -1,12 +1,25 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const repos = sqliteTable('repos', {
 	name: text().primaryKey(),
 	source: text(),
 	createdBy: text('created_by').notNull(),
+	creatorPrincipalId: text('creator_principal_id'),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	machine: text().notNull().default('standard-1')
 });
+
+export const repoMembers = sqliteTable(
+	'repo_members',
+	{
+		repo: text()
+			.notNull()
+			.references(() => repos.name, { onDelete: 'cascade' }),
+		principalId: text('principal_id').notNull(),
+		role: text({ enum: ['owner', 'editor', 'viewer'] }).notNull()
+	},
+	(table) => [primaryKey({ columns: [table.repo, table.principalId] })]
+);
 
 export const toolchainSnapshots = sqliteTable('toolchain_snapshots', {
 	repo: text().primaryKey(),
@@ -26,6 +39,7 @@ export const previews = sqliteTable('previews', {
 
 export const gitTokens = sqliteTable('git_tokens', {
 	id: text().primaryKey(),
+	principalId: text('principal_id'),
 	hash: text().notNull().unique(),
 	repo: text().notNull(),
 	scope: text({ enum: ['read', 'write'] }).notNull(),

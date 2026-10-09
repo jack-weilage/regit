@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		AcceptancePanel,
 		ChangesPanel,
 		ChatActivity,
 		ChatBanner,
@@ -21,7 +22,6 @@
 		DeleteThreadDialog,
 		statuses,
 		ServicesPanel,
-		ShipDialog,
 		ThreadSidebar,
 		type SidebarTab,
 		ThreadView,
@@ -40,6 +40,10 @@
 	import { getLiveActivity, stageActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import {
+		acceptThreadIntent,
+		approveThreadPromotion,
+		shipThread,
+		startThread,
 		deleteThread,
 		discardThread,
 		dismissSuggestion,
@@ -53,9 +57,7 @@
 		reopenThread,
 		reply,
 		restoreThread,
-		shipThread,
 		spinOff,
-		startThread,
 		stopThread
 	} from '#lib/data.remote.ts';
 
@@ -119,7 +121,6 @@
 	let logs = $state<string | null>(null);
 	let busy = $state<string | null>(null);
 	let failure = $state<string | null>(null);
-	let confirming = $state(false);
 
 	const live = getLiveActivity();
 
@@ -145,7 +146,14 @@
 			const review = latestReview;
 			const count = intent?.type === 'intent' ? intent.intent.doneWhen.length : 0;
 			const checks = review?.checks;
-			if (status === 'shipping') return { status: 'shipping', checks, note: 'Shipping' };
+			if (detail?.control?.promotions.some((promotion) => promotion.status === 'ready'))
+				return { status: 'ready', note: 'Exact candidate awaits owner approval' };
+			if (status === 'shipping')
+				return {
+					status: 'shipping',
+					checks,
+					note: 'Preparing candidate or publishing approved SHA'
+				};
 			if (status === 'shipped') {
 				const sha = detail!.summary.shipped?.sha.slice(0, 7);
 				return { status: 'shipped', checks, note: sha ? `Shipped in ${sha}` : 'Shipped' };
@@ -178,7 +186,11 @@
 			if (status !== 'needs-you') return {};
 			if (!review) return { status: 'needs-you' };
 			if (review.verdict === 'pass') {
-				return { status: 'ready', checks: review.checks, note: 'Reviewed · ready to ship' };
+				return {
+					status: 'ready',
+					checks: review.checks,
+					note: 'Model reviewed · ready to prepare candidate'
+				};
 			}
 			const unchecked = review.checks.filter((check) => check === 'unverified').length;
 			return {
@@ -206,9 +218,6 @@
 		detail?.entries.findLast(
 			(entry): entry is Extract<Entry, { type: 'intent' }> => entry.type === 'intent'
 		)?.intent
-	);
-	let shippable = $derived(
-		detail?.summary.status === 'needs-you' && !!detail.summary.changes?.files
 	);
 
 	async function act(action: 'start' | 'stop' | 'restart', name: string) {
@@ -335,12 +344,6 @@
 								: []}
 							onmessage={(other) => forwardIntent({ ...ref, to: other.handle })}
 							onchanges={view}
-							onship={block.id === latestIntent && shippable
-								? () => (confirming = true)
-								: undefined}
-							onstart={block.id === latestIntent && summary.status === 'draft' && !thinking
-								? () => startThread({ repo: params.repo, id: params.thread })
-								: undefined}
 						/>
 					{:else if block.type === 'suggestion'}
 						{#if block.outcome?.kind === 'spun-off'}
@@ -401,6 +404,18 @@
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
 				{/each}
+				{#if summary.status !== 'discarded'}
+					<AcceptancePanel
+						control={detail.control}
+						{intent}
+						status={summary.status}
+						hasChanges={!!summary.changes?.files}
+						onaccept={() => acceptThreadIntent(ref)}
+						onstart={() => startThread(ref)}
+						onprepare={(commit) => shipThread({ ...ref, ...commit })}
+						onapprove={(promotion) => approveThreadPromotion({ ...ref, promotion })}
+					/>
+				{/if}
 				{#if activity?.startup?.cold}
 					<ChatStartup stages={activity.startup.stages} />
 				{:else if booting}
@@ -462,11 +477,7 @@
 		>
 			{#snippet changesTab()}
 				{#await getChanges(ref) then files}
-					<ChangesPanel
-						files={files ?? []}
-						embedded
-						onship={shippable ? () => (confirming = true) : undefined}
-					/>
+					<ChangesPanel files={files ?? []} embedded />
 				{/await}
 			{/snippet}
 			{#snippet servicesTab()}
@@ -483,24 +494,6 @@
 			{/snippet}
 		</ThreadSidebar>
 	</div>
-	{#if intent && summary.changes}
-		<ShipDialog
-			bind:open={confirming}
-			repo={params.repo}
-			base={summary.base ?? undefined}
-			headline={intent.headline}
-			body={intent.purpose}
-			{...summary.changes}
-			review={latestReview
-				? {
-						verdict: latestReview.verdict,
-						met: latestReview.checks.filter((check) => check === 'met').length,
-						total: latestReview.checks.length
-					}
-				: null}
-			onship={({ title, body }) => shipThread({ ...ref, title, body })}
-		/>
-	{/if}
 	<DeleteThreadDialog
 		bind:open={deleting}
 		headline={summary.headline || 'This thread'}

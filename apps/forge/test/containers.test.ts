@@ -23,6 +23,7 @@ test('snapshots the toolchain, restores it, and refreshes it when the tools chan
 	// The first container after an image rebuild can take minutes to start locally.
 	expect(await settled('thread-3', 300_000)).toMatchObject({
 		status: 'finished',
+		error: null,
 		toolchain: { tools: { jq: [expect.any(String)] }, restored: false }
 	});
 	const first = await recorded();

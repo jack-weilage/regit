@@ -42,7 +42,7 @@ const specs: ToolSpec[] = [
 	{
 		name: 'update_intent',
 		description:
-			"Revise the thread's current intent after the person refines what they want. Replaces the whole intent.",
+			'Propose a revised intent after the person refines what they want. This does not change the accepted intent for the current run; a person must accept it and start a new run.',
 		parameters: intentParameters
 	}
 ];
@@ -62,7 +62,7 @@ export function intentTools(
 			});
 			return call.name === 'propose_intent'
 				? 'Proposed. The person can now start the work or ask for changes.'
-				: 'Updated the intent.';
+				: 'Proposed the revised intent. The accepted intent for this run is unchanged.';
 		}
 	};
 }

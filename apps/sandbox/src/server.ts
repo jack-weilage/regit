@@ -8,6 +8,9 @@ import {
 	continueRebase,
 	diff,
 	headBranch,
+	prepareCandidate,
+	promoteCandidate,
+	publishProvenance,
 	push,
 	rebase,
 	squash,
@@ -34,6 +37,9 @@ export function createSandbox(
 		})
 	};
 	const workspace: Record<string, (body: never) => Promise<object>> = {
+		'prepare-candidate': (body) => prepareCandidate(root, body),
+		'promote-candidate': (body) => promoteCandidate(root, body),
+		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
 		clone: async (body) => (await services.pausedDuring(() => clone(root, body)), {}),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),

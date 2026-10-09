@@ -37,6 +37,10 @@ import type {
 	UsageRow
 } from '@regit/core';
 import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
+import { promotionProblem, type Promotion } from '@regit/core';
+import { canAccessRepository } from '@regit/db';
+import { db } from './db.ts';
+import { Acceptance } from './acceptance.ts';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
@@ -153,6 +157,7 @@ function describeIntent({ headline, purpose, doneWhen }: Intent) {
 export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinatorApi {
 	#sql = this.ctx.storage.sql;
 	#activities = new Map<string, ThreadActivity>();
+	#acceptance = new Acceptance(this.#sql);
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -185,6 +190,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			CREATE TABLE IF NOT EXISTS meta (
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS run_dispatch (
+				id TEXT PRIMARY KEY,
+				proposal TEXT NOT NULL,
+				previous TEXT NOT NULL,
+				input TEXT NOT NULL
 			);
 		`);
 		const columns = new Set(
@@ -260,29 +271,88 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (steering || ['draft', 'needs-you', 'shipped'].includes(summary.status)) {
 			await this.#converse(thread, author, text, entry);
 		}
-		if (summary.status === 'needs-you') this.#setStatus(thread, 'running');
+		if (
+			summary.status === 'needs-you' &&
+			this.#acceptance.run(thread)?.intent === this.#acceptance.intent(thread)?.id
+		)
+			this.#setStatus(thread, 'running');
 	}
 
-	async start(thread: string) {
-		const summary = this.#active(thread);
-		if (summary.status !== 'draft') throw new Error('This thread has already started');
+	async acceptIntent(thread: string, by: Author) {
+		this.#active(thread);
 		const intent = this.#latestIntent(thread);
-		if (!intent) throw new Error('This thread has no intent to start');
+		if (!intent) throw new Error('There is no proposed intent');
+		if (
+			this.#acceptance.promotions().some((p) => p.proposal === thread && p.status === 'publishing')
+		)
+			throw new Error('Publication is being reconciled; wait before changing intent');
+		const current = this.#acceptance.intent(thread);
+		if (current && JSON.stringify(current.intent) === JSON.stringify(intent)) return;
+		this.#acceptance.putIntent({
+			id: crypto.randomUUID(),
+			proposal: thread,
+			intent,
+			acceptedBy: by,
+			at: Date.now()
+		});
+		for (const p of this.#acceptance
+			.promotions()
+			.filter(
+				(p) =>
+					p.proposal === thread && ['queued', 'preparing', 'reviewing', 'ready'].includes(p.status)
+			))
+			this.#acceptance.putPromotion({
+				...p,
+				status: 'cancelled',
+				error: 'The accepted intent changed'
+			});
+		this.#add(thread, { type: 'event', text: `${by.name} accepted the intent` });
+	}
 
-		const task = describeTask(intent, this.#conversation(thread));
-		await this.env.ATTEMPTS.getByName(thread).start({
-			task,
+	async start(thread: string, by: Author = { name: 'Repository member', kind: 'person' }) {
+		const summary = this.#active(thread);
+		if (!['draft', 'needs-you'].includes(summary.status))
+			throw new Error('Stop the current work before starting a new run');
+		await this.acceptIntent(thread, by);
+		if (!['draft', 'needs-you'].includes(this.#active(thread).status))
+			throw new Error('Another run has already started');
+		this.#cancelPromotions(thread);
+		const accepted = this.#acceptance.intent(thread)!;
+		const previous = this.#acceptance.run(thread)?.id ?? thread;
+		const run = {
+			id: crypto.randomUUID().replaceAll('-', ''),
+			proposal: thread,
+			intent: accepted.id,
 			mode: summary.mode,
 			machine: summary.machine,
-			repo: this.#repo(),
-			intent
-		});
-		this.#add(thread, { type: 'event', text: 'Started the attempt' });
+			status: 'queued',
+			createdAt: Date.now()
+		};
+		this.#acceptance.putRun(run);
 		this.#setStatus(thread, 'running');
+		this.#sql.exec(
+			'INSERT INTO run_dispatch (id, proposal, previous, input) VALUES (?, ?, ?, ?)',
+			run.id,
+			thread,
+			previous,
+			JSON.stringify({
+				proposal: thread,
+				intentVersion: accepted.id,
+				task: describeTask(accepted.intent, this.#conversation(thread)),
+				mode: summary.mode,
+				machine: summary.machine,
+				repo: this.#repo(),
+				intent: accepted.intent
+			})
+		);
+		this.#add(thread, { type: 'event', text: `Started run ${run.id.slice(0, 8)}` });
+		await this.#schedulePurge();
+		await this.#dispatchRuns();
 	}
 
 	async discard(thread: string, by: Author) {
 		const summary = this.#active(thread);
+		this.#cancelPromotions(thread);
 		if (summary.status === 'discarded') return;
 		const reopen =
 			summary.status === 'running' || summary.status === 'reviewing' ? 'needs-you' : summary.status;
@@ -290,7 +360,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
 		if (summary.status === 'running' || summary.status === 'reviewing') {
-			await this.env.ATTEMPTS.getByName(thread).cancel();
+			await this.#executor(thread).cancel();
 		}
 	}
 
@@ -310,6 +380,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	// TODO: once threads ship, keep a tombstone (headline, author, commit) instead of purging shipped threads
 	async delete(thread: string, by: Author) {
 		const summary = this.#active(thread);
+		this.#cancelPromotions(thread);
 		this.#sql.exec(
 			'UPDATE threads SET deleted_at = ?, deleted_by = ? WHERE id = ?',
 			Date.now(),
@@ -319,13 +390,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#touch(thread);
 		await this.#schedulePurge();
 		if (summary.status === 'running' || summary.status === 'reviewing') {
-			await this.env.ATTEMPTS.getByName(thread).cancel();
+			await this.#executor(thread).cancel();
 		}
 	}
 
 	async stop(thread: string, by: Author) {
 		const summary = this.#active(thread);
-		await this.env.ATTEMPTS.getByName(thread).stop();
+		this.#cancelPromotions(thread);
+		await this.#executor(thread).stop();
 		const pending = this.#sql
 			.exec<{ seq: number; body: string }>('SELECT seq, body FROM entries WHERE thread = ?', thread)
 			.toArray()
@@ -346,7 +418,34 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#touch(thread);
 	}
 
+	async #dispatchRuns() {
+		const dispatches = this.#sql
+			.exec<{ id: string; proposal: string; previous: string; input: string }>(
+				'SELECT * FROM run_dispatch'
+			)
+			.toArray();
+		for (const dispatch of dispatches) {
+			const runnable = () => {
+				const summary = this.#summary(dispatch.proposal);
+				return (
+					summary &&
+					!summary.deleted &&
+					summary.status === 'running' &&
+					this.#acceptance.run(dispatch.proposal)?.id === dispatch.id
+				);
+			};
+			if (runnable()) {
+				await this.env.ATTEMPTS.getByName(dispatch.previous).stop();
+				if (runnable())
+					await this.env.ATTEMPTS.getByName(dispatch.id).start(JSON.parse(dispatch.input));
+			}
+			this.#sql.exec('DELETE FROM run_dispatch WHERE id = ?', dispatch.id);
+		}
+	}
+
 	override async alarm() {
+		await this.#dispatchRuns();
+		await this.#advancePromotion();
 		const due = this.#sql
 			.exec<{ id: string }>(
 				'SELECT id FROM threads WHERE deleted_at IS NOT NULL AND deleted_at <= ?',
@@ -354,6 +453,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			)
 			.toArray();
 		for (const { id } of due) {
+			// Acceptance records and referenced Git forks outlive the conversational view.
+			for (const run of this.#acceptance.control(id).runs)
+				await this.env.ATTEMPTS.getByName(run.id).destroy();
 			await this.env.ATTEMPTS.getByName(id).destroy();
 			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM usage WHERE thread = ?', id);
@@ -514,7 +616,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			entries: rows.map((row) => JSON.parse(row.body) as Entry),
 			usage: this.#usage(id, summary.mode),
 			services: this.#services(id),
-			activity: this.#activities.get(id) ?? null
+			activity: this.#activities.get(id) ?? null,
+			control: this.#acceptance.control(id)
 		};
 	}
 
@@ -632,17 +735,17 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async serviceAction(thread: string, action: 'start' | 'stop' | 'restart', name: string) {
 		this.#active(thread);
-		await this.env.ATTEMPTS.getByName(thread).serviceAction(action, name);
+		await this.#executor(thread).serviceAction(action, name);
 	}
 
 	serviceLogs(thread: string, name: string) {
 		this.#active(thread);
-		return this.env.ATTEMPTS.getByName(thread).serviceLogs(name) as Promise<string>;
+		return this.#executor(thread).serviceLogs(name) as Promise<string>;
 	}
 
 	changes(thread: string) {
 		this.#active(thread);
-		return this.env.ATTEMPTS.getByName(thread).changes() as Promise<DiffFile[] | null>;
+		return this.#executor(thread).changes() as Promise<DiffFile[] | null>;
 	}
 
 	async ship(thread: string, { by, email, title, body }: ShipInput) {
@@ -650,18 +753,203 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (summary.status !== 'needs-you' || !summary.changes) {
 			throw new Error('This thread has nothing ready to ship');
 		}
-		await this.env.ATTEMPTS.getByName(thread).ship({
+		await this.#owner(by);
+		const run = this.#acceptance.run(thread);
+		const revision = await this.#executor(thread).revision();
+		if (this.#active(thread).status !== 'needs-you')
+			throw new Error('The proposal is no longer ready');
+		if (!run || this.#acceptance.run(thread)?.id !== run.id || !revision)
+			throw new Error('There is no stable revision; start a new run');
+		const accepted = this.#acceptance.intent(thread);
+		if (!accepted || revision.intent !== accepted.id)
+			throw new Error('This revision implements an older intent');
+		if (
+			this.#acceptance
+				.promotions()
+				.some(
+					(p) => p.proposal === thread && !['failed', 'cancelled', 'shipped'].includes(p.status)
+				)
+		)
+			throw new Error('This proposal already has a pending candidate');
+		this.#acceptance.putRevision(revision);
+		this.#acceptance.putPromotion({
+			id: crypto.randomUUID().replaceAll('-', ''),
+			proposal: thread,
+			revision: revision.id,
+			intent: accepted.id,
+			requestedBy: by,
+			email,
 			title,
 			body,
-			author: { name: by.name, email }
+			status: 'queued',
+			candidate: null,
+			assessment: null,
+			error: null,
+			notesPublished: false,
+			at: Date.now()
 		});
 		this.#sql.exec('UPDATE threads SET shipped_by = ? WHERE id = ?', by.name, thread);
 		this.#setStatus(thread, 'shipping');
+		this.#add(thread, {
+			type: 'event',
+			text: 'Preparing an isolated integration candidate. Exact approval is required before publication.'
+		});
+		await this.#schedulePurge();
 	}
 
-	attemptUpdated(thread: string, update: AttemptUpdate) {
+	async approvePromotion(thread: string, id: string, by: Author) {
+		await this.#owner(by);
+		this.#active(thread);
+		const control = this.#acceptance.control(thread);
+		const promotion = control.promotions.find((p) => p.id === id);
+		if (!promotion || promotion.status !== 'ready')
+			throw new Error('This candidate is not awaiting approval');
+		const problem = promotionProblem(
+			promotion,
+			control.acceptedIntent,
+			control.revisions.find((r) => r.id === promotion.revision)
+		);
+		if (problem) throw new Error(problem);
+		if (this.#acceptance.promotions().some((p) => p.status === 'publishing'))
+			throw new Error('Another publication is being reconciled. Try again when it completes.');
+		this.#acceptance.putPromotion({ ...promotion, status: 'publishing', requestedBy: by });
+		this.#setStatus(thread, 'shipping');
+		this.#add(thread, {
+			type: 'event',
+			text: `${by.name} approved exact candidate ${promotion.candidate!.sha.slice(0, 7)}`
+		});
+		await this.#schedulePurge();
+	}
+
+	async #owner(by: Author) {
+		if (by.kind !== 'person' || !(await canAccessRepository(db, this.#repo(), by.id, 'owner')))
+			throw new Error('Repository owner permission is required');
+	}
+
+	#executor(thread: string) {
+		return this.env.ATTEMPTS.getByName(this.#acceptance.run(thread)?.id ?? thread);
+	}
+
+	#cancelPromotions(thread: string) {
+		const pending = this.#acceptance.control(thread).promotions;
+		if (pending.some((p) => p.status === 'publishing'))
+			throw new Error(
+				'Publication has been admitted; its outcome must be reconciled before cancellation'
+			);
+		for (const p of pending.filter((p) =>
+			['queued', 'preparing', 'reviewing', 'ready'].includes(p.status)
+		))
+			this.#acceptance.putPromotion({
+				...p,
+				status: 'cancelled',
+				error: 'Cancelled before publication'
+			});
+	}
+
+	async #advancePromotion() {
+		const all = this.#acceptance.promotions();
+		const p =
+			all.find((p) => p.status === 'publishing') ??
+			all.find((p) => ['queued', 'preparing', 'reviewing'].includes(p.status)) ??
+			all.find((p) => p.status === 'shipped' && !p.notesPublished);
+		if (!p) return;
+		const repo = this.#repo();
+		const publisher = this.env.REPOSITORY_GIT.getByName(`promotion-${p.id}`);
+		const control = this.#acceptance.control(p.proposal);
+		const revision = control.revisions.find((r) => r.id === p.revision);
+		const current = () => this.#acceptance.promotions().find((item) => item.id === p.id)!;
+		try {
+			if (p.status === 'shipped') {
+				await publisher.notes(
+					repo,
+					p.candidate!,
+					JSON.stringify({
+						schema: 1,
+						promotion: p.id,
+						source: revision,
+						intent: this.#acceptance.acceptedIntent(p.intent),
+						assessment: p.assessment,
+						authorizedBy: p.requestedBy
+					})
+				);
+				this.#acceptance.putPromotion({ ...p, notesPublished: true, error: null });
+				return;
+			}
+			if (p.status === 'publishing') {
+				// Authorization was fixed at admission. A lost response retries the same ref update.
+				await publisher.promote(repo, p.candidate!);
+				this.#acceptance.putPromotion({ ...p, status: 'shipped', error: null });
+				this.#sql.exec(
+					'UPDATE threads SET shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
+					p.candidate!.sha,
+					Date.now(),
+					p.requestedBy.name,
+					p.proposal
+				);
+				this.#setStatus(p.proposal, 'shipped');
+				this.#add(p.proposal, {
+					type: 'event',
+					text: `Promoted ${p.candidate!.sha.slice(0, 7)} to ${p.candidate!.branch}. Outcome confirmation remains a human decision.`
+				});
+				return;
+			}
+			if (!revision || !control.acceptedIntent || control.acceptedIntent.id !== p.intent)
+				throw new Error('The accepted intent or source revision changed');
+			if (!p.candidate) {
+				this.#acceptance.putPromotion({ ...p, status: 'preparing' });
+				const candidate = await publisher.prepare(repo, revision, p);
+				if (current().status === 'cancelled') return;
+				this.#acceptance.putPromotion({ ...p, candidate, status: 'reviewing' });
+				return;
+			}
+			const summary = this.#active(p.proposal);
+			const assessment = await this.env.ATTEMPTS.getByName(`verify-${p.id}`).assessCandidate({
+				repo,
+				proposal: p.proposal,
+				intentVersion: p.intent,
+				intent: control.acceptedIntent.intent,
+				candidate: p.candidate,
+				mode: summary.mode,
+				machine: summary.machine
+			});
+			if (current().status === 'cancelled') return;
+			this.#acceptance.putAssessment(p.proposal, assessment);
+			this.#acceptance.putPromotion({ ...p, status: 'ready', assessment, error: null });
+			this.#setStatus(p.proposal, 'needs-you');
+			this.#add(p.proposal, {
+				type: 'event',
+				text: `Candidate ${p.candidate.sha.slice(0, 7)} assessed: ${assessment.verdict}. Review the evidence and approve this exact candidate.`
+			});
+		} catch (error) {
+			if (current().status === 'cancelled') return;
+			const message = error instanceof Error ? error.message : String(error);
+			const uncertain = p.status === 'publishing' && !message.includes('Stale candidate:');
+			this.#acceptance.putPromotion({
+				...current(),
+				status: p.status === 'shipped' ? 'shipped' : uncertain ? 'publishing' : 'failed',
+				error: message
+			});
+			if (!uncertain && p.status !== 'shipped') {
+				this.#setStatus(p.proposal, 'needs-you');
+				this.#add(p.proposal, { type: 'event', text: `Integration stopped: ${message}` });
+			}
+		} finally {
+			if (this.#summary(p.proposal)) this.#touch(p.proposal);
+		}
+	}
+
+	attemptUpdated(thread: string, update: AttemptUpdate, runId?: string) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
+		const run = this.#acceptance.run(thread);
+		const discussion = runId === `discussion-${thread}`;
+		if (discussion) {
+			if (!['reply', 'read', 'usage', 'activity', 'conversation-failed'].includes(update.type))
+				return;
+		} else if (run && (runId !== run.id || summary.status === 'shipped')) return;
+		if (!discussion && run && update.type === 'status')
+			this.#acceptance.putRun({ ...run, status: update.status });
+		if (summary.status === 'shipping' && !['usage', 'read'].includes(update.type)) return;
 		if (update.type === 'changes') {
 			this.#sql.exec(
 				'UPDATE threads SET changes = ?, base = COALESCE(?, base) WHERE id = ?',
@@ -786,15 +1074,26 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	async #converse(thread: string, author: Author, text: string, entry: string) {
-		const { mode, machine } = this.#summary(thread)!;
+		await this.#dispatchRuns();
+		const { mode, machine, status } = this.#summary(thread)!;
+		const run = this.#acceptance.run(thread);
+		const intentVersion = this.#acceptance.intent(thread)?.id;
+		const discussion = run && (status === 'shipped' || run.intent !== intentVersion);
 		const [row] = this.#sql
 			.exec<Pick<ThreadRow, 'context'>>('SELECT context FROM threads WHERE id = ?', thread)
 			.toArray();
-		await this.env.ATTEMPTS.getByName(thread).converse({
+		const executor = discussion
+			? this.env.ATTEMPTS.getByName(`discussion-${thread}`)
+			: this.#executor(thread);
+		await executor.converse({
+			proposal: thread,
+			intentVersion,
 			repo: this.#repo(),
 			mode,
 			machine,
-			...(row?.context && { context: row.context }),
+			context: discussion
+				? describeTask(this.#acceptance.intent(thread)!.intent, this.#conversation(thread))
+				: (row?.context ?? undefined),
 			author: author.name,
 			text,
 			entry
@@ -990,7 +1289,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				'SELECT MIN(deleted_at) AS at FROM threads WHERE deleted_at IS NOT NULL'
 			)
 			.toArray();
-		if (next?.at) await this.ctx.storage.setAlarm(next.at + threadPurgeDelayMs);
+		const pending = this.#acceptance
+			.promotions()
+			.some(
+				(p) =>
+					['queued', 'preparing', 'reviewing', 'publishing'].includes(p.status) ||
+					(p.status === 'shipped' && !p.notesPublished)
+			);
+		if (pending || this.#sql.exec('SELECT 1 FROM run_dispatch LIMIT 1').toArray().length)
+			await this.ctx.storage.setAlarm(Date.now() + 1000);
+		else if (next?.at) await this.ctx.storage.setAlarm(next.at + threadPurgeDelayMs);
 		else await this.ctx.storage.deleteAlarm();
 	}
 

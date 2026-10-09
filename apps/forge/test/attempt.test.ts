@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { beforeEach, expect, test } from 'vitest';
 import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
@@ -20,6 +20,8 @@ const {
 	submitReview,
 	settled
 } = await setup();
+
+beforeEach(() => idle());
 
 test('runs the agent on a fork of the repository, checkpointing its work', async () => {
 	await seed('greeting', { 'greeting.ts': "export const greeting = 'hello';\n" });
@@ -270,7 +272,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		status: 'needs-you',
 		headline: 'docs(notes): add a title'
 	});
-	expect(await env.ATTEMPTS.getByName(opened.id).snapshot()).toMatchObject({
+	expect(await env.ATTEMPTS.getByName(detail!.control!.runs.at(-1)!.id).snapshot()).toMatchObject({
 		machine: 'standard-3'
 	});
 	expect(
@@ -278,7 +280,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 			entry.type === 'message'
 				? `${entry.author.name}: ${entry.text}`
 				: entry.type === 'event'
-					? entry.text.replace(/[0-9a-f]{7}$/, 'sha')
+					? entry.text.replace(/\b[0-9a-f]{7}$/, 'sha')
 					: entry.type === 'review'
 						? `review ${entry.verdict}`
 						: entry.type === 'tools'
@@ -296,7 +298,8 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		'intent docs(notes): add a title',
 		'tools update_intent done',
 		'ReGit: Updated it.',
-		'Started the attempt',
+		'Repository member accepted the intent',
+		`Started run ${detail!.control!.runs.at(-1)!.id.slice(0, 8)}`,
 		'ReGit: Adding the title',
 		'tools write_file done',
 		'Checkpoint sha',
@@ -366,9 +369,9 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		context: { used: 60, limit: 1_050_000 }
 	});
 	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
-	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
-		'# Notes\n\nSome notes'
-	);
+	expect(
+		sh(join(dir, `notes--${detail!.control!.runs.at(-1)!.id}.git`), 'show', 'main:notes.md')
+	).toBe('# Notes\n\nSome notes');
 });
 
 test('steers a running attempt with messages read after the current step', async () => {
@@ -561,7 +564,9 @@ test('stops a running attempt mid tool call', async () => {
 	expect(Date.now() - stoppedAt).toBeLessThan(20_000);
 	expect(detail!.summary.status).toBe('needs-you');
 	expect(detail!.entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
-	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
+	expect((await env.ATTEMPTS.getByName(detail!.control!.runs.at(-1)!.id).snapshot())!.status).toBe(
+		'interrupted'
+	);
 });
 
 test('reports a sandbox that fails before asking the model', async () => {
@@ -613,13 +618,9 @@ test('stops a conversation turn mid tool call', async () => {
 	).toBe(false);
 });
 
-test('resumes a finished attempt when someone replies, updating the intent', async () => {
+test('resumes a finished run without letting the coding agent replace its accepted intent', async () => {
 	await seed('resume', { 'notes.md': 'Some notes\n' });
-	const intent = {
-		headline: 'docs: add a title and footer',
-		purpose: 'Readers need a title and a footer.',
-		doneWhen: ['notes.md starts with a title', 'notes.md ends with a footer']
-	};
+	await idle();
 	await script([
 		[{ type: 'response.output_text.delta', delta: 'Sure.' }],
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
@@ -629,14 +630,29 @@ test('resumes a finished attempt when someone replies, updating the intent', asy
 				type: 'response.output_item.done',
 				item: {
 					type: 'function_call',
-					call_id: 'update',
+					call_id: 'intent',
 					name: 'update_intent',
-					arguments: JSON.stringify(intent)
+					arguments: JSON.stringify({
+						headline: 'docs: add a footer',
+						purpose: 'Readers need a footer.',
+						doneWhen: ['notes.md ends with a footer']
+					})
+				}
+			}
+		],
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'footer',
+					name: 'write_file',
+					arguments: JSON.stringify({ path: 'notes.md', content: '# Notes\n\nA footer\n' })
 				}
 			}
 		],
 		[{ type: 'response.output_text.delta', delta: 'Added the footer too.' }],
-		submitReview('pass', ['met', 'met'])
+		submitReview('pass', ['met'])
 	]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('resume');
@@ -658,14 +674,17 @@ test('resumes a finished attempt when someone replies, updating the intent', asy
 		}
 		throw new Error('The thread never got there');
 	};
-	await waitFor((detail) => detail.entries.at(-1)?.type === 'message');
+	await waitFor((detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.author.kind === 'agent')
+	);
 	await repo.intentProposed(id, {
 		headline: 'docs: add a title',
 		purpose: 'Readers need a title.',
 		doneWhen: ['notes.md starts with a title']
 	});
 	await repo.start(id);
-	await waitFor((detail) => detail.summary.status === 'needs-you');
+	const finished = await waitFor((detail) => detail.summary.status === 'needs-you');
+	const accepted = finished.control!.acceptedIntent;
 
 	await repo.reply(id, { author: sam, text: 'Also add a footer.' });
 	const detail = await waitFor(
@@ -674,11 +693,13 @@ test('resumes a finished attempt when someone replies, updating the intent', asy
 			detail.entries.filter((entry) => entry.type === 'review').length === 2
 	);
 
-	expect(detail.summary.headline).toBe('docs: add a title and footer');
+	expect(detail.control!.acceptedIntent).toEqual(accepted);
+	expect(detail.summary.headline).toBe('docs: add a footer');
+	expect(detail.control!.runs).toEqual(finished.control!.runs);
 	expect(detail.entries.flatMap((entry) => (entry.type === 'review' ? [entry] : []))).toMatchObject(
 		[
 			{ round: 1, verdict: 'pass', checks: ['met'] },
-			{ round: 1, verdict: 'pass', checks: ['met', 'met'] }
+			{ round: 1, verdict: 'pass', checks: ['met'] }
 		]
 	);
 	const coding = (await modelRequests()).filter(
@@ -686,9 +707,10 @@ test('resumes a finished attempt when someone replies, updating the intent', asy
 	);
 	expect(JSON.stringify(coding[1]!.query)).toContain('Added the title.');
 	expect(JSON.stringify(coding[1]!.query)).toContain('Sam: Also add a footer.');
-	expect(
-		(coding[1]!.query as { tools: { name: string }[] }).tools.map((tool) => tool.name)
-	).toContain('update_intent');
+	const reviews = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'review'
+	);
+	expect(JSON.stringify(reviews.at(-1)!.query)).toContain('notes.md starts with a title');
 });
 
 test('reads messages sent during a review and resumes the work after it', async () => {
@@ -742,7 +764,9 @@ test('reads messages sent during a review and resumes the work after it', async 
 		}
 		throw new Error('The thread never got there');
 	};
-	await until((detail) => detail.entries.at(-1)?.type === 'message');
+	await until((detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.author.kind === 'agent')
+	);
 	await repo.intentProposed(id, {
 		headline: 'docs: add a title',
 		purpose: 'Readers need a title.',
@@ -789,10 +813,17 @@ async function untilThread(
 
 async function startedThread(name: string, steps: object[][], branch?: string) {
 	await seed(name, { 'notes.md': 'Some notes\n' }, branch);
+	await idle();
 	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], ...steps]);
 	const env = await worker.getEnv();
+	await env.DB.prepare('INSERT INTO repos (name, created_by, created_at) VALUES (?, ?, ?)')
+		.bind(name, 'Sam', Date.now())
+		.run();
+	await env.DB.prepare('INSERT INTO repo_members (repo, principal_id, role) VALUES (?, ?, ?)')
+		.bind(name, 'owner', 'owner')
+		.run();
 	const repo = env.REPOS.getByName(name);
-	const sam = { name: 'Sam', kind: 'person' as const };
+	const sam = { id: 'owner', name: 'Sam', kind: 'person' as const };
 	const { id } = await repo.openThread({
 		repo: name,
 		author: sam,
@@ -800,7 +831,9 @@ async function startedThread(name: string, steps: object[][], branch?: string) {
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	await untilThread(repo, id, (detail) => detail.entries.at(-1)?.type === 'message');
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.author.kind === 'agent')
+	);
 	await repo.intentProposed(id, {
 		headline: 'docs: add a title',
 		purpose: 'Readers need a title.',
@@ -821,7 +854,10 @@ test('resumes a discarded attempt once the thread is reopened', async () => {
 	await untilRequests('code', 1);
 	await new Promise((resolve) => setTimeout(resolve, 500));
 	await repo.discard(id, sam);
-	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('cancelled');
+	expect(
+		(await env.ATTEMPTS.getByName((await repo.thread(id))!.control!.runs.at(-1)!.id).snapshot())!
+			.status
+	).toBe('cancelled');
 
 	repo.reopen(id, sam);
 	await repo.reply(id, { author: sam, text: 'Carry on.' });
@@ -879,15 +915,24 @@ const writeNotes = (content: string) => [
 	}
 ];
 
-const tasks = async () =>
-	(await modelRequests()).map(
-		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task
+async function approveCandidate(
+	repo: ReturnType<Env['REPOS']['getByName']>,
+	id: string,
+	sam: { id: string; name: string; kind: 'person' }
+) {
+	const ready = await untilThread(
+		repo,
+		id,
+		(detail) => detail.control!.promotions.at(-1)?.status === 'ready'
 	);
+	await repo.approvePromotion(id, ready.control!.promotions.at(-1)!.id, sam);
+}
 
 test('ships reviewed work as one commit on main', async () => {
 	const { repo, sam, id } = await startedThread('shipping', [
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+		submitReview('pass', ['met']),
 		submitReview('pass', ['met']),
 		[{ type: 'response.output_text.delta', delta: 'It is the first line.' }]
 	]);
@@ -907,13 +952,14 @@ test('ships reviewed work as one commit on main', async () => {
 		title: 'docs: add a title',
 		body: 'Readers need a title.'
 	});
+	await approveCandidate(repo, id, sam);
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
 
 	const main = sh(join(dir, 'shipping.git'), 'rev-parse', 'main');
 	expect(shipped.summary.shipped).toMatchObject({ sha: main, by: 'Sam' });
 	expect(shipped.entries.at(-1)).toMatchObject({
 		type: 'event',
-		text: `Shipped to main in ${main.slice(0, 7)} by Sam`
+		text: expect.stringContaining(`Promoted ${main.slice(0, 7)} to main`)
 	});
 	expect(sh(join(dir, 'shipping.git'), 'log', '--format=%an|%s', 'main')).toBe(
 		'Sam|docs: add a title\nSam|init'
@@ -931,16 +977,12 @@ test('ships reviewed work as one commit on main', async () => {
 		)
 	);
 	expect(answered.summary.status).toBe('shipped');
-	expect(await tasks()).toEqual(['conversation', 'code', 'code', 'review', 'conversation']);
 });
 
-test('resolves conflicts with main, reviews again, then ships', async () => {
+test('rejects integration conflicts without rebasing the run or writing main', async () => {
 	const { repo, sam, id } = await startedThread('conflicting', [
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
-		submitReview('pass', ['met']),
-		writeNotes('# Notes\\nSome better notes\\n'),
-		[{ type: 'response.output_text.delta', delta: 'Kept both.' }],
 		submitReview('pass', ['met'])
 	]);
 	await untilThread(
@@ -953,35 +995,19 @@ test('resolves conflicts with main, reviews again, then ships', async () => {
 	sh(work, 'push', '--quiet', join(dir, 'conflicting.git'), 'main');
 
 	const ship = { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' };
+	const before = (await repo.thread(id))!;
+	const runFork = join(dir, `conflicting--${before.control!.runs.at(-1)!.id}.git`);
+	const runHead = sh(runFork, 'rev-parse', 'main');
 	await repo.ship(id, ship);
 	const resolved = await untilThread(
 		repo,
 		id,
-		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 2
+		(detail) => detail.control!.promotions.at(-1)?.status === 'failed'
 	);
-	const events = resolved.entries.flatMap((entry) => (entry.type === 'event' ? [entry.text] : []));
-	expect(events).toEqual(
-		expect.arrayContaining(['Conflicts with main in 1 file', 'Rebased onto main'])
-	);
+	expect(resolved.control!.promotions.at(-1)!.error).toMatch(/conflict/i);
+	expect(reviews(resolved)).toHaveLength(1);
+	expect(sh(runFork, 'rev-parse', 'main')).toBe(runHead);
 	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
-
-	await repo.ship(id, ship);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
-	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe(
-		'docs: add a title\nBetter notes\ninit'
-	);
-	expect(sh(join(dir, 'conflicting.git'), 'show', 'main:notes.md')).toBe(
-		'# Notes\nSome better notes'
-	);
-	expect(await tasks()).toEqual([
-		'conversation',
-		'code',
-		'code',
-		'review',
-		'conflicts',
-		'conflicts',
-		'review'
-	]);
 });
 
 test("ships to the branch the repository's HEAD points to, not its recorded default", async () => {
@@ -990,6 +1016,7 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 		[
 			writeNotes('# Notes\\n'),
 			[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+			submitReview('pass', ['met']),
 			submitReview('pass', ['met'])
 		],
 		'master'
@@ -1002,10 +1029,11 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 	expect(ready.summary.base).toBe('master');
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
+	await approveCandidate(repo, id, sam);
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
 
 	expect(shipped.entries.at(-1)).toMatchObject({
-		text: expect.stringContaining('Shipped to master')
+		text: expect.stringContaining('to master')
 	});
 	expect(sh(join(dir, 'imported.git'), 'log', '--format=%s', 'master')).toBe(
 		'docs: add a title\ninit'

@@ -4,14 +4,29 @@ An agent-first Git forge on Cloudflare Workers and Artifacts.
 
 ## Layout
 
-| Path            | What                                                                          |
-| --------------- | ----------------------------------------------------------------------------- |
-| `apps/web`      | SvelteKit 3 app on Workers: control panel and API (`regit-web`)               |
-| `apps/forge`    | Worker for Durable Objects, Workflows, containers and portals (`regit-forge`) |
-| `packages/core` | Shared domain types and pure logic                                            |
-| `packages/ui`   | Svelte components and theme, developed in Storybook                           |
+| Path            | What                                                                    |
+| --------------- | ----------------------------------------------------------------------- |
+| `apps/web`      | SvelteKit 3 app on Workers: control panel and API (`regit-web`)         |
+| `apps/forge`    | Runtime, repository admission, Git ingress and previews (`regit-forge`) |
+| `apps/sandbox`  | Container tool server and image consumed by forge                       |
+| `packages/core` | Shared domain types and pure logic                                      |
+| `packages/ui`   | Svelte components and theme, developed in Storybook                     |
 
-`web` reaches `forge` through the `FORGE` service binding, and through `script_name` bindings for its Durable Objects and Workflows.
+The three deployables are web, forge and the sandbox image. Web reaches forge's Durable Objects through `script_name` bindings. Repository access uses principal membership in D1; canonical writes go exclusively through `RepositoryGit` admission and publication.
+
+Forge serves `git.regit.dev` outside Access, authenticating clone/fetch with hashed, expiring D1 tokens and current repository membership. Unclaimed legacy tokens are denied; receive-pack is refused even for legacy write-scoped tokens. Contribution forks and a local CLI remain deferred.
+
+Deployment migration is still required: remove the existing `git.regit.dev/*` route from the shared `regit-git` deployment before assigning that explicit route to forge. The wildcard preview route alone cannot override it. This repository change does not modify or delete the existing remote deployment; web's `GIT_HOST` stays `git.regit.dev`.
+
+## Acceptance and publication
+
+The repository Durable Object owns accepted intent versions, run identities, captured revisions, candidate assessments and publication records. A thread is the conversational view; a run is a separate executor with its own fork. Agents can propose changes to intent, but only a person accepts a new version. Run dispatch is persisted and retried with the same input.
+
+Preparing a candidate does not publish it. A separate Git-only publisher constructs a single commit against an exact canonical head, then an independent read-only verifier assesses that commit. The assessment is model judgment, not trusted executable proof. A repository owner explicitly approves the exact candidate, including any override of an adverse assessment. Publication uses a conditional ref update; a stale base requires preparing and approving a new candidate. Coding and verifier containers never receive canonical write authority.
+
+After publication, `refs/notes/regit` records the source revision, accepted intent, assessment and authorizing principal. Notes publication retries independently of the code update. Operational state remains in SQLite; Git notes are exported provenance, not the mutable coordination database.
+
+This is the acceptance/publication foundation, not the entire platform roadmap. Pinned dependencies between proposals, alternative-revision selection, standing policies and budgets, an attention inbox, and explicit outcome confirmation are not implemented yet. Local CLI and other-agent contribution access remain TODO.
 
 ## Develop
 
@@ -34,6 +49,28 @@ bun run dev
 | `bun run format`    | Format with Prettier                                         |
 
 Git hooks run through lefthook: pre-commit formats staged files, and pre-push runs `check`.
+
+## Deploying the acceptance migration
+
+This release needs a coordinated maintenance window; do not deploy web and forge independently while users are starting or shipping work.
+
+Before changing production:
+
+1. Run `bun run lint`, `bun run check`, `bun run test`, `bun run build`, and `bun run --filter @regit/forge test:containers`. The forge build is a Wrangler dry run; it does not deploy.
+2. Pause new work and let existing runs and legacy shipments finish. Confirm no legacy thread remains `shipping`: the new executor disables legacy shipping, and those threads have no promotion record to reconcile their status. Preserve any unfinished work before proceeding.
+3. Record deployed worker versions and routing, back up D1, and retain the current code/container versions. D1 backups do not include Durable Object state or Artifacts repositories.
+
+During the approved maintenance window:
+
+1. Apply the additive D1 migration **before** either new worker. `bun run --filter @regit/forge deploy` applies it before deploying forge and its containers, including the new `RepositoryGit` publisher. Confirm the existing `git.regit.dev/*` route can be transferred from `regit-git` to forge; remove the old assignment as part of this coordinated cutover, not during normal traffic.
+2. Run `bun run --filter @regit/web deploy` after forge is available. The new web API requires the new forge methods.
+3. Have existing repository owners sign in through Cloudflare Access. Their exact matching legacy email claims repository membership and previously unclaimed tokens. Verify ownership and provision any additional memberships before restoring access; do not assume old shared tokens grant membership.
+4. Confirm `git.regit.dev/*` reaches forge. Disable every other public route to the old `regit-git` worker, including any workers.dev endpoint, so it cannot bypass canonical-write admission. Keep the old deployment only as an inaccessible rollback artifact.
+5. Smoke-test owner and non-owner access, clone/fetch, rejected direct pushes, and the complete accept → run → prepare → approve flow. Verify the canonical commit and `refs/notes/regit`; verify that a candidate whose base moved cannot publish.
+
+Legacy completed attempts remain readable but have no accepted-intent/run ledger. They cannot be prepared for publication directly: accept the intent and start a new run, preserving or explicitly recovering earlier work as needed. This release does not automatically adopt legacy revisions.
+
+If cutover fails, keep traffic paused and restore a compatible web/forge pair and route configuration. The D1 additions may remain, but restoring older binaries is not a rollback of new Durable Object or Git writes. Do not reopen the old write-capable Git ingress without explicitly accepting that it bypasses the new publication boundary.
 
 ## License
 

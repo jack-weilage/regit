@@ -9,6 +9,9 @@ import {
 	maxReviewRounds,
 	summarize,
 	type DiffFile,
+	type Revision,
+	type Candidate,
+	type Assessment,
 	type Machine,
 	type StartupStage,
 	type ThreadActivity
@@ -30,7 +33,6 @@ import {
 	openaiModel,
 	parseDiff,
 	readOnlyTools,
-	resolveConflicts,
 	reviewers,
 	reviewFeedback,
 	reviewIntent,
@@ -56,6 +58,8 @@ import {
 } from '@regit/agent';
 
 export interface AttemptInput {
+	proposal?: string;
+	intentVersion?: string;
 	task: string;
 	mode: Mode;
 	machine?: Machine;
@@ -64,6 +68,8 @@ export interface AttemptInput {
 }
 
 export interface ConverseInput {
+	proposal?: string;
+	intentVersion?: string;
 	repo: string;
 	mode: Mode;
 	machine?: Machine;
@@ -136,14 +142,6 @@ const healthTimeoutMs = 5 * 60 * 1000;
 const idleTimeoutMs = 5 * 60 * 1000;
 const snapshotHeadroomBytes = 2e9;
 const maxStoredChanges = 1_500_000;
-const shipRetries = 3;
-const resolveRounds = 2;
-
-export interface ShipRequest {
-	title: string;
-	body: string;
-	author: { name: string; email: string };
-}
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
@@ -158,6 +156,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 	#activity: ThreadActivity = idle();
 	#published = 0;
 	#publishing?: ReturnType<typeof setTimeout>;
+	#verifying = false;
+	#assessment?: Promise<Assessment>;
+	#capturing = false;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -221,7 +222,28 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async converse({ repo, mode, machine, context, author, text, entry }: ConverseInput) {
+	async converse({
+		repo,
+		mode,
+		machine,
+		context,
+		author,
+		text,
+		entry,
+		proposal,
+		intentVersion
+	}: ConverseInput) {
+		if (this.#capturing || this.#meta('verifierInput'))
+			throw new Error('This run cannot accept messages now');
+		if (
+			this.#attempt() &&
+			((proposal && proposal !== this.#proposal()) ||
+				(intentVersion && intentVersion !== this.#meta('intentVersion')))
+		) {
+			throw new Error('A new accepted intent requires a new run');
+		}
+		if (proposal) this.#setMeta('proposal', proposal);
+		if (intentVersion) this.#setMeta('intentVersion', intentVersion);
 		this.#setMeta('repo', repo);
 		this.#setMeta('mode', mode);
 		if (machine) this.#setMeta('machine', machine);
@@ -244,8 +266,15 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async start({ task, mode, machine, repo, intent }: AttemptInput) {
-		if (this.#attempt()) throw new Error('This attempt has already started');
+	async start(input: AttemptInput) {
+		const serialized = JSON.stringify(input);
+		if (this.#meta('startInput') === serialized) return;
+		if (this.#meta('startInput') || this.#attempt() || this.#meta('verifierInput'))
+			throw new Error('This run has already started');
+		const { task, mode, machine, repo, intent, proposal, intentVersion } = input;
+		this.#setMeta('startInput', serialized);
+		if (proposal) this.#setMeta('proposal', proposal);
+		if (intentVersion) this.#setMeta('intentVersion', intentVersion);
 		this.#setMeta('repo', repo);
 		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec(
@@ -256,6 +285,132 @@ export class AttemptSandbox extends DurableObject<Env> {
 			intent ? JSON.stringify(intent) : null
 		);
 		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	async revision(): Promise<Revision | null> {
+		const attempt = this.#attempt();
+		if (!attempt) return null;
+		if (isActive(attempt.status) || this.#controller || this.#conversation || this.#capturing)
+			throw new Error('Stop the run before capturing a revision');
+		if (!attempt.fork || !attempt.branch || !attempt.base) return null;
+		this.#capturing = true;
+		try {
+			const { fetch } = await this.#wake();
+			const sha = await this.#head(fetch);
+			if (!sha) return null;
+			const run = this.ctx.id.name!;
+			return {
+				id: `${run}:${sha}`,
+				proposal: this.#proposal(),
+				run,
+				intent: this.#meta('intentVersion') ?? 'legacy',
+				repository: attempt.fork,
+				branch: attempt.branch,
+				base: attempt.base,
+				sha,
+				at: Date.now()
+			};
+		} finally {
+			this.#capturing = false;
+		}
+	}
+
+	async assessCandidate(input: {
+		repo: string;
+		proposal: string;
+		intentVersion: string;
+		intent: Intent;
+		candidate: Candidate;
+		mode: Mode;
+		machine: Machine;
+	}): Promise<Assessment> {
+		const key = JSON.stringify(input);
+		if (this.#attempt() || this.#meta('repo'))
+			throw new Error('Assessment requires an independent verifier');
+		const previous = this.#meta('verifierInput');
+		if (previous && previous !== key)
+			throw new Error('This verifier belongs to a different candidate or intent');
+		const completed = this.#meta('assessment');
+		if (completed) return JSON.parse(completed) as Assessment;
+		if (this.#assessment) return this.#assessment;
+		this.#setMeta('verifierInput', key);
+		this.#setMeta('machine', input.machine);
+		this.#verifying = true;
+		this.#assessment = this.#assess(input);
+		try {
+			return await this.#assessment;
+		} finally {
+			this.#assessment = undefined;
+			this.#verifying = false;
+		}
+	}
+
+	async #assess(input: {
+		repo: string;
+		proposal: string;
+		intentVersion: string;
+		intent: Intent;
+		candidate: Candidate;
+		mode: Mode;
+		machine: Machine;
+	}): Promise<Assessment> {
+		const { candidate } = input;
+		if (![candidate.sha, candidate.expectedHead].every((sha) => /^[0-9a-f]{40}$/.test(sha))) {
+			throw new Error('Invalid candidate commit');
+		}
+		if (this.ctx.container?.running) await this.ctx.container.destroy();
+		using repository = await this.env.ARTIFACTS.get(candidate.repository);
+		const info = await repository.info();
+		const { plaintext: token } = await repository.createToken('read', 60 * 60);
+		const fetch = await this.#sandbox(
+			{ repo: input.repo, remote: info.remote, branch: candidate.branch },
+			token
+		);
+		const workspace = sandboxWorkspace(fetch);
+		for (const service of await workspace.services()) await workspace.stopService(service.name);
+		await workspace.clone({ remote: info.remote, branch: candidate.branch });
+		const tools = sandboxTools(fetch, readOnlyTools);
+		const command = (command: string) =>
+			tools.execute({ id: 'verify', name: 'run', arguments: JSON.stringify({ command }) });
+		const pinned = await command(
+			`git checkout --detach ${candidate.sha} && git reset --hard ${candidate.sha} && git clean -fdx`
+		);
+		if (!pinned.startsWith('exit code 0\n'))
+			throw new Error('Could not pin the candidate workspace');
+		if ((await this.#head(fetch)) !== candidate.sha)
+			throw new Error('Candidate HEAD does not match');
+		await workspace.toolchain();
+		const { model, effort } = reviewers[input.mode];
+		const { review } = await reviewIntent({
+			model: openaiModel({
+				gateway: { run: (request) => this.env.MODELS.run(request) },
+				model,
+				effort,
+				sessionId: `${this.ctx.id.name}/assessment`,
+				metadata: { thread: input.proposal, mode: input.mode, task: 'review' }
+			}),
+			tools,
+			intent: input.intent,
+			base: candidate.expectedHead,
+			summary:
+				'Assess this exact integration candidate. Do not repair it. Your review is model judgment, not trusted execution proof or authorization.'
+		});
+		const clean = await command(
+			'status=$(git status --porcelain --untracked-files=all) && test -z "$status" && echo REGIT_CLEAN'
+		);
+		if ((await this.#head(fetch)) !== candidate.sha || !clean.split('\n').includes('REGIT_CLEAN')) {
+			throw new Error('The reviewer mutated the candidate workspace');
+		}
+		const assessment: Assessment = {
+			id: crypto.randomUUID(),
+			revision: candidate.sha,
+			intent: input.intentVersion,
+			producer: this.ctx.id.name!,
+			...review,
+			at: Date.now()
+		};
+		this.#setMeta('assessment', JSON.stringify(assessment));
+		return assessment;
 	}
 
 	snapshot(): AttemptSnapshot | null {
@@ -306,20 +461,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async destroy() {
 		await this.cancel();
-		const fork = this.#attempt()?.fork;
-		if (fork) await this.env.ARTIFACTS.delete(fork);
+		// TODO: garbage collect retained forks only when no revisions reference them.
 		await this.ctx.storage.deleteAlarm();
 		await this.ctx.storage.deleteAll();
-	}
-
-	async ship(request: ShipRequest) {
-		const attempt = this.#attempt();
-		if (!attempt || isActive(attempt.status) || ['shipped', 'cancelled'].includes(attempt.status)) {
-			throw new Error('There is nothing to ship right now');
-		}
-		this.#setMeta('ship', JSON.stringify(request));
-		this.#setStatus('shipping');
-		await this.ctx.storage.setAlarm(Date.now());
 	}
 
 	services(): ServiceInfo[] {
@@ -327,6 +471,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async serviceAction(action: 'start' | 'stop' | 'restart', name: string) {
+		if (this.#capturing) throw new Error('A revision is being captured');
 		const { fetch, repo } = await this.#wake();
 		const workspace = sandboxWorkspace(fetch);
 		try {
@@ -395,7 +540,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	override async alarm() {
 		const attempt = this.#attempt();
-		if (attempt?.status === 'shipping') await this.#ship(attempt);
+		if (attempt?.status === 'shipping')
+			await this.#finish(attempt, 'failed', 'Legacy shipping is disabled');
 		else if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
 		else if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) await this.#converse();
 	}
@@ -405,7 +551,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const repo = this.#meta('repo')!;
 		this.#think('Starting');
 		const mode = this.#meta('mode') as Mode;
-		const thread = this.ctx.id.name!;
+		const thread = this.#proposal();
 		try {
 			using base = await this.env.ARTIFACTS.get(repo);
 			const info = await base.info();
@@ -475,6 +621,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			if (controller.signal.aborted) return;
 			const reason = error instanceof Error ? error.message : String(error);
 			await this.#report(repo, { type: 'conversation-failed', error: reason });
+		} finally {
+			this.#conversation = undefined;
 		}
 	}
 
@@ -491,7 +639,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
 			if (!this.#meta('branch')) {
 				using repo = await this.env.ARTIFACTS.get(attempt.repo);
-				await this.#baseBranch(repo, fetch, 'read');
+				await this.#baseBranch(repo, fetch);
 				await this.#allowGit(fork, token, false);
 			}
 			if (!attempt.base) {
@@ -522,22 +670,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 					this.#tools(fetch),
 					intentTools(
 						async (intent) => {
-							attempt.intent = JSON.stringify(intent);
-							this.#sql.exec('UPDATE attempt SET intent = ?', attempt.intent);
-							await this.env.REPOS.getByName(attempt.repo).intentProposed(
-								this.ctx.id.name!,
-								intent
-							);
+							await this.env.REPOS.getByName(attempt.repo).intentProposed(this.#proposal(), intent);
 						},
 						['update_intent']
 					),
 					suggestTools((suggestion) =>
-						this.env.REPOS.getByName(attempt.repo).suggestThread(this.ctx.id.name!, suggestion)
+						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#proposal(), suggestion)
 					),
 					threadTools({
-						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.ctx.id.name!),
+						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.#proposal()),
 						send: (to, text) =>
-							this.env.REPOS.getByName(attempt.repo).messageThread(this.ctx.id.name!, to, text)
+							this.env.REPOS.getByName(attempt.repo).messageThread(this.#proposal(), to, text)
 					}),
 					askThreadsTools((question) => this.#askThreads(attempt.repo, question))
 				),
@@ -660,114 +803,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
-	async #ship(attempt: AttemptRow) {
-		const request = JSON.parse(this.#meta('ship')!) as ShipRequest;
-		const controller = (this.#controller = new AbortController());
-		let lockGit: (() => Promise<void>) | undefined;
-		try {
-			if (!attempt.base) throw new Error('There are no changes to ship');
-			const fork = await this.#fork(attempt);
-			const token = await this.#token(fork);
-			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
-			lockGit = () => this.#allowGit(fork, token, false);
-			const workspace = sandboxWorkspace(fetch);
-			using repo = await this.env.ARTIFACTS.get(attempt.repo);
-			const { base, branch } = await this.#baseBranch(repo, fetch, 'write');
-			const target = { remote: base.remote, branch };
-
-			const message = [request.title, request.body, 'Co-authored-by: ReGit <agent@regit.dev>']
-				.filter(Boolean)
-				.join('\n\n');
-			const squashed = await workspace.squash({
-				base: attempt.base,
-				message,
-				author: request.author,
-				committer: author
-			});
-			if (!squashed) throw new Error('There are no changes to ship');
-
-			for (let retry = 0; ; retry++) {
-				const rebased = await workspace.rebase({ ...target, committer: author });
-				if (rebased.conflicts.length) {
-					await this.#report(attempt.repo, {
-						type: 'conflicts',
-						files: rebased.conflicts,
-						base: branch
-					});
-					this.#setStatus('running');
-					await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
-					await this.#resolve(attempt, fetch, rebased.conflicts, branch, controller);
-					this.#setBase(attempt, rebased.onto);
-					await this.#push(fork, token, () => workspace.push({ ref: fork.branch, force: true }));
-					await this.#saveChanges(attempt, fetch);
-					await this.#report(attempt.repo, { type: 'rebased', base: branch });
-					this.#setMeta('cycle', String(this.#reviewCount()));
-					return await this.#review(attempt, fetch);
-				}
-				this.#setBase(attempt, rebased.onto);
-				try {
-					const sha = await workspace.push({ ref: target.branch, ...target });
-					await this.#push(fork, token, () => workspace.push({ ref: fork.branch, force: true }));
-					await this.#saveChanges(attempt, fetch);
-					await this.#report(attempt.repo, { type: 'shipped', sha, base: branch });
-					await this.#finish(attempt, 'shipped');
-					break;
-				} catch (error) {
-					if (retry + 1 >= shipRetries) throw error;
-				}
-			}
-		} catch (error) {
-			const status = this.#attempt()?.status;
-			if (status !== 'shipping' && status !== 'running' && status !== 'reviewing') return;
-			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
-		} finally {
-			this.#controller = undefined;
-			await lockGit?.().catch(() => {});
-			if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) {
-				const status = this.#attempt()?.status;
-				if (status !== 'shipped' && status && !isActive(status)) {
-					this.#setMeta('cycle', String(this.#reviewCount()));
-					this.#setStatus('queued');
-				}
-				await this.ctx.storage.setAlarm(Date.now());
-			}
-		}
-	}
-
-	async #resolve(
-		attempt: AttemptRow,
-		fetch: Fetch,
-		files: string[],
-		branch: string,
-		controller: AbortController
-	) {
-		const workspace = sandboxWorkspace(fetch);
-		const { model, effort } = modes[attempt.mode];
-		const thread = this.ctx.id.name ?? this.ctx.id.toString();
-		for (let round = 0; round < resolveRounds; round++) {
-			const { usage } = await resolveConflicts({
-				model: openaiModel({
-					gateway: { run: (request) => this.env.MODELS.run(request) },
-					model,
-					effort,
-					sessionId: `${thread}/conflicts`,
-					metadata: { thread, mode: attempt.mode, task: 'conflicts' }
-				}),
-				tools: this.#tools(fetch),
-				intent: JSON.parse(attempt.intent!) as Intent,
-				base: branch,
-				files,
-				signal: controller.signal
-			});
-			await this.#report(attempt.repo, { type: 'usage', task: 'attempt', model, usage });
-			const continued = await workspace.continueRebase({ committer: author });
-			if (!continued.conflicts.length) return;
-			files = continued.conflicts;
-		}
-		await workspace.abortRebase();
-		throw new Error(`Couldn't resolve conflicts with ${branch}`);
-	}
-
 	async #saveChanges(attempt: AttemptRow, fetch: Fetch) {
 		if (!attempt.base) return;
 		try {
@@ -786,10 +821,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async #baseBranch(repo: ArtifactsRepo, fetch: Fetch, scope: 'read' | 'write') {
+	async #baseBranch(repo: ArtifactsRepo, fetch: Fetch) {
 		const base = await repo.info();
-		const { plaintext: token } = await repo.createToken(scope, 60 * 60);
-		await this.#allowGit(base, token, scope === 'write');
+		const { plaintext: token } = await repo.createToken('read', 60 * 60);
+		await this.#allowGit(base, token, false);
 		const branch =
 			(await sandboxWorkspace(fetch).headBranch({ remote: base.remote })) ?? base.defaultBranch;
 		this.#setMeta('branch', branch);
@@ -871,7 +906,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #askThreads(repo: string, question: string) {
 		const coordinator = this.env.REPOS.getByName(repo);
-		const thread = this.ctx.id.name!;
+		const thread = this.#proposal();
 		const { answer, usage } = await askThreads({
 			model: openaiModel({
 				gateway: { run: (request) => this.env.MODELS.run(request) },
@@ -946,6 +981,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	#publish(now = false) {
+		if (this.#verifying || this.#meta('verifierInput')) return;
 		const wait = this.#published + publishIntervalMs - Date.now();
 		if (!now && wait > 0) {
 			this.#publishing ??= setTimeout(() => this.#publish(true), wait);
@@ -976,11 +1012,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return `${id}-{name}.${this.env.PREVIEW_DOMAIN}`;
 	}
 
-	#setBase(attempt: AttemptRow, base: string) {
-		attempt.base = base;
-		this.#sql.exec('UPDATE attempt SET base = ?', base);
-	}
-
 	#tools(fetch: Fetch, only?: ToolName[]) {
 		return sandboxTools(
 			fetch,
@@ -998,7 +1029,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #head(fetch: Fetch) {
-		const output = await this.#tools(fetch).execute({
+		const tools = this.#verifying ? sandboxTools(fetch, readOnlyTools) : this.#tools(fetch);
+		const output = await tools.execute({
 			id: 'base',
 			name: 'run',
 			arguments: JSON.stringify({ command: 'git rev-parse HEAD' })
@@ -1020,13 +1052,19 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #finish(attempt: AttemptRow, status: AttemptStatus, error: string | null = null) {
+		if (['finished', 'stopped', 'failed'].includes(status)) this.#controller = undefined;
 		this.#setStatus(status, error);
 		await this.#report(attempt.repo, { type: 'status', status, error });
 	}
 
 	async #report(repo: string, update: AttemptUpdate) {
+		if (this.#verifying || this.#meta('verifierInput')) return;
 		try {
-			await this.env.REPOS.getByName(repo).attemptUpdated(this.ctx.id.name!, update);
+			await this.env.REPOS.getByName(repo).attemptUpdated(
+				this.#proposal(),
+				update,
+				this.ctx.id.name!
+			);
 		} catch (error) {
 			console.warn('Could not report the attempt to its repository', error);
 		}
@@ -1034,6 +1072,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	#machine() {
 		return (this.#meta('machine') as Machine | null) ?? defaultMachine;
+	}
+
+	#proposal() {
+		return this.#meta('proposal') ?? this.ctx.id.name!;
 	}
 
 	#reviewCount() {
@@ -1180,7 +1222,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 		const image = container.images.sandbox!;
 		const forRepo = eq(toolchainSnapshots.repo, target.repo);
-		const [cached] = await db.select().from(toolchainSnapshots).where(forRepo);
+		const [cached] = this.#verifying
+			? []
+			: await db.select().from(toolchainSnapshots).where(forRepo);
 		const disk = machines[this.#machine()].diskGb * 1e9;
 		const fits = (cached?.size ?? 0) + snapshotHeadroomBytes <= disk;
 		let restored = cached?.image === image && fits ? cached : null;
@@ -1206,6 +1250,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			workspace.clone({ remote: target.remote, branch: target.branch })
 		);
 		this.#setMeta('workspace', target.remote);
+		if (this.#verifying) return fetch;
 		const tools = await this.#stage(
 			'Install toolchains',
 			() => workspace.toolchain(),
@@ -1224,7 +1269,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 		// TODO: if image updates keep making snapshots cold, back up /opt/mise per toolchain key with @cloudflare/sandbox's DirectoryBackup, which restores into newer images
 		const key = await digest({ image, tools });
-		if (key !== restored?.key) {
+		if (!this.#verifying && key !== restored?.key) {
 			try {
 				const snapshot = await this.#stage('Save the toolchain', () =>
 					container.snapshotContainer({ name: `toolchain-${key.slice(0, 12)}` })

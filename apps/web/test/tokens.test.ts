@@ -15,7 +15,7 @@ test('creates tokens that are stored hashed, lists them per person and revokes t
 	const tokens = await worker.getExport();
 	const created = await tokens.create({
 		repo: 'demo',
-		scope: 'write',
+		scope: 'read',
 		days: 30,
 		createdBy: 'sam@regit.dev'
 	});
@@ -27,7 +27,7 @@ test('creates tokens that are stored hashed, lists them per person and revokes t
 
 	const mine = await tokens.list('demo', 'sam@regit.dev');
 	expect(mine.map(({ id, label, scope }) => ({ id, label, scope }))).toEqual([
-		{ id: created.id, label: 'Laptop', scope: 'write' }
+		{ id: created.id, label: 'Laptop', scope: 'read' }
 	]);
 	expect(mine[0]).not.toHaveProperty('hash');
 	expect(await tokens.list('demo', 'lin@regit.dev')).toEqual([]);
@@ -37,4 +37,13 @@ test('creates tokens that are stored hashed, lists them per person and revokes t
 	expect(await tokens.list('demo', 'sam@regit.dev')).toHaveLength(1);
 	await tokens.revoke(created.id, 'sam@regit.dev');
 	expect(await tokens.list('demo', 'sam@regit.dev')).toEqual([]);
+});
+
+test('rejects write token requests', async () => {
+	const tokens = await worker.getExport();
+	await expect(
+		Promise.resolve().then(() =>
+			tokens.create({ repo: 'demo', scope: 'write', days: 30, createdBy: 'sam@regit.dev' })
+		)
+	).rejects.toThrow('Write Git tokens are not supported');
 });

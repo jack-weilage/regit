@@ -1,4 +1,79 @@
 import type { DiffFile, DiffHunk, Mentionable, SimilarThread } from './types.ts';
+import type { ProposalControl, Promotion } from '@regit/core';
+
+export const acceptance: ProposalControl = {
+	acceptedIntent: {
+		id: 'intent-1',
+		proposal: 'paginate-members',
+		intent: {
+			headline: 'perf(settings): load members lazily',
+			purpose: 'Large organizations should not wait for every member before settings render.',
+			doneWhen: ['Settings render before member loading completes.', 'Members load as you scroll.']
+		},
+		acceptedBy: { id: 'sam', name: 'Sam Rivera', kind: 'person' },
+		at: 1
+	},
+	runs: [
+		{
+			id: 'run-1',
+			proposal: 'paginate-members',
+			intent: 'intent-1',
+			mode: 'small',
+			machine: 'standard-1',
+			status: 'finished',
+			createdAt: 2
+		}
+	],
+	revisions: [
+		{
+			id: 'revision-1',
+			proposal: 'paginate-members',
+			run: 'run-1',
+			intent: 'intent-1',
+			repository: 'regit--run-1',
+			branch: 'main',
+			base: '0123456789abcdef0123456789abcdef01234567',
+			sha: 'fedcba9876543210fedcba9876543210fedcba98',
+			at: 3
+		}
+	],
+	assessments: [],
+	promotions: []
+};
+
+export const readyPromotion: Promotion = {
+	id: 'promotion-1',
+	proposal: 'paginate-members',
+	revision: 'revision-1',
+	intent: 'intent-1',
+	requestedBy: acceptance.acceptedIntent!.acceptedBy,
+	email: 'sam@example.com',
+	title: acceptance.acceptedIntent!.intent.headline,
+	body: acceptance.acceptedIntent!.intent.purpose,
+	status: 'ready',
+	candidate: {
+		repository: 'regit--candidate-1',
+		branch: 'main',
+		sha: 'a1b2c3d4e5f678901234567890abcdef1234567890',
+		expectedHead: '9876543210abcdef9876543210abcdef98765432'
+	},
+	assessment: {
+		id: 'assessment-1',
+		revision: 'a1b2c3d4e5f678901234567890abcdef1234567890',
+		intent: 'intent-1',
+		producer: 'verify-promotion-1',
+		verdict: 'pass',
+		checks: [
+			{ state: 'met', evidence: 'Settings renders while the member request is pending.' },
+			{ state: 'met', evidence: 'Scrolling fetches the next page without replacing existing rows.' }
+		],
+		findings: [],
+		at: 4
+	},
+	error: null,
+	notesPublished: false,
+	at: 3
+};
 
 export const people: Mentionable[] = [
 	{ kind: 'person', handle: 'sam', label: 'Sam Rivera' },

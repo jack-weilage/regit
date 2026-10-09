@@ -25,19 +25,6 @@
         "wrangler": "catalog:",
       },
     },
-    "apps/git": {
-      "name": "@regit/git",
-      "dependencies": {
-        "@regit/db": "workspace:*",
-        "drizzle-orm": "catalog:",
-      },
-      "devDependencies": {
-        "@types/node": "catalog:",
-        "typescript": "catalog:",
-        "vitest": "^5.0.3",
-        "wrangler": "catalog:",
-      },
-    },
     "apps/sandbox": {
       "name": "@regit/sandbox",
       "devDependencies": {
@@ -390,8 +377,6 @@
     "@regit/db": ["@regit/db@workspace:packages/db"],
 
     "@regit/forge": ["@regit/forge@workspace:apps/forge"],
-
-    "@regit/git": ["@regit/git@workspace:apps/git"],
 
     "@regit/sandbox": ["@regit/sandbox@workspace:apps/sandbox"],
 

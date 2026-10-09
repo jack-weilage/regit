@@ -1,12 +1,12 @@
 import { error } from '@sveltejs/kit';
 import { coordinatorFor } from '#lib/server/coordinators.ts';
-import { repoExists } from '#lib/server/repos.ts';
+import { requireRepoAccess } from '#lib/server/access.ts';
 import type { RequestHandler } from './$types';
 
 const heartbeat = 25_000;
 
-export const GET: RequestHandler = async ({ params, request }) => {
-	if (!(await repoExists(params.repo))) error(404);
+export const GET: RequestHandler = async ({ params, request, locals }) => {
+	await requireRepoAccess(params.repo, locals.user?.id);
 	const response = await coordinatorFor(params.repo).fetch('https://repo/live', {
 		headers: { Upgrade: 'websocket' }
 	});

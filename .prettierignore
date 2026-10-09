@@ -1,3 +1,4 @@
 bun.lock
 worker-configuration.d.ts
 apps/web/static/
+/.amp/in/

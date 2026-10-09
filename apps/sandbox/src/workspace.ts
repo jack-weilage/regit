@@ -7,6 +7,11 @@ import type {
 	DiffRequest,
 	HeadBranchRequest,
 	Identity,
+	PrepareCandidateRequest,
+	PrepareCandidateResponse,
+	PromoteCandidateRequest,
+	PromoteCandidateResponse,
+	PublishProvenanceRequest,
 	PushRequest,
 	RebaseRequest,
 	RebaseResponse,
@@ -74,6 +79,110 @@ export async function push(root: string, { token, ref, remote = 'origin', force 
 
 function identity(prefix: 'AUTHOR' | 'COMMITTER', { name, email }: Identity) {
 	return { [`GIT_${prefix}_NAME`]: name, [`GIT_${prefix}_EMAIL`]: email };
+}
+
+function exactSha(sha: string) {
+	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) throw new Error('Expected an exact commit SHA');
+}
+
+function safeRemote(remote: string) {
+	if (!remote || remote.startsWith('-') || /[\s\x00]/.test(remote))
+		throw new Error('Invalid remote');
+}
+
+async function branchRef(root: string, branch: string) {
+	if (!branch || branch.startsWith('-') || branch.startsWith('refs/'))
+		throw new Error('Invalid branch');
+	const ref = `refs/heads/${branch}`;
+	await git(root, ['check-ref-format', ref]);
+	return ref;
+}
+
+async function canonicalHead(root: string, remote: string, ref: string) {
+	await git(root, ['fetch', '--no-tags', remote, ref]);
+	return git(root, ['rev-parse', '--verify', 'FETCH_HEAD^{commit}']);
+}
+
+export async function prepareCandidate(
+	root: string,
+	{ sourceSha, base, remote, branch, message, author, committer }: PrepareCandidateRequest
+): Promise<PrepareCandidateResponse> {
+	exactSha(sourceSha);
+	exactSha(base);
+	safeRemote(remote);
+	const ref = await branchRef(root, branch);
+	await git(root, ['reset', '--hard', sourceSha]);
+	await git(root, ['clean', '-fd']);
+	await git(root, ['merge-base', '--is-ancestor', base, sourceSha]);
+	const sha = await squash(root, { base, message, author, committer });
+	if (!sha) throw new Error('Candidate has no changes');
+	const expectedHead = await canonicalHead(root, remote, ref);
+	const result = await exec(
+		'git',
+		[...noHooks, 'rebase', '--empty=stop', '--onto', expectedHead, base],
+		{
+			cwd: root,
+			env: identity('COMMITTER', committer)
+		}
+	);
+	if (result.code !== 0) {
+		await abortRebase(root);
+		throw new Error(`Candidate rebase failed: ${result.output.trim()}`);
+	}
+	const candidate = await git(root, ['rev-parse', 'HEAD']);
+	if (
+		(await git(root, ['rev-list', '--parents', '-1', candidate])) !== `${candidate} ${expectedHead}`
+	)
+		throw new Error('Candidate must contain exactly one commit');
+	return { sha: candidate, expectedHead };
+}
+
+export async function promoteCandidate(
+	root: string,
+	{ sha, expectedHead, remote, branch }: PromoteCandidateRequest
+): Promise<PromoteCandidateResponse> {
+	exactSha(sha);
+	exactSha(expectedHead);
+	safeRemote(remote);
+	const ref = await branchRef(root, branch);
+	if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${expectedHead}`)
+		throw new Error('Candidate parent does not match expected head');
+	const head = await canonicalHead(root, remote, ref);
+	if (head === sha) return { sha };
+	if (head !== expectedHead) throw new Error('Stale candidate: canonical head changed');
+	await git(root, ['push', `--force-with-lease=${ref}:${expectedHead}`, remote, `${sha}:${ref}`]);
+	return { sha };
+}
+
+export async function publishProvenance(
+	root: string,
+	{ sha, ref = 'refs/notes/regit', note, remote = 'origin' }: PublishProvenanceRequest
+): Promise<void> {
+	exactSha(sha);
+	safeRemote(remote);
+	if (ref !== 'refs/notes/regit') throw new Error('Invalid provenance notes ref');
+	JSON.parse(note);
+	await git(root, ['rev-parse', '--verify', `${sha}^{commit}`]);
+	const advertised = await exec('git', [...noHooks, 'ls-remote', '--exit-code', remote, ref], {
+		cwd: root
+	});
+	if (advertised.code === 0) await git(root, ['fetch', '--no-tags', remote, `+${ref}:${ref}`]);
+	else if (advertised.code === 2) await git(root, ['update-ref', '-d', ref]);
+	else throw new Error(`Notes discovery failed: ${advertised.output.trim()}`);
+	await git(root, [
+		'-c',
+		'user.name=ReGit',
+		'-c',
+		'user.email=agent@regit.dev',
+		'notes',
+		`--ref=${ref}`,
+		'add',
+		'-f',
+		'-m',
+		note,
+		sha
+	]);
+	await git(root, ['push', remote, `${ref}:${ref}`]);
 }
 
 export async function headBranch(root: string, { remote, token }: HeadBranchRequest) {
