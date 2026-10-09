@@ -132,7 +132,10 @@ test('records the stages of a cold start in the thread', async () => {
 		stages: [
 			{ label: 'Start a ½ vCPU sandbox', status: 'done' },
 			{ label: 'Clone cold', status: 'done' },
-			{ label: expect.stringMatching(/^Install jq \S+$/), status: 'done' },
+			{
+				label: expect.stringMatching(/^Install .*agent-browser 0\.38\.2.*jq \S+$/),
+				status: 'done'
+			},
 			{ label: 'Run .agents/setup', status: 'done', output: 'dependencies-ready' },
 			{ label: 'Cache the prepared sandbox', status: 'done' },
 			{ label: 'No .agents/resume', status: 'done' }
@@ -205,7 +208,19 @@ test('runs native commands with the workspace environment, bounded output and pr
 					type: 'function_call',
 					call_id: 'restored',
 					name: 'run',
-					arguments: JSON.stringify({ command: 'jq -n 43' })
+					arguments: JSON.stringify({
+						command: `set -e
+jq -n 43
+export AGENT_BROWSER_SESSION=container-smoke
+trap 'agent-browser close >/dev/null 2>&1; rm -f /tmp/browser-smoke.png' EXIT
+agent-browser open about:blank >/dev/null
+agent-browser eval 'document.body.innerHTML = "<button>Before</button>"; document.querySelector("button").onclick = () => document.body.textContent = "After"' >/dev/null
+agent-browser find role button click --name Before >/dev/null
+test "$(agent-browser get text body)" = After
+agent-browser screenshot /tmp/browser-smoke.png >/dev/null
+test "$(od -An -tx1 -N8 /tmp/browser-smoke.png | tr -d ' \\n')" = 89504e470d0a1a0a
+printf browser-ok`
+					})
 				}
 			}
 		],
@@ -220,7 +235,9 @@ test('runs native commands with the workspace environment, bounded output and pr
 	});
 	expect(restored.steps[0]!.turns).toContainEqual({
 		role: 'tool',
-		results: [{ callId: 'restored', output: 'exit code 0\n43' }]
+		results: [
+			{ callId: 'restored', output: expect.stringMatching(/^exit code 0\n43\n.*browser-ok$/s) }
+		]
 	});
 });
 
