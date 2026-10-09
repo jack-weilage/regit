@@ -119,10 +119,13 @@ test('records the stages of a cold start in the thread', async () => {
 	});
 
 	await expect
-		.poll(async () => (await repo.thread(id))!.entries.some((entry) => entry.type === 'startup'), {
-			timeout: 300_000,
-			interval: 1000
-		})
+		.poll(
+			async () =>
+				(await repo.thread(id))!.entries.some(
+					(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+				),
+			{ timeout: 300_000, interval: 1000 }
+		)
 		.toBe(true);
 	const { entries } = (await repo.thread(id))!;
 	const startup = entries.find((entry) => entry.type === 'startup');
@@ -185,7 +188,7 @@ test('runs native commands with the workspace environment, bounded output and pr
 	);
 	expect(outputs).toHaveLength(calls.length);
 	expect(outputs[0]).toMatch(
-		/^exit code 7\n\/workspace\n\/opt\/mise\n\/opt\/mise\/cache\n\w+-\{name\}\.regit\.dev\n/
+		/^exit code 7\n\/workspace\n\/opt\/mise\n\/opt\/mise\/cache\n\w+-\{name\}\.regit\.run\n/
 	);
 	expect(outputs[0]).toContain('42');
 	expect(outputs[0]).toContain('diagnostic');
