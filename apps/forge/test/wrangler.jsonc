@@ -1,0 +1,35 @@
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "regit-forge",
+	"main": "../src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"AI_GATEWAY": "regit",
+		"SANDBOX_URL": "",
+		"PREVIEW_DOMAIN": "regit.run",
+		"GIT_HOST": "git.regit.dev"
+	},
+	"services": [{ "binding": "MODELS", "service": "fake-models" }],
+	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "regit",
+			"migrations_dir": "../../../packages/db/drizzle",
+			"migrations_pattern": "../../../packages/db/drizzle/*/migration.sql"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
+			{ "name": "REPOSITORY_GIT", "class_name": "RepositoryGit" },
+			{ "name": "REPOS", "class_name": "RepoCoordinator" }
+		]
+	},
+	"exports": {
+		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite" },
+		"RepositoryGit": { "type": "durable-object", "storage": "sqlite" },
+		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" }
+	}
+}

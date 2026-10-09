@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo 'Installing repository toolchains'
+mise install
+
+echo 'Installing locked workspace dependencies'
+mise exec -- bun install --frozen-lockfile
+
+echo 'Preparing Playwright Chromium for component tests'
+(
+	cd packages/ui
+	mise exec -- bunx --no-install playwright install chromium
+	if ! mise exec -- node --input-type=module -e 'import { chromium } from "playwright"; const browser = await chromium.launch(); await browser.close();'; then
+		mise exec -- bunx --no-install playwright install-deps chromium
+	fi
+)
+
+bash .agents/resume

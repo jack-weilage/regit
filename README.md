@@ -52,6 +52,14 @@ bun run dev
 
 Git hooks run through lefthook: pre-commit formats staged files, and pre-push runs `check`.
 
+### Bootstrapping ReGit inside ReGit
+
+The repository's `.agents/setup` installs its mise-pinned Bun and Node versions, locked workspace dependencies, and Playwright's matching Chromium. It installs browser system libraries only if a launch check fails. `.agents/resume` checks the installed toolchains, workspace dependencies and browser without downloading anything. Both scripts run automatically in a ReGit sandbox; with mise installed, run them manually from the repository root with `bash .agents/setup` and `bash .agents/resume`.
+
+`bun run test` runs the workspace suites sequentially to fit a small sandbox. Regular forge tests use `apps/forge/test/wrangler.jsonc`, fake model/Artifacts Workers, disposable local D1, and a local sandbox process: no Cloudflare credentials or Docker are required. `bun run --filter @regit/forge test:containers` remains a separate infrastructure check using the deployment configuration and requires Docker plus access to its remote bindings. Full web/forge development still uses the development bindings described above; the local test configuration does not configure a standalone full-stack preview.
+
+The saved Storybook service starts after setup has installed dependencies. Component tests use Playwright's browser, independently of the agent-browser installation used by agents for visual inspection.
+
 ## Repository lifecycle scripts
 
 ReGit runs optional `.agents/setup` and `.agents/resume` Bash scripts from the repository root, after installing the repository's mise toolchains and before restoring services or starting the agent. An executable bit is not required. Each runs with `bash -e`, the sandbox environment, and a 15-minute deadline; use `set -euo pipefail` if pipelines should fail too. Exports do not persist into other processes: put persistent configuration in files or service definitions.

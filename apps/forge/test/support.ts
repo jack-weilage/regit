@@ -21,7 +21,7 @@ export async function setup({ containers = false } = {}) {
 	const server = createTestHarness({
 		workers: [
 			{
-				configPath: './wrangler.jsonc',
+				configPath: containers ? './wrangler.jsonc' : './test/wrangler.jsonc',
 				bindingOverrides: { MODELS: 'fake-models', ARTIFACTS: 'fake-artifacts' },
 				...(sandbox && { vars: { SANDBOX_URL: `http://127.0.0.1:${sandbox.port}` } })
 			},

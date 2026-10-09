@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export MISE_EXEC_AUTO_INSTALL=false
+mise where bun >/dev/null
+mise where node >/dev/null
+test -d node_modules || { echo 'Workspace dependencies are missing; run .agents/setup' >&2; exit 1; }
+echo 'Checking repository toolchains and test browser'
+mise exec -- bun --version
+mise exec -- node --version
+(
+	cd packages/ui
+	mise exec -- node --input-type=module -e 'import { chromium } from "playwright"; const browser = await chromium.launch(); await browser.close(); console.log("Playwright Chromium ready");'
+)
