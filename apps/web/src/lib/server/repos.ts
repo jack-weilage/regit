@@ -21,23 +21,20 @@ export async function repoExists(name: string) {
 export async function createRepo({
 	name,
 	source,
-	createdBy,
 	principalId
 }: {
 	name: string;
 	source?: string;
-	createdBy: string;
-	principalId?: string;
+	principalId: string;
 }) {
 	const [claimed] = await db()
 		.insert(repos)
-		.values({ name, source, createdBy, creatorPrincipalId: principalId, createdAt: new Date() })
+		.values({ name, source, createdAt: new Date() })
 		.onConflictDoNothing()
 		.returning();
 	if (!claimed) throw new RepoError(`${name} already exists.`);
 	try {
-		if (principalId)
-			await db().insert(repoMembers).values({ repo: name, principalId, role: 'owner' });
+		await db().insert(repoMembers).values({ repo: name, principalId, role: 'owner' });
 		await (source
 			? env.ARTIFACTS.import({ source: { url: source }, target: { name } })
 			: env.ARTIFACTS.create(name));

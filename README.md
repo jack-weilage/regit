@@ -14,7 +14,7 @@ An agent-first Git forge on Cloudflare Workers and Artifacts.
 
 The three deployables are web, forge and the sandbox image. Web reaches forge's Durable Objects through `script_name` bindings. Repository access uses principal membership in D1; canonical writes go exclusively through `RepositoryGit` admission and publication.
 
-Forge serves `git.regit.dev` outside Access, authenticating clone/fetch with hashed, expiring D1 tokens and current repository membership. Unclaimed legacy tokens are denied; receive-pack is refused even for legacy write-scoped tokens. Contribution forks and a local CLI remain deferred.
+Forge serves `git.regit.dev` outside Access, authenticating clone/fetch with hashed, expiring, read-only D1 tokens and current repository membership; receive-pack is always refused. Contribution forks and a local CLI remain deferred.
 
 Deployment migration is still required: remove the existing `git.regit.dev/*` route from the shared `regit-git` deployment before assigning that explicit route to forge. The wildcard preview route alone cannot override it. This repository change does not modify or delete the existing remote deployment; web's `GIT_HOST` stays `git.regit.dev`.
 

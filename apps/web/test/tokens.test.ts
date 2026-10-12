@@ -16,7 +16,7 @@ test('creates tokens that are stored hashed, lists them per person and revokes t
 	const created = await tokens.create({
 		repo: 'demo',
 		days: 30,
-		createdBy: 'sam@regit.dev'
+		principalId: 'sam'
 	});
 	expect(created.secret).toMatch(/^regit_[0-9a-f]{48}$/);
 	expect(created.expiresAt - created.createdAt).toBe(30 * 86_400_000);
@@ -24,16 +24,16 @@ test('creates tokens that are stored hashed, lists them per person and revokes t
 	const { results } = await (await worker.getEnv()).DB.prepare('SELECT hash FROM git_tokens').all();
 	expect(results).toEqual([{ hash: await hashGitToken(created.secret) }]);
 
-	const mine = await tokens.list('demo', 'sam@regit.dev');
-	expect(mine.map(({ id, label, scope }) => ({ id, label, scope }))).toEqual([
-		{ id: created.id, label: 'Laptop', scope: 'read' }
+	const mine = await tokens.list('demo', 'sam');
+	expect(mine.map(({ id, label }) => ({ id, label }))).toEqual([
+		{ id: created.id, label: 'Laptop' }
 	]);
 	expect(mine[0]).not.toHaveProperty('hash');
-	expect(await tokens.list('demo', 'lin@regit.dev')).toEqual([]);
-	expect(await tokens.list('other', 'sam@regit.dev')).toEqual([]);
+	expect(await tokens.list('demo', 'lin')).toEqual([]);
+	expect(await tokens.list('other', 'sam')).toEqual([]);
 
-	await tokens.revoke(created.id, 'lin@regit.dev');
-	expect(await tokens.list('demo', 'sam@regit.dev')).toHaveLength(1);
-	await tokens.revoke(created.id, 'sam@regit.dev');
-	expect(await tokens.list('demo', 'sam@regit.dev')).toEqual([]);
+	await tokens.revoke(created.id, 'lin');
+	expect(await tokens.list('demo', 'sam')).toHaveLength(1);
+	await tokens.revoke(created.id, 'sam');
+	expect(await tokens.list('demo', 'sam')).toEqual([]);
 });

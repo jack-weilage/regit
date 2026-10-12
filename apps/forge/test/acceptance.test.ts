@@ -42,8 +42,8 @@ async function finishedRun(name: string) {
 	const canonical = join(dir, `${name}.git`);
 	const original = sh(canonical, 'rev-parse', 'main');
 	const env = await worker.getEnv();
-	await env.DB.prepare('INSERT INTO repos (name, created_by, created_at) VALUES (?, ?, ?)')
-		.bind(name, 'Sam', Date.now())
+	await env.DB.prepare('INSERT INTO repos (name, created_at) VALUES (?, ?)')
+		.bind(name, Date.now())
 		.run();
 	await env.DB.prepare('INSERT INTO repo_members (repo, principal_id, role) VALUES (?, ?, ?)')
 		.bind(name, owner.id, 'owner')

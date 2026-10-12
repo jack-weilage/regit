@@ -49,7 +49,6 @@ export const createRepo = command(
 			await create({
 				name,
 				source,
-				createdBy: getRequestEvent().locals.user.email,
 				principalId: getRequestEvent().locals.user.id
 			});
 		} catch (cause) {
@@ -235,7 +234,6 @@ export const createGitAccessToken = command(
 		const created = await createGitToken({
 			repo,
 			...token,
-			createdBy: getRequestEvent().locals.user.email,
 			principalId: getRequestEvent().locals.user.id
 		});
 		getGitAccess(repo).refresh();

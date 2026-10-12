@@ -941,8 +941,8 @@ async function startedThread(name: string, steps: object[][], branch?: string) {
 	await idle();
 	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], ...steps]);
 	const env = await worker.getEnv();
-	await env.DB.prepare('INSERT INTO repos (name, created_by, created_at) VALUES (?, ?, ?)')
-		.bind(name, 'Sam', Date.now())
+	await env.DB.prepare('INSERT INTO repos (name, created_at) VALUES (?, ?)')
+		.bind(name, Date.now())
 		.run();
 	await env.DB.prepare('INSERT INTO repo_members (repo, principal_id, role) VALUES (?, ?, ?)')
 		.bind(name, 'owner', 'owner')

@@ -13,29 +13,19 @@ const git = async (cwd: string, ...args: string[]) =>
 		await run('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
 	).stdout.trim();
 
-test('authenticated clone/fetch is read-only even with a legacy write scope', async () => {
+test('authenticated clone/fetch is read-only', async () => {
 	const repo = 'ingress-demo';
 	await t.seed(repo, { 'README.md': '# Demo\n' });
 	const env = await t.worker.getEnv();
-	await env.DB.prepare('INSERT INTO repos (name, created_by, created_at) VALUES (?, ?, ?)')
-		.bind(repo, 'sam@example.com', Date.now())
+	await env.DB.prepare('INSERT INTO repos (name, created_at) VALUES (?, ?)')
+		.bind(repo, Date.now())
 		.run();
 	const secret = newGitToken();
 	const id = crypto.randomUUID();
 	await env.DB.prepare(
-		'INSERT INTO git_tokens (id, hash, repo, scope, label, created_by, principal_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+		'INSERT INTO git_tokens (id, hash, repo, label, principal_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
 	)
-		.bind(
-			id,
-			await hashGitToken(secret),
-			repo,
-			'write',
-			'test',
-			'sam@example.com',
-			'sam',
-			Date.now(),
-			Date.now() + 86400000
-		)
+		.bind(id, await hashGitToken(secret), repo, 'test', 'sam', Date.now(), Date.now() + 86400000)
 		.run();
 	await env.DB.prepare('INSERT INTO repo_members (repo, principal_id, role) VALUES (?, ?, ?)')
 		.bind(repo, 'sam', 'viewer')
@@ -80,11 +70,6 @@ test('authenticated clone/fetch is read-only even with a legacy write scope', as
 				headers: auth
 			});
 		await env.DB.prepare('DELETE FROM repo_members WHERE repo = ?').bind(repo).run();
-		expect((await read()).status).toBe(403);
-		await env.DB.prepare('INSERT INTO repo_members (repo, principal_id, role) VALUES (?, ?, ?)')
-			.bind(repo, 'sam', 'viewer')
-			.run();
-		await env.DB.prepare('UPDATE git_tokens SET principal_id = NULL WHERE id = ?').bind(id).run();
 		expect((await read()).status).toBe(403);
 		await env.DB.prepare('UPDATE git_tokens SET expires_at = 0 WHERE id = ?').bind(id).run();
 		expect((await read()).status).toBe(401);

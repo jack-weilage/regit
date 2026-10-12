@@ -1,5 +1,5 @@
 import { gitTokens, hashGitToken, newGitToken } from '@regit/db';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from './db.ts';
 
 const day = 24 * 60 * 60 * 1000;
@@ -8,8 +8,7 @@ export async function createGitToken(input: {
 	repo: string;
 	label: string;
 	days: number;
-	createdBy: string;
-	principalId?: string;
+	principalId: string;
 }) {
 	// TODO: External contribution/API access requires a separately authorized write boundary.
 	const secret = newGitToken();
@@ -21,9 +20,7 @@ export async function createGitToken(input: {
 			principalId: input.principalId,
 			hash: await hashGitToken(secret),
 			repo: input.repo,
-			scope: 'read',
 			label: input.label,
-			createdBy: input.createdBy,
 			createdAt: new Date(now),
 			expiresAt: new Date(now + input.days * day)
 		})
@@ -31,27 +28,22 @@ export async function createGitToken(input: {
 	return { ...view(token!), secret };
 }
 
-export async function listGitTokens(repo: string, createdBy: string) {
+export async function listGitTokens(repo: string, principalId: string) {
 	const tokens = await db()
 		.select()
 		.from(gitTokens)
-		.where(
-			and(
-				eq(gitTokens.repo, repo),
-				or(eq(gitTokens.principalId, createdBy), eq(gitTokens.createdBy, createdBy))
-			)
-		)
+		.where(and(eq(gitTokens.repo, repo), eq(gitTokens.principalId, principalId)))
 		.orderBy(gitTokens.createdAt);
 	return tokens.map(view);
 }
 
-export async function revokeGitToken(id: string, createdBy: string, repo?: string) {
+export async function revokeGitToken(id: string, principalId: string, repo?: string) {
 	await db()
 		.delete(gitTokens)
 		.where(
 			and(
 				eq(gitTokens.id, id),
-				or(eq(gitTokens.principalId, createdBy), eq(gitTokens.createdBy, createdBy)),
+				eq(gitTokens.principalId, principalId),
 				repo ? eq(gitTokens.repo, repo) : undefined
 			)
 		);

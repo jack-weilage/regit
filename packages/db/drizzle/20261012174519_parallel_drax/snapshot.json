@@ -1,0 +1,332 @@
+{
+	"version": "7",
+	"dialect": "sqlite",
+	"id": "a22e39c3-bfa9-41d8-9a24-d445e125fa0c",
+	"prevIds": ["c4133e20-ac7f-441d-a162-7f7a9827ffd1"],
+	"ddl": [
+		{
+			"name": "git_tokens",
+			"entityType": "tables"
+		},
+		{
+			"name": "previews",
+			"entityType": "tables"
+		},
+		{
+			"name": "repo_members",
+			"entityType": "tables"
+		},
+		{
+			"name": "repos",
+			"entityType": "tables"
+		},
+		{
+			"name": "toolchain_snapshots",
+			"entityType": "tables"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "id",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "principal_id",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "hash",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "repo",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "label",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "expires_at",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "last_used_at",
+			"entityType": "columns",
+			"table": "git_tokens"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "id",
+			"entityType": "columns",
+			"table": "previews"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "repo",
+			"entityType": "columns",
+			"table": "previews"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "thread",
+			"entityType": "columns",
+			"table": "previews"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "previews"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "repo",
+			"entityType": "columns",
+			"table": "repo_members"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "principal_id",
+			"entityType": "columns",
+			"table": "repo_members"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "role",
+			"entityType": "columns",
+			"table": "repo_members"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "name",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "source",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": "'standard-1'",
+			"generated": null,
+			"name": "machine",
+			"entityType": "columns",
+			"table": "repos"
+		},
+		{
+			"type": "text",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "repo",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "snapshot_id",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "key",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "text",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "image",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "integer",
+			"notNull": false,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "size",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"type": "integer",
+			"notNull": true,
+			"autoincrement": false,
+			"default": null,
+			"generated": null,
+			"name": "created_at",
+			"entityType": "columns",
+			"table": "toolchain_snapshots"
+		},
+		{
+			"columns": ["repo"],
+			"tableTo": "repos",
+			"columnsTo": ["name"],
+			"onUpdate": "NO ACTION",
+			"onDelete": "CASCADE",
+			"nameExplicit": false,
+			"name": "fk_repo_members_repo_repos_name_fk",
+			"entityType": "fks",
+			"table": "repo_members"
+		},
+		{
+			"columns": ["repo", "principal_id"],
+			"nameExplicit": false,
+			"name": "repo_members_pk",
+			"entityType": "pks",
+			"table": "repo_members"
+		},
+		{
+			"columns": ["id"],
+			"nameExplicit": false,
+			"name": "git_tokens_pk",
+			"table": "git_tokens",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["id"],
+			"nameExplicit": false,
+			"name": "previews_pk",
+			"table": "previews",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["name"],
+			"nameExplicit": false,
+			"name": "repos_pk",
+			"table": "repos",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["repo"],
+			"nameExplicit": false,
+			"name": "toolchain_snapshots_pk",
+			"table": "toolchain_snapshots",
+			"entityType": "pks"
+		},
+		{
+			"columns": ["hash"],
+			"nameExplicit": false,
+			"name": "git_tokens_hash_unique",
+			"entityType": "uniques",
+			"table": "git_tokens"
+		}
+	],
+	"renames": []
+}
