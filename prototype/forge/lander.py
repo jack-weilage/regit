@@ -10,6 +10,7 @@ from collections import deque
 from pathlib import Path
 
 from . import policy as pol
+from .claims import ClaimRegistry
 from .evidence import EvidenceStore, canon
 from .gitx import git, new_id, now, run, short, who
 
@@ -63,7 +64,7 @@ class Thread:
         git(self.fork, "checkout", "-q", "-b", "work")
         self.base = git(self.fork, "rev-parse", "HEAD")
         self.messages, self.revisions, self.handback_from = [], [], []
-        self.state, self.handbacks = "working", 0
+        self.state, self.handbacks, self.inbox = "working", 0, []
         intent["threadIds"].append(self.id)
         self.say("human", intent["body"], author=self.sponsor)
 
@@ -107,6 +108,20 @@ class Thread:
         self.agent.rederive(self, packet)
         return self.ready("handback", h)
 
+    def resync(self):
+        """Act on a base_moved signal before submitting: rebase onto main, or re-derive from intent if that conflicts."""
+        git(self.fork, "fetch", "-q", "origin", "main")
+        new = git(self.fork, "rev-parse", "FETCH_HEAD")
+        if run(self.fork, "rebase", "-q", "--onto", new, self.base, "work").returncode:
+            run(self.fork, "rebase", "--abort")
+            git(self.fork, "checkout", "-q", "-B", "work", new)
+            self.say("agent", f"Early re-sync: my draft conflicts with main {short(new)}; re-deriving my intent on it.")
+            self.base = new
+            self.agent.work(self)
+            return "rederived"
+        self.base = new
+        return "rebased"
+
 
 class Forge:
     def __init__(self, root, seed_files, log=None, key=None):
@@ -122,6 +137,7 @@ class Forge:
         self.evidence = EvidenceStore(self.root / "evidence", key or os.urandom(32))
         self.intents, self.threads, self.decisions = {}, {}, {}
         self.landings, self.spans = [], {}
+        self.claims = ClaimRegistry(self)  # intent claims registry (advisory)
         self.lander = Lander(self, token, seed_files)  # the trunk token goes to the Lander only
 
     # ---- index (D1 stand-in) ----
@@ -156,6 +172,7 @@ class Forge:
         self.threads[th.id] = th
         self.log("forge", f"{th.id} ({intent['sponsor']}) forked trunk@{short(th.base)} -> {th.fork.name}: "
                           f"\"{intent['title']}\" claims={intent['claims']}")
+        self.claims.register(th)
         return th
 
     # ---- proof (PushWorkflow stand-in): the forge, never the agent, produces evidence ----
@@ -391,6 +408,7 @@ class Lander:
                         f"{' with ' + decision['id'] if decision else ''}; trailers + note on refs/notes/forge")
         if p["lane"] == "flag":
             f.log("policy", f"lane flag: landed now; post.review card opened for {th.change_id}")
+        f.claims.main_moved(th, cand, paths)
         return "landed"
 
     def hand_back(self, th, rev, att, kind, base, conflict_files=None, paths=None, report=None):

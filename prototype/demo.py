@@ -63,6 +63,16 @@ def main():
         print(f"  answers: {s4['answers']}")
         ok &= s4["push_rc"] != 0 and s4["results"] == ["landed"] and s4["answers"][-1][1] == "approved"
 
+        banner("Scene 5: intent claims -> overlap warning; base_moved -> early re-sync")
+        s5 = toy.scene_claims(f)
+        h5, i5, j5 = s5["threads"]
+        evs = f.claims.events
+        warned = [e for e in evs if e["type"] == "overlap_warning" and set(e["threads"]) == {h5.id, i5.id}]
+        moved = [e["threadId"] for e in evs if e["type"] == "base_moved" and e["landedChange"] == h5.change_id]
+        print(f"  events: {len(warned)} overlap_warning, base_moved to {moved}; resynced {s5['resynced']}")
+        ok &= s5["results"] == ["landed", "landed", "landed"] and len(warned) == 1 and moved == [i5.id] \
+            and i5.handbacks == 0 and s5["resynced"] == {i5.id: "rederived"}
+
         banner("blame -> thread -> message")
         w1 = show_why(f, "shop/promo.py", "return apply_code(")
         w2 = show_why(f, "shop/pricing.py", '"WELCOME5"')

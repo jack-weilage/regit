@@ -7,7 +7,7 @@ python3 prototype/demo.py            # all scenes, narrated, in a temp dir (add 
 python3 -m unittest discover prototype/tests
 ```
 
-The demo takes about 4 s and the 10 tests about 13 s. `demo.py` exits non-zero if any invariant fails.
+The demo takes about 5 s and the 13 tests about 18 s. `demo.py` exits non-zero if any invariant fails.
 
 ## What the demo shows
 
@@ -19,9 +19,10 @@ The target project is a tiny `shop` package (pricing, catalog, billing/invoice) 
 | 2. Textual | Two threads add a discount code at the same spot in `pricing.py` | The first lands. The second fails to rebase. The Lander does not merge hunks: it builds a hand-back packet with the winner's intent and diff. The loser resets to the new main, re-applies its intent and proves itself again. It lands as rev 2 in lane `flag`, because it adds a test, and gets a `post.review` card. |
 | 3. Headline (semantic) | Thread E renames `discount()` to `apply_code()`. Thread F adds `shop/promo.py`, which calls `discount()`. The two touch no common file, and each passes its tests alone. | E lands. F rebases cleanly, but the combined re-test fails with an ImportError. Main stays at E and is never red. The `semantic` packet goes back to F. F's re-derive function reads the rename from the winner's diff in the packet and rebuilds on `apply_code()`. F proves itself again and lands with `Forge-Handback: chg_…/semantic`. |
 | 4. Decide | Carol changes `shop/billing/**` | First, the thread's own `git push origin HEAD:main` is rejected by the trunk hook. A Decision opens. Carol, the requester, gets `403 approver_is_requester`. Dana, who is not in `@payments`, gets `403 not_in_group`. Erin approves, and the change lands with `Forge-Decision: dec_…`. |
+| 5. Claims | Kiwi and grape threads both claim `shop/catalog.py::PRODUCTS`; an FAQ thread claims `docs/faq.md` | An `OVERLAP WARNING (advisory)` is logged at spawn, before anything lands. When kiwi lands, the Lander sends `base_moved` only to the grape thread (behind main, claims hit the landed files); the FAQ thread is behind but disjoint, so it gets nothing. Grape re-syncs before submitting (its rebase conflicts, so it re-derives on the new main) and lands with no hand-back. |
 | Why | `why(path, line)` on main | The lookup runs `git blame` and resolves the line to its landing record, thread, intent and the exact agent message that wrote it, plus the `refs/notes/forge` note. |
 
-Example summary from a run: 7 landings, 2 hand-backs (one textual, one semantic), 1 Decision, 11 test runs, 6 evidence reuses and 11 signed envelopes verified. All five invariant checks pass.
+Example summary from a run: 10 landings, 2 hand-backs (one textual, one semantic), 1 Decision, 15 test runs, 8 evidence reuses and 15 signed envelopes verified, plus 2 overlap warnings and 2 `base_moved` events. All five invariant checks pass.
 
 ## Lander algorithm (`forge/lander.py`, `Lander.land`)
 
@@ -33,6 +34,8 @@ The Lander processes a serial queue, which stands in for the lease, and is the o
 4. Squashes the chain into one commit carrying the spec §9 trailers: `Forge-Thread`, `-Change`, `-Revision`, `-Intent`, `-Evidence`, `-Policy`, and when they apply, `-Decision`, `-Handback`, `-Sponsor` and `-Agent`. The commit's author is the agent and its committer is the Lander.
 5. Runs a compare-and-swap: `git update-ref refs/heads/main <cand> <base>`. If main moved, it re-rebases and re-tests, up to 3 times.
 6. Writes a JSON note to `refs/notes/forge`, the landing record, and line spans that map each introduced line to its `Forge-Message`.
+
+**Claims** (`forge/claims.py`). An intent's `claims` are paths or globs, optionally `path::symbol`. Two claims overlap when their paths overlap and either claims the whole file or both name the same symbol. `ClaimRegistry.register` runs at spawn and emits `overlap_warning` for every live (not landed or aborted) thread it overlaps. `ClaimRegistry.main_moved` runs after each landing and emits `base_moved` to every live thread whose base is not the new main and whose claimed paths match the landed files. Events go to `forge.claims.events`, the thread's `inbox` and its message log. Both are advisory: nothing blocks, and `Thread.resync()` is the thread's optional early response.
 
 **Evidence** (`forge/evidence.py`). Each record is an in-toto-style Statement (subject `gitTree`, command, result, producer `forge-runner`) in a DSSE-style envelope. It is signed with the Lander's HMAC key and stored content-addressed at `evidence/ev/<sha256>.json`. When a tree has already been proven, its evidence is reused after the signature and hash are re-verified. For example, when main has not moved, the combined state equals the thread's own tree. A revision's `Forge-Evidence` is the hash of its `{tests, combined-tests}` manifest.
 
@@ -57,6 +60,7 @@ The Lander processes a serial queue, which stands in for the lease, and is the o
 - **Serial, single-process Lander.** There are no leases with expiry, alarms, speculative batching, partitioned lanes or test-impact analysis. The CAS race is exercised only in a unit test, by a hook that moves main between the re-test and the CAS.
 - **Stand-ins for security.** HMAC replaces Ed25519, so verifiers need the key. A shell hook plus a token in an environment variable stands in for token custody. The trunk's own process does `update-ref` directly. Nothing is sandboxed: the tests run as the local user.
 - **Evidence covers tests only.** There are no previews, screenshots or recordings, so a policy rule that requires them reports them as `missing` and the change does not land. `flag`-lane `post.review` cards are only logged. When several decide rules match, their approver groups are unioned, not each required.
+- **Claims are declared, not inferred.** Symbol claims are only compared by name; `base_moved` matches at file level (a symbol claim is treated as its whole file), and glob-vs-glob overlap is approximate. Nothing checks that a thread stays inside its claims.
 - **Partial policy parser.** It handles the YAML subset that the spec's policy file uses, not full YAML. Globs follow picomatch's `**`, `*` and `?` semantics only.
 - **Line spans are per landing.** They are not maintained across later rewrites. Blame resolves to whichever commit last touched the line.
 - **The demo runs in about 4 s** because the test suite is tiny. Real combined re-tests are where the throughput limit (about 27 landings per hour per serial lane at T ≈ 2 min, spec §7.3) comes from.

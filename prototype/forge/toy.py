@@ -166,3 +166,26 @@ def scene_decide(f, approvers=("carol@demo.dev", "dana@demo.dev", "erin@demo.dev
             break
     return {"threads": [g], "status": status, "decision": dec, "answers": answers, "push_rc": push.returncode,
             "results": f.lander.drain()}
+
+
+# ---- scene 5: intent claims -> overlap warning at spawn; base_moved -> early re-sync, no hand-back ----
+def scene_claims(f):
+    after_pear = '    "pear": 1.50,\n'
+    h = f.spawn(f.intent("Add kiwi to the catalog", "Sell kiwis at 0.40.", "alice@demo.dev", ["shop/catalog.py::PRODUCTS"]),
+                ScriptedAgent([("Add kiwi at 0.40 to PRODUCTS", edit("shop/catalog.py", after_pear, after_pear + '    "kiwi": 0.40,\n'))]))
+    i = f.spawn(f.intent("Add grape to the catalog", "Sell grapes at 2.00.", "bob@demo.dev", ["shop/catalog.py::PRODUCTS"]),
+                ScriptedAgent([("Add grape at 2.00 to PRODUCTS", edit("shop/catalog.py", after_pear, after_pear + '    "grape": 2.00,\n'))]))
+    j = f.spawn(f.intent("FAQ page", "Answer common questions.", "carol@demo.dev", ["docs/faq.md"]),
+                ScriptedAgent([("Write docs/faq.md", write("docs/faq.md", "# FAQ\n\nQ: Do codes stack? A: No.\n"))]))
+    for th in (h, i, j):
+        th.agent.work(th)  # drafts on their forks; nothing submitted yet
+    h.ready()
+    results = f.lander.drain()
+    resynced = {}
+    for th in (i, j):  # threads act on base_moved before submitting, instead of finding out at landing
+        if any(ev["type"] == "base_moved" for ev in th.inbox):
+            resynced[th.id] = th.resync()
+            f.log(th.id[:7], f"re-synced early on base_moved -> {resynced[th.id]} onto main {short(th.base)}")
+    i.ready(), j.ready()
+    results += f.lander.drain()
+    return {"threads": [h, i, j], "results": results, "resynced": resynced}
