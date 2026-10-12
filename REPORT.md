@@ -449,7 +449,7 @@ Platform facts that change the brief's plan:
 
 Avoid the phrases "no PRs" and "no humans". Say: **"the PR becomes an evidence-bearing view of a thread, and the issue becomes the intent that threads compete to satisfy."**
 
-**A runnable prototype of the mechanism is in the repo** at `prototype/`. Run `python3 prototype/demo.py`; it uses only Python and git, takes about 4 seconds, and has 10 passing tests. It plays five scenes against a toy shop codebase:
+**A runnable prototype of the mechanism is in the repo** at `prototype/`. Run `python3 prototype/demo.py`; it uses only Python and git, takes about 4 seconds, and has 13 passing tests. It plays six scenes against a toy shop codebase:
 
 1. Disjoint changes auto-land.
 2. A textual conflict is handed back with the winner's intent. The losing thread re-derives its change and lands as rev 2.
@@ -457,7 +457,9 @@ Avoid the phrases "no PRs" and "no humans". Say: **"the PR becomes an evidence-b
 4. A billing change waits for a Decision. The requester's own approval is refused (403), and a direct push to main is rejected by a hook.
 5. Blame on a line resolves to its landing record, thread, intent and the exact agent message.
 
-Across the run there were 7 landings, 2 hand-backs, 11 signed evidence envelopes (all verified) and 6 reuses of cached evidence.
+A sixth scene shows collision *avoidance*. Two threads claim the same symbol and get an advisory overlap warning the moment the second one is created. When the first lands, only the overlapping thread receives a `base_moved` event. An unrelated thread that is also behind main is left alone. The warned thread re-syncs early and lands with zero hand-backs.
+
+Across the run there were 10 landings, 2 hand-backs, 15 signed evidence envelopes (all verified) and 8 reuses of cached evidence.
 
 **A buildable spec is in the repo** at `research/60-build-spec-landing-layer.md` (about 4,000 words). It covers:
 
@@ -535,11 +537,11 @@ The research left some questions open:
 
 **A first pilot on semantic collisions.** Nobody had tested whether concurrent agent PRs that merge cleanly still break each other, so this research ran a small replay. It used 143 usable pairs of agent PRs from 20 small Python repos in AIDev, each merged with `git merge` and tested as A, B and A+B.
 
-- **Textual conflicts:** 6% of 105 truly concurrent pairs (95% CI 3–12%), far below the 41.7% reported for cross-agent pairs.
+- **Textual conflicts:** 6% of 105 truly concurrent pairs (95% CI 3–12%), far below the 19.8% (same-agent) and 41.7% (cross-agent) rates from an earlier merge-tree replay that did not filter out sequential pairs.
 - **Semantic conflicts:** 0 of 99 clean merges broke a test (95% upper bound 3.7%). A synthetic pair, one change renaming a function and the other calling the old name, was correctly flagged, so the detector works.
 - **Strong caveats.** The pairs are same-agent and both merged, the repos are small and hand-picked, and the test suites are weak. 96% of pairs overlapped by under 6 minutes, so AIDev timestamps barely show concurrency.
 
-Read it as "semantic collisions are not common in small repos at today's volume," not as a population rate. The rate that matters at 50k changes a day is around 10⁻⁵ per pair, far below what a pilot can resolve. That is one more reason the landing service itself must measure it. Method and per-pair data: `research/81-pilot-semantic-conflicts.md`.
+Read it as "semantic collisions are not common in small repos at today's volume," not as a population rate. The landing simulator assumes a rate of around 10⁻⁵ per concurrent pair, far below what a pilot can resolve. That is one more reason the landing service itself must measure it. Method and per-pair data: `research/81-pilot-semantic-conflicts.md`.
 
 **A note on bias.** I wrote my priors down before the research came back. The consensus red team warns that they shaped the corpus and that its agreement with them should be discounted. The items it rated most likely wrong are kept as caveats above:
 
@@ -556,9 +558,9 @@ This report draws on 27 research reports, a landing simulator, 7 independent des
 | Source | Items listed | Relevant | Read in this pass | Not reachable |
 | --- | --- | --- | --- | --- |
 | anthropic.com news, research, engineering | 337 | 98 | 55 (32 already read) | JS-only "making of Claude Code" page; 13 marginal posts skipped |
-| claude.com articles, claude.dev, customer stories, Claude Code changelog | 541 | 159 | 102 (18 already read; 38 keyword-scanned) | Gated PDF reports, webinars |
+| claude.com articles, claude.dev, customer stories, Claude Code changelog | 541 | 159 | 102 (18 already read; 38 keyword-scanned) | PDF reports and webinars not fetched (HTML versions of two PDFs read) |
 | openai.com news and index | 828 | 170 | 153 (17 already read; \~50 keyword-scanned) | 3 video-only pages, 1 gated whitepaper |
-| developers.openai.com, Codex changelog, alignment.openai.com, cookbook | 101 | 60 | 41 (13 already read) | 6 openai.com posts blocked (403), covered via RSS summaries |
+| developers.openai.com, Codex changelog, alignment.openai.com, cookbook | 101 | 60 | 41 (13 already read) | 6 openai.com posts blocked (403): 4 partly covered via secondary sources, 2 via RSS summaries only |
 
 **Anthropic**
 
