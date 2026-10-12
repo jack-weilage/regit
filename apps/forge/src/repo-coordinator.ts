@@ -1,14 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-	analyzeThread,
 	cost,
 	assessRequest,
 	maxSimilarCandidates,
 	type Assessment,
 	models,
 	modes,
-	openaiModel,
-	searcher,
 	type Intent,
 	type Step,
 	type ServiceInfo,
@@ -142,8 +139,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#activities = new Map<string, ThreadActivity>();
 	#promotions = new Promotions(this.#sql);
 	#images = new Images(this.#sql);
-	#analyses = new Map<string, Promise<void>>();
-	#stale = new Set<string>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -225,7 +220,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const entry = this.#add(id, { type: 'message', author, text });
 		await this.#converse(id, author, text, entry);
-		this.#analyze(id);
 		return this.#summary(id)!;
 	}
 
@@ -241,7 +235,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (summary.status === 'discarded') return;
 		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
 		await this.#converse(thread, author, text, entry);
-		this.#analyze(thread);
 	}
 
 	async discard(thread: string, by: Author) {
@@ -489,8 +482,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#summary(thread);
 		if (!summary || summary.deleted) return;
 		if (summary.status === 'discarded') return;
-		const latest = this.#latestIntent(thread);
-		if (latest && JSON.stringify(latest) === JSON.stringify(intent)) return;
 		const id = this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
@@ -837,43 +828,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (update.status === 'failed')
 			this.#add(thread, { type: 'event', text: `The agent failed: ${update.error}` });
 		if (this.#summary(thread)!.status === 'running') this.#setStatus(thread, 'needs-you');
-		if (this.#summary(thread)!.changes?.files) this.#analyze(thread);
-	}
-
-	#analyze(thread: string) {
-		if (this.#analyses.has(thread)) {
-			this.#stale.add(thread);
-			return;
-		}
-		const analysis = (async () => {
-			do {
-				this.#stale.delete(thread);
-				await this.#analyzeOnce(thread).catch((error: unknown) =>
-					console.warn('Could not analyze the thread', error)
-				);
-			} while (this.#stale.has(thread));
-			this.#analyses.delete(thread);
-		})();
-		this.#analyses.set(thread, analysis);
-		this.ctx.waitUntil(analysis);
-	}
-
-	async #analyzeOnce(thread: string) {
-		const summary = this.#summary(thread);
-		if (!summary || summary.deleted || summary.status === 'discarded') return;
-		const { usage } = await analyzeThread({
-			model: openaiModel({
-				gateway: { run: (request) => this.env.MODELS.run(request) },
-				model: searcher.model,
-				effort: searcher.effort,
-				sessionId: `${thread}/analysis`,
-				metadata: { thread, mode: summary.mode, task: 'analysis' }
-			}),
-			digest: await this.threadDigest(thread),
-			onIntent: (intent) => this.intentProposed(thread, intent)
-		});
-		for (const call of usage) this.#recordUsage(thread, 'analysis', searcher.model, call);
-		if (usage.length && this.#summary(thread)) this.#touch(thread);
 	}
 
 	override async fetch(request: Request) {

@@ -49,21 +49,12 @@ export async function setup({ containers = false } = {}) {
 		await (await models.getExport()).script(replies);
 	}
 
-	async function scriptAnalyses(analyses: object[][]) {
-		await (await models.getExport()).scriptAnalyses(analyses);
-	}
-
-	async function analysisRequests() {
-		return JSON.parse(await (await models.getExport()).analysisRequests()) as GatewayRequest[];
-	}
-
 	async function idle(quietMs = 1000, timeoutMs = 15_000) {
 		const deadline = Date.now() + timeoutMs;
-		const total = async () => (await modelRequests()).length + (await analysisRequests()).length;
-		let count = await total();
+		let count = (await modelRequests()).length;
 		while (Date.now() < deadline) {
 			await new Promise((resolve) => setTimeout(resolve, quietMs));
-			const next = await total();
+			const next = (await modelRequests()).length;
 			if (next === count) return;
 			count = next;
 		}
@@ -153,8 +144,6 @@ export async function setup({ containers = false } = {}) {
 		server,
 		worker,
 		script,
-		scriptAnalyses,
-		analysisRequests,
 		modelRequests,
 		scriptDecisions,
 		decisionRequests,

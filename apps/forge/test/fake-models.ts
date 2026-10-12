@@ -12,9 +12,6 @@ let replies: object[][] = [];
 let requests: GatewayRequest[] = [];
 let decisions: JevResponse[] = [];
 let decided: JevRequest[] = [];
-let analyses: object[][] = [];
-let analyzed: GatewayRequest[] = [];
-const noChange = [{ type: 'response.output_text.delta', delta: 'No change.' }];
 
 export default class FakeModels extends WorkerEntrypoint {
 	script(next: object[][]) {
@@ -35,15 +32,6 @@ export default class FakeModels extends WorkerEntrypoint {
 		return JSON.stringify(decided);
 	}
 
-	scriptAnalyses(next: object[][]) {
-		analyses = next;
-		analyzed = [];
-	}
-
-	analysisRequests() {
-		return JSON.stringify(analyzed);
-	}
-
 	decide(request: JevRequest): JevResponse {
 		decided.push(request);
 		const unrelated = { probabilities: { unrelated: 1 } };
@@ -55,10 +43,8 @@ export default class FakeModels extends WorkerEntrypoint {
 	}
 
 	run(request: GatewayRequest) {
-		const metadata = request.headers['cf-aig-metadata'] as { task?: string } | undefined;
-		const analysis = metadata?.task === 'analysis';
-		(analysis ? analyzed : requests).push(request);
-		const reply = analysis ? (analyses.shift() ?? noChange) : replies.shift();
+		requests.push(request);
+		const reply = replies.shift();
 		if (!reply)
 			return Response.json(
 				{ error: { message: 'The fake model ran out of replies' } },

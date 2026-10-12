@@ -28,6 +28,7 @@ import {
 	verificationSkill,
 	repositoryGuidance,
 	withSkills,
+	intentTools,
 	modes,
 	openaiModel,
 	parseDiff,
@@ -387,6 +388,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 				tools: combineTools(
 					skillTools(skills),
 					guidance.tools,
+					intentTools((intent) =>
+						this.env.REPOS.getByName(attempt.repo).intentProposed(this.#thread(), intent)
+					),
 					suggestTools((suggestion) =>
 						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#thread(), suggestion)
 					),
