@@ -277,6 +277,45 @@ describe("the merge path", () => {
 		expect(candidate.detail.tests).toMatchObject({ mode: "targeted", selected: 0, result: "none needed" });
 	});
 
+	it("refuses a change to how the repository is tested unless the task was allowed to make one", async () => {
+		const before = trunkHead();
+		// A change that breaks add and rewrites the test command so nothing can fail.
+		const sneaky = await work(
+			"agent-q",
+			"Simplify the test setup",
+			{
+				"regit.json": `${JSON.stringify({ install: "", test: "true" })}\n`,
+				"src/math/add.js": "export function add(a, b) {\n\treturn 0;\n}\n",
+			},
+			"Replaced the test command with a faster one.",
+		);
+		expect(sneaky, JSON.stringify(sneaky, null, 2)).toMatchObject({ status: "rejected", reason: "protected-path" });
+		expect(sneaky.detail.message).toContain("regit.json");
+
+		// The same through package.json scripts, which the default test command would run.
+		const scripts = await work(
+			"agent-r",
+			"Add a test script",
+			{ "package.json": `${JSON.stringify({ name: "demo", private: true, type: "module", description: "demo", scripts: { test: "exit 0" } })}\n` },
+			"Added a test script so npm test works.",
+		);
+		expect(scripts, JSON.stringify(scripts, null, 2)).toMatchObject({ status: "rejected", reason: "protected-path" });
+		expect(trunkHead()).toBe(before);
+
+		// The admin can create a task that is allowed to, and it still has to pass the current suite.
+		const response = await worker.fetch(`/repos/${REPO}/tasks`, {
+			method: "POST",
+			body: JSON.stringify({ agent: "agent-s", task: "Name the test files explicitly", allowProtected: true }),
+		});
+		const bundle = (await response.json()) as TaskBundle;
+		await agentPush(bundle, {
+			"regit.json": `${JSON.stringify({ install: "", test: "node --test", testMatch: "\\.test\\.js$" }, null, 2)}\n`,
+		});
+		const allowed = await settle(bundle, (await submit(bundle, "Pinned testMatch so only .test.js files count as tests.")).body.id);
+		expect(allowed, JSON.stringify(allowed, null, 2)).toMatchObject({ status: "landed" });
+		expect(allowed.detail.tests).toMatchObject({ mode: "full", selected: 4 });
+	});
+
 	it("lands two changes verified at once when neither can affect the other", async () => {
 		await worker.fetch(`/repos/${REPO}/pause`, { method: "POST" });
 		const math = await createTask("agent-h", "Rename a loop variable in mul");
@@ -422,6 +461,26 @@ describe("who may do what", () => {
 		}
 		expect(readFileSync(join(dir, "README.md"), "utf8")).toContain("Attempt.");
 		expect(trunkFile("README.md")).not.toContain("Attempt.");
+	});
+
+	it("removes the git remotes from a sandbox before running install or tests there", () => {
+		const bySandbox = new Map<string, string[]>();
+		for (const { id, argv } of sandbox.commands) {
+			const list = bySandbox.get(id) ?? [];
+			list.push(argv.slice(0, 4).join(" "));
+			bySandbox.set(id, list);
+		}
+		let checked = 0;
+		for (const commands of bySandbox.values()) {
+			const firstTest = commands.findIndex((command) => command.startsWith("sh -c"));
+			if (firstTest === -1) continue;
+			checked++;
+			const before = commands.slice(0, firstTest);
+			expect(before).toContain("git remote remove trunk");
+			expect(before).toContain("git remote remove fork");
+			expect(before.some((command) => command.startsWith("rm -f .git/FETCH_HEAD"))).toBe(true);
+		}
+		expect(checked).toBeGreaterThan(5);
 	});
 
 	it("destroys every sandbox it started", () => {

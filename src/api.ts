@@ -7,7 +7,7 @@
  * task and read its outcome, so an agent never needs the admin token.
  */
 import { remoteFor, waitForRepo, withRepo } from "./artifacts";
-import { type NoteScreen, type ThreadRecord, screenNote } from "./clef";
+import { NOTE_CHAR_BUDGET, type NoteScreen, type ThreadRecord, screenNote, screenedState } from "./clef";
 import { artifactsOf, clefOf } from "./env";
 import { type FileChange, Workspace, authenticatedUrl, commitFiles, listRemoteRefs, pushRef } from "./git/ops";
 import type { IntegratorApi, TaskRow } from "./integrator";
@@ -69,7 +69,7 @@ function integratorFor(env: Env, repo: string): IntegratorApi {
 async function identify(request: Request, env: Env, repo: string): Promise<Caller> {
 	if (await isAdmin(request, env)) return { role: "admin" };
 	const match = bearer(request).match(TASK_TOKEN);
-	if (match) {
+	if (match && REPO_NAME.test(repo)) {
 		const task = await integratorFor(env, repo).authorizeTask(match[1], await sha256(match[2]));
 		if (task) return { role: "task", task };
 	}
@@ -153,6 +153,8 @@ async function createTask(request: Request, env: Env, repo: string, origin: stri
 	if (!AGENT_NAME.test(agent)) fail(422, '"agent" may contain lowercase letters, digits and "-".');
 	const task = text(body.task, "task", 2000);
 	const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === "string").slice(0, 20) : [];
+	// Only the admin can let a task change how the repository is tested.
+	const allowProtected = body.allowProtected === true;
 
 	const artifacts = artifactsOf(env);
 	const id = `t_${randomHex(5)}`;
@@ -169,7 +171,7 @@ async function createTask(request: Request, env: Env, repo: string, origin: stri
 	]);
 	const secret = randomHex(24);
 	const integrator = integratorFor(env, repo);
-	await integrator.registerTask({ id, agent, task, fork: forkName, tokenHash: await sha256(secret), base: trunk.head });
+	await integrator.registerTask({ id, agent, task, fork: forkName, tokenHash: await sha256(secret), base: trunk.head, allowProtected });
 	const context = paths.length > 0 ? await integrator.why(paths) : [];
 
 	return json(
@@ -218,7 +220,12 @@ function parseThread(value: unknown, task: TaskRow): ThreadRecord {
 	};
 	if (input.session && typeof input.session === "object") {
 		const session = input.session as Record<string, unknown>;
-		if (typeof session.ref === "string") record.session = { repo: task.fork, ref: session.ref.slice(0, 200) };
+		if (typeof session.ref === "string" && /^refs\/[A-Za-z0-9._\/-]{1,180}$/.test(session.ref)) {
+			record.session = { repo: task.fork, ref: session.ref };
+		}
+	}
+	if (screenedState(record).length > NOTE_CHAR_BUDGET) {
+		return fail(422, `The thread record is too long. Keep the decision and the rejected approaches under ${NOTE_CHAR_BUDGET} characters in total.`);
 	}
 	return record;
 }
@@ -281,6 +288,8 @@ function nextStep(status: string, reason: string | null): string | undefined {
 	switch (reason) {
 		case "conflict":
 			return "Fetch trunk, merge it into your branch, resolve the conflicts with the related decisions in mind, push, and submit again.";
+		case "protected-path":
+			return "Leave that file as it is on trunk, or ask the operator for a task that is allowed to change it.";
 		case "tests-failed":
 			return "Read the test output, fix the change, push, and submit again.";
 		case "install-failed":
@@ -327,7 +336,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 		}
 		if (parts.length === 3 && parts[2] === "candidates" && method === "GET") {
 			await requireAdmin(request, env);
-			return json({ candidates: await integrator.candidates(Number(url.searchParams.get("limit") ?? 100)) });
+			return json({ candidates: await integrator.candidates(Number(url.searchParams.get("limit")) || 100) });
 		}
 		if (parts.length === 4 && parts[2] === "candidates" && method === "GET") {
 			const caller = await identify(request, env, repo);
@@ -345,7 +354,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 		}
 		if (parts.length === 3 && parts[2] === "events" && method === "GET") {
 			await requireAdmin(request, env);
-			return json({ events: await integrator.events(Number(url.searchParams.get("after") ?? 0)) });
+			return json({ events: await integrator.events(Number(url.searchParams.get("after")) || 0) });
 		}
 		return fail(404, "Not found.");
 	} catch (error) {
@@ -354,6 +363,6 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 		if (code === "NOT_FOUND") return json({ error: "The repository does not exist in Artifacts." }, 404);
 		if (code === "ALREADY_EXISTS") return json({ error: "A repository with that name already exists in Artifacts." }, 409);
 		console.error("regit api error", error);
-		return json({ error: "Internal error.", message: error instanceof Error ? error.message : String(error) }, 500);
+		return json({ error: "Internal error. The Worker's logs have the details." }, 500);
 	}
 }

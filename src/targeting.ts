@@ -39,8 +39,14 @@ export interface Selection {
 }
 
 const MODULE = /\.[cm]?[jt]sx?$/;
-/** Changes to these cannot affect a test run. */
-const INERT = /(^|\/)(LICENSE[^/]*|NOTICE[^/]*|\.gitignore|\.gitattributes|[^/]+\.(md|mdx|txt))$/i;
+/**
+ * Changes to these cannot affect a test run: licence files and Markdown at
+ * the repository root or under docs/. Anything else that is not a module,
+ * including text and Markdown elsewhere, may be a fixture and gets the full suite.
+ */
+const INERT = /^(LICENSE|LICENSE\.md|LICENSE\.txt|NOTICE|NOTICE\.md|\.gitignore|[^/]+\.md|docs\/.+\.mdx?)$/;
+/** Import specifiers that point inside the repository without being relative. */
+const ALIAS = /^(@\/|~\/|#)/;
 /** Changes to these can affect any test without being imported by it. */
 const GLOBAL = [
 	/(^|\/)package\.json$/,
@@ -134,6 +140,10 @@ export class TestTargeter {
 
 		const relevant = changed.filter((file) => !INERT.test(file.path));
 		for (const file of relevant) {
+			// A path segment that starts with "-" could be read as an option by the test runner.
+			if (file.path.split("/").some((segment) => segment.startsWith("-"))) {
+				return full(`${file.path} has a name a test runner could read as an option`);
+			}
 			if (GLOBAL.some((pattern) => pattern.test(file.path))) {
 				return full(`${file.path} can affect any test`);
 			}
@@ -146,6 +156,7 @@ export class TestTargeter {
 
 		// Direct dependencies of each file, resolved once.
 		const dependencies = new Map<string, string[]>();
+		let alias: string | null = null;
 		const directOf = async (path: string): Promise<string[]> => {
 			let direct = dependencies.get(path);
 			if (!direct) {
@@ -153,6 +164,7 @@ export class TestTargeter {
 				const oid = files.get(path);
 				if (oid && MODULE.test(path)) {
 					for (const specifier of await this.importsOf(oid)) {
+						if (ALIAS.test(specifier)) alias ??= `${path} imports "${specifier}"`;
 						const resolved = resolveImport(specifier, path, files);
 						if (resolved) direct.push(resolved);
 					}
@@ -192,9 +204,13 @@ export class TestTargeter {
 			for (const path of closure) reach.add(path);
 		}
 
+		// Every test's imports have been read by now, so an alias anywhere is known.
+		if (alias) return full(`${alias}, a path alias this analysis cannot follow`);
 		if (selected.length === 0) {
 			return full("no test file reaches the changed files");
 		}
+		const unreached = relevant.find((file) => !reach.has(file.path));
+		if (unreached) return full(`no test file reaches ${unreached.path}`);
 		return {
 			mode: "targeted",
 			reason: `${selected.length} of ${tests.length} test files reach the changed files`,
@@ -203,4 +219,25 @@ export class TestTargeter {
 			reach: [...reach].sort(),
 		};
 	}
+}
+
+/**
+ * The first path in `a` that collides with a path in `b`: the same path, or
+ * one that is a directory containing the other (a file can become a
+ * directory and the reverse).
+ */
+export function collision(a: Iterable<string>, b: ReadonlySet<string>): string | null {
+	const ancestors = new Set<string>();
+	for (const path of b) {
+		for (let slash = path.indexOf("/"); slash !== -1; slash = path.indexOf("/", slash + 1)) {
+			ancestors.add(path.slice(0, slash));
+		}
+	}
+	for (const path of a) {
+		if (b.has(path) || ancestors.has(path)) return path;
+		for (let slash = path.indexOf("/"); slash !== -1; slash = path.indexOf("/", slash + 1)) {
+			if (b.has(path.slice(0, slash))) return path;
+		}
+	}
+	return null;
 }

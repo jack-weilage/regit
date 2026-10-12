@@ -132,7 +132,7 @@ export async function classifyRisk(ai: Ai, change: ChangeSummary): Promise<RiskD
 }
 
 /** Paths where a change gets the full suite whatever the decision model says. */
-const SENSITIVE_PATH = /(^|[/._-])(auth|authn|authz|security|crypto|secrets?|payments?|billing|migrations?)([/._-]|$)/i;
+const SENSITIVE_PATH = /(^|[/._-])(o?auth[a-z]*|security|crypto[a-z]*|secrets?|payments?|billing|migrations?)([/._-]|$)/i;
 
 export interface RiskAssessment {
 	tier: RiskTier | "unclassified";
@@ -208,6 +208,14 @@ export interface NoteScreen {
 	latencyMs: number;
 }
 
+/** A thread record longer than this cannot be screened whole, and is refused at submission. */
+export const NOTE_CHAR_BUDGET = STATE_CHAR_BUDGET;
+
+/** Everything in a thread record that an agent wrote and a later agent may read. */
+export function screenedState(record: ThreadRecord): string {
+	return JSON.stringify({ task: record.task, decision: record.decision, rejected: record.rejected ?? [] });
+}
+
 export const SUBSTANTIVE_THRESHOLD = 0.5;
 export const INJECTION_THRESHOLD = 0.5;
 
@@ -216,11 +224,8 @@ export const INJECTION_THRESHOLD = 0.5;
  * later agents, so a record that tries to instruct its reader is kept out.
  */
 export async function screenNote(ai: Ai, record: ThreadRecord): Promise<NoteScreen> {
-	const state = JSON.stringify({
-		task: record.task,
-		decision: record.decision,
-		rejected: record.rejected ?? [],
-	}).slice(0, STATE_CHAR_BUDGET);
+	const state = screenedState(record);
+	if (state.length > NOTE_CHAR_BUDGET) throw new Error("thread record is too long to screen");
 	const started = Date.now();
 	const answers = await ask(ai, state, {
 		substantive: {

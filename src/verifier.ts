@@ -34,7 +34,9 @@ export function redact(text: string): string {
 }
 
 function tail(text: string): string {
-	return redact(text.length > OUTPUT_TAIL ? `…${text.slice(-OUTPUT_TAIL)}` : text);
+	// Redact before cutting, so a cut cannot leave half a token behind.
+	const clean = redact(text);
+	return clean.length > OUTPUT_TAIL ? `…${clean.slice(-OUTPUT_TAIL)}` : clean;
 }
 
 function toStep(step: string, result: ExecResult): StepResult {
@@ -202,7 +204,11 @@ export class Verifier extends DurableObject<Env> {
 			}
 
 			const fetchFork = await git("fetch-fork", ["fetch", "--quiet", "--no-tags", "fork", input.ref]);
-			if (fetchFork.exitCode !== 0) return fail("ref-not-found", `could not fetch ${input.ref}: ${fetchFork.stderr}`);
+			if (fetchFork.exitCode !== 0) {
+				// Only a missing ref is the agent's problem. Anything else is worth another try.
+				const missing = /couldn't find remote ref|no such ref/i.test(fetchFork.stderr);
+				return fail(missing ? "ref-not-found" : "sandbox-error", `could not fetch ${input.ref}: ${fetchFork.stderr}`);
+			}
 			const submitted = (await git("fork-head", ["rev-parse", "FETCH_HEAD"])).stdout.trim();
 			if (submitted !== input.expectHead) {
 				return fail("candidate-changed", `${input.ref} is at ${submitted}, but ${input.expectHead} was submitted`);
@@ -231,14 +237,21 @@ export class Verifier extends DurableObject<Env> {
 			if (commit.exitCode !== 0) return fail("sandbox-error", `could not commit: ${commit.stderr}`);
 			const oid = (await git("commit-id", ["rev-parse", "HEAD"])).stdout.trim();
 
-			const numstat = await git("numstat", ["diff", "--numstat", input.base, oid]);
-			const unified = await git("hunks", ["diff", "--unified=0", "--no-color", input.base, oid]);
+			const numstat = await git("numstat", ["diff", "--numstat", "--no-renames", input.base, oid]);
+			const unified = await git("hunks", ["diff", "--unified=0", "--no-color", "--no-renames", input.base, oid]);
 			// The full diff is only needed for its hunk headers; do not keep it in the report.
 			steps[steps.length - 1].stdout = "(diff omitted)";
 
 			const ref = `refs/heads/regit/verified/${input.candidateId}`;
 			const push = await git("push", ["push", "--quiet", "--force", "fork", `HEAD:${ref}`]);
 			if (push.exitCode !== 0) return fail("sandbox-error", `could not push to the fork: ${push.stderr}`);
+
+			// Install and test commands run next, and they are not trusted. Take the tokens out of the checkout first.
+			await git("forget-trunk", ["remote", "remove", "trunk"]);
+			await git("forget-fork", ["remote", "remove", "fork"]);
+			const scrub = await sandbox.exec(["rm", "-f", ".git/FETCH_HEAD"], { cwd: workdir, timeoutSeconds: 30 });
+			steps.push(toStep("forget-fetch-head", scrub));
+			if (scrub.exitCode !== 0) return fail("sandbox-error", "could not remove credentials from the sandbox");
 
 			return { ok: true, commit: oid, ref, stats: parseDiffStats(numstat.stdout, unified.stdout), bootMs, steps };
 		} catch (error) {
@@ -269,7 +282,7 @@ export class Verifier extends DurableObject<Env> {
 				}
 			}
 			// Test files are passed as arguments, never spliced into the command string.
-			const test = await sandbox.exec(["sh", "-c", `${input.command} "$@"`, "regit-test", ...(input.files ?? [])], {
+			const test = await sandbox.exec(["sh", "-c", `${input.command} "$@"`, "regit-test", ...(input.files ?? []).map((file) => `./${file}`)], {
 				cwd: this.workdir,
 				timeoutSeconds,
 				env: { CI: "1" },

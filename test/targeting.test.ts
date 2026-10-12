@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TEST_MATCH, TestTargeter, parseImports, resolveImport } from "../src/targeting";
+import { DEFAULT_TEST_MATCH, TestTargeter, collision, parseImports, resolveImport } from "../src/targeting";
 
 /** A repository described as path to source text. Blob ids are just the paths. */
 function repository(sources: Record<string, string>) {
@@ -126,6 +126,42 @@ describe("TestTargeter", () => {
 		}
 	});
 
+	it("does not mistake source or fixtures for documentation", async () => {
+		const { select } = repository({
+			...SOURCES,
+			"src/licenseKey.ts": "export const key = 1;\n",
+			"src/NoticeBanner.tsx": "export const Banner = 1;\n",
+			"test/fixtures/expected.txt": "expected\n",
+			"src/pages/intro.mdx": "# intro\n",
+			"docs/guide.md": "# guide\n",
+		});
+		for (const path of ["src/licenseKey.ts", "src/NoticeBanner.tsx", "test/fixtures/expected.txt", "src/pages/intro.mdx"]) {
+			expect(await select([path]), path).toMatchObject({ mode: "full" });
+		}
+		expect(await select(["docs/guide.md", "README.md"])).toMatchObject({ mode: "targeted", tests: [] });
+	});
+
+	it("runs everything when one changed file is reached by a test and another is not", async () => {
+		const selection = await repository(SOURCES).select(["src/array/chunk.ts", "src/untested.ts"]);
+		expect(selection).toMatchObject({ mode: "full", reach: null });
+		expect(selection.reason).toContain("src/untested.ts");
+	});
+
+	it("runs everything when the repository uses path aliases it cannot follow", async () => {
+		const { select } = repository({
+			...SOURCES,
+			"src/array/zip.test.ts": 'import { zip } from "./zip";\nimport { slug } from "@/string/slug";\n',
+		});
+		const selection = await select(["src/array/chunk.ts"]);
+		expect(selection).toMatchObject({ mode: "full" });
+		expect(selection.reason).toContain("@/string/slug");
+	});
+
+	it("runs everything when a changed path could be read as a runner option", async () => {
+		const { select } = repository({ ...SOURCES, "--passWithNoTests.test.ts": 'import "./src/array/chunk";\n' });
+		expect(await select(["--passWithNoTests.test.ts"])).toMatchObject({ mode: "full" });
+	});
+
 	it("parses each blob once, however many selections it serves", async () => {
 		const { select, reads } = repository(SOURCES);
 		await select(["src/array/chunk.ts"]);
@@ -133,5 +169,15 @@ describe("TestTargeter", () => {
 		await select(["src/string/slug.ts"]);
 		await select(["src/core/result.ts"]);
 		expect(reads()).toBe(afterFirst);
+	});
+});
+
+describe("collision", () => {
+	it("finds the same path, and a file on one side that is a directory on the other", () => {
+		expect(collision(["a/b.ts"], new Set(["a/b.ts"]))).toBe("a/b.ts");
+		expect(collision(["x.ts/y.ts"], new Set(["x.ts"]))).toBe("x.ts/y.ts");
+		expect(collision(["dir"], new Set(["dir/new.ts"]))).toBe("dir");
+		expect(collision(["a/b.ts", "ab/c.ts"], new Set(["a/c.ts", "ab"]))).toBe("ab/c.ts");
+		expect(collision(["a/b.ts"], new Set(["a/c.ts", "ab.ts"]))).toBeNull();
 	});
 });
