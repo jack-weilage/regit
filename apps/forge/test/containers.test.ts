@@ -140,8 +140,7 @@ test('records the stages of a cold start in the thread', async () => {
 				status: 'done'
 			},
 			{ label: 'Run .agents/setup', status: 'done', output: 'dependencies-ready' },
-			{ label: 'Cache the prepared sandbox', status: 'done' },
-			{ label: 'No .agents/resume', status: 'done' }
+			{ label: 'Cache the prepared sandbox', status: 'done' }
 		]
 	});
 	for (const stage of startup!.type === 'startup' ? startup!.stages : []) {

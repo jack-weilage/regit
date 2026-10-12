@@ -1398,12 +1398,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #hook(fetch: Fetch, name: 'setup' | 'resume') {
-		return this.#stage(
-			`Run .agents/${name}`,
+		const label = `Run .agents/${name}`;
+		const { ran } = await this.#stage(
+			label,
 			() => sandboxWorkspace(fetch).hook(name),
-			(result) => `${result.ran ? 'Run' : 'No'} .agents/${name}`,
+			undefined,
 			(result) => result.output
 		);
+		const startup = this.#activity.startup;
+		if (ran || !startup) return;
+		startup.stages = startup.stages.filter((stage) => stage.label !== label);
+		this.#publish(true);
 	}
 
 	async #localSandbox(target: Target): Promise<Fetch> {
