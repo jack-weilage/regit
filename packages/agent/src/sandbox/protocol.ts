@@ -23,7 +23,11 @@ export interface ErrorResponse {
 export interface CloneRequest {
 	remote: string;
 	branch?: string;
-	preserveSetup?: boolean;
+}
+
+export interface CloneResponse {
+	preserved: boolean;
+	setup: string | null;
 }
 
 export interface HookRequest {

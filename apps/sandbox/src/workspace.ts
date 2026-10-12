@@ -2,6 +2,7 @@ import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
 	CloneRequest,
+	CloneResponse,
 	CommitRequest,
 	CompareRequest,
 	CompareResponse,
@@ -21,36 +22,64 @@ import type {
 } from '@regit/agent';
 import { exec, git, noHooks, truncate } from './exec.ts';
 
-export async function clone(root: string, { remote, branch, preserveSetup }: CloneRequest) {
+export async function clone(
+	root: string,
+	{ remote, branch }: CloneRequest
+): Promise<CloneResponse> {
 	if (await exists(join(root, '.git'))) {
-		const origin = await git(root, ['remote', 'get-url', 'origin']).catch(() => '');
-		if (preserveSetup) {
-			const refs = branch ? await git(root, ['ls-remote', '--heads', remote, branch]) : '';
-			await git(root, ['fetch', remote, refs ? branch! : 'HEAD']);
-			const revision = await git(root, ['rev-parse', 'FETCH_HEAD']);
-			if (revision === (await git(root, ['rev-parse', 'HEAD']))) {
-				await git(root, ['remote', 'set-url', 'origin', remote]);
-				if (branch) await git(root, ['checkout', '-B', branch]);
-				return { preserved: true };
-			}
-		}
-		if (origin === remote && !preserveSetup) {
-			await git(root, ['fetch', 'origin', branch ?? 'HEAD']);
-			await git(root, ['reset', '--hard', 'FETCH_HEAD']);
-			await git(root, ['clean', '-fd']);
-			return { preserved: false };
+		const before = await git(root, ['rev-parse', 'HEAD']).catch(() => null);
+		const reused = await retarget(root, remote, branch).then(
+			() => true,
+			() => false
+		);
+		if (reused) {
+			const preserved = before === (await git(root, ['rev-parse', 'HEAD']));
+			return { preserved, setup: await setupScript(root) };
 		}
 		for (const entry of await readdir(root)) {
 			await rm(join(root, entry), { recursive: true, force: true });
 		}
 	}
 	await git(root, ['clone', remote, '.']);
-	if (!branch) return { preserved: false };
-	const remoteBranch = await git(root, ['rev-parse', '--verify', `origin/${branch}`]).catch(
+	if (branch) {
+		const start = await remoteBranch(root, branch);
+		await git(root, ['checkout', '-B', branch, ...(start ? [start] : [])]);
+	}
+	return { preserved: false, setup: await setupScript(root) };
+}
+
+async function retarget(root: string, remote: string, branch?: string) {
+	await git(root, ['remote', 'remove', 'origin']).catch(() => {});
+	await git(root, ['remote', 'add', 'origin', remote]);
+	await git(root, ['fetch', 'origin']);
+	await git(root, ['remote', 'set-head', 'origin', '--auto']);
+	const fallback = await git(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+	const name = branch ?? fallback.slice('origin/'.length);
+	const start = await remoteBranch(root, name);
+	await git(root, [
+		'checkout',
+		'--force',
+		...(start ? [] : ['--no-track']),
+		'-B',
+		name,
+		start ?? fallback
+	]);
+	const branches = await git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+	for (const other of branches.split('\n')) {
+		if (other && other !== name) await git(root, ['branch', '-D', other]);
+	}
+	await git(root, ['clean', '-fd']);
+}
+
+function remoteBranch(root: string, branch: string) {
+	return git(root, ['rev-parse', '--verify', '--quiet', `origin/${branch}`]).then(
+		() => `origin/${branch}`,
 		() => null
 	);
-	await git(root, ['checkout', '-B', branch, ...(remoteBranch ? [`origin/${branch}`] : [])]);
-	return { preserved: false };
+}
+
+function setupScript(root: string) {
+	return git(root, ['rev-parse', '--verify', '--quiet', 'HEAD:.agents/setup']).catch(() => null);
 }
 
 function exists(path: string) {

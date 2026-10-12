@@ -6,12 +6,11 @@ const { dir, git, worker, script, modelRequests, sh, seed, commit, start, settle
 	containers: true
 });
 
-test('caches setup, resumes restores, and refreshes when tools or source change', async () => {
+test('caches setup, reuses restored checkouts, and refreshes when tools change or the cache ages', async () => {
 	const work = await seed('toolchain', {
 		'README.md': '# Toolchain\n',
-		'.agents/setup': 'test ! -e .git/setup-ran\necho setup > .git/setup-ran\n',
-		'.agents/resume':
-			'test "$(cat .git/setup-ran)" = setup\ntest ! -e .git/resume-ran\ntouch .git/resume-ran\n'
+		'.agents/setup': 'echo setup >> .git/setup-runs\n',
+		'.agents/resume': 'test -s .git/setup-runs\ntest ! -e .git/resume-ran\ntouch .git/resume-ran\n'
 	});
 	await script([
 		[
@@ -21,7 +20,7 @@ test('caches setup, resumes restores, and refreshes when tools or source change'
 					type: 'function_call',
 					call_id: 'fresh-hooks',
 					name: 'run',
-					arguments: JSON.stringify({ command: 'cat .git/setup-ran' })
+					arguments: JSON.stringify({ command: 'cat .git/setup-runs' })
 				}
 			}
 		],
@@ -33,14 +32,15 @@ test('caches setup, resumes restores, and refreshes when tools or source change'
 					type: 'function_call',
 					call_id: 'restored-hooks',
 					name: 'run',
-					arguments: JSON.stringify({ command: 'cat .git/setup-ran' })
+					arguments: JSON.stringify({ command: 'cat .git/setup-runs' })
 				}
 			}
 		],
 		[{ type: 'response.output_text.delta', delta: 'Still nothing.' }],
 		[{ type: 'response.output_text.delta', delta: 'Nothing here either.' }],
 		[{ type: 'response.output_text.delta', delta: 'All set.' }],
-		[{ type: 'response.output_text.delta', delta: 'New source ready.' }]
+		[{ type: 'response.output_text.delta', delta: 'New source ready.' }],
+		[{ type: 'response.output_text.delta', delta: 'Refreshed.' }]
 	]);
 	const env = await worker.getEnv();
 	const recorded = () =>
@@ -68,7 +68,7 @@ test('caches setup, resumes restores, and refreshes when tools or source change'
 		toolchain: { restored: true }
 	});
 	const hookResults = JSON.stringify(await modelRequests());
-	expect(hookResults.match(/exit code 0\\nsetup/g)).toHaveLength(2);
+	expect(hookResults.match(/exit code 0\\nsetup(?!\\nsetup)/g)).toHaveLength(2);
 	expect(await recorded()).toEqual(first);
 
 	await env.DB.prepare('UPDATE toolchain_snapshots SET size = ? WHERE repo = ?')
@@ -102,8 +102,21 @@ test('caches setup, resumes restores, and refreshes when tools or source change'
 	await commit(work, { 'README.md': '# Updated source\n' }, 'Change source only');
 	sh(work, 'push', '--quiet', join(dir, 'toolchain.git'), 'main');
 	await start('thread-5b', { task: 'Check new source', mode: 'small', repo: 'toolchain' });
-	expect(await settled('thread-5b')).toMatchObject({ status: 'finished', error: null });
-	expect((await recorded())!.key).not.toBe(refreshed!.key);
+	expect(await settled('thread-5b')).toMatchObject({
+		status: 'finished',
+		error: null,
+		toolchain: { restored: true }
+	});
+	expect(await recorded()).toEqual(refreshed);
+
+	await env.DB.prepare('UPDATE toolchain_snapshots SET created_at = ? WHERE repo = ?')
+		.bind(Date.now() - 2 * 24 * 60 * 60 * 1000, 'toolchain')
+		.run();
+	await start('thread-5c', { task: 'Check an aged cache', mode: 'small', repo: 'toolchain' });
+	expect(await settled('thread-5c')).toMatchObject({ status: 'finished', error: null });
+	const aged = await recorded();
+	expect(aged!.key).toBe(refreshed!.key);
+	expect(aged!.id).not.toBe(refreshed!.id);
 }, 600_000);
 
 test('records the stages of a cold start in the thread', async () => {

@@ -115,6 +115,7 @@ const sliceMs = 10 * 60 * 1000;
 const healthTimeoutMs = 5 * 60 * 1000;
 const idleTimeoutMs = 5 * 60 * 1000;
 const snapshotHeadroomBytes = 2e9;
+const snapshotRefreshMs = 24 * 60 * 60 * 1000;
 const maxStoredChanges = 1_500_000;
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
@@ -1032,7 +1033,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			await this.#stage(boot, () => this.#start({ image }, fetch));
 		}
 
-		const { preserved } = await this.#cloneWorkspace(target, fetch, !!restored);
+		const { preserved, setup } = await this.#cloneWorkspace(target, fetch);
 		const tools = await this.#stage(
 			'Install toolchains',
 			() => workspace.toolchain(),
@@ -1050,40 +1051,47 @@ export class AttemptSandbox extends DurableObject<Env> {
 		);
 
 		// TODO: if image updates keep making snapshots cold, back up /opt/mise per toolchain key with @cloudflare/sandbox's DirectoryBackup, which restores into newer images
-		const key = await digest({ image, tools, revision: await this.#head(fetch) });
-		if (preserved && key === restored?.key) {
+		const key = await digest({ image, tools, setup });
+		const current = key === restored?.key;
+		const aged = !restored || Date.now() - restored.createdAt.getTime() > snapshotRefreshMs;
+		if (preserved && current) {
 			await this.#stage('Use cached setup', async () => {});
 		} else {
 			await this.#hook(fetch, 'setup');
-			await this.#stage(
-				'Cache the prepared sandbox',
-				async () => {
-					try {
-						const snapshot = await container.snapshotContainer({
-							name: `setup-${key.slice(0, 12)}`
-						});
-						// TODO: delete superseded snapshots and old deploy images, which share the account's 50 GB image storage
-						const row = {
-							snapshotId: snapshot.id,
-							key,
-							image,
-							size: snapshot.size,
-							createdAt: new Date()
-						};
-						await db
-							.insert(toolchainSnapshots)
-							.values({ repo: target.repo, ...row })
-							.onConflictDoUpdate({ target: toolchainSnapshots.repo, set: row });
-						return { saved: true, output: '' };
-					} catch (error) {
-						console.warn('Could not cache the prepared sandbox', error);
-						return { saved: false, output: error instanceof Error ? error.message : String(error) };
-					}
-				},
-				(result) =>
-					result.saved ? 'Cache the prepared sandbox' : 'Continue without a setup cache',
-				(result) => result.output
-			);
+			if (!current || aged) {
+				await this.#stage(
+					'Cache the prepared sandbox',
+					async () => {
+						try {
+							const snapshot = await container.snapshotContainer({
+								name: `setup-${key.slice(0, 12)}`
+							});
+							// TODO: delete superseded snapshots and old deploy images, which share the account's 50 GB image storage
+							const row = {
+								snapshotId: snapshot.id,
+								key,
+								image,
+								size: snapshot.size,
+								createdAt: new Date()
+							};
+							await db
+								.insert(toolchainSnapshots)
+								.values({ repo: target.repo, ...row })
+								.onConflictDoUpdate({ target: toolchainSnapshots.repo, set: row });
+							return { saved: true, output: '' };
+						} catch (error) {
+							console.warn('Could not cache the prepared sandbox', error);
+							return {
+								saved: false,
+								output: error instanceof Error ? error.message : String(error)
+							};
+						}
+					},
+					(result) =>
+						result.saved ? 'Cache the prepared sandbox' : 'Continue without a setup cache',
+					(result) => result.output
+				);
+			}
 		}
 		await this.#hook(fetch, 'resume');
 		await this.#restoreServices(fetch);
@@ -1091,12 +1099,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return fetch;
 	}
 
-	async #cloneWorkspace(target: Target, fetch: Fetch, preserveSetup = false) {
+	async #cloneWorkspace(target: Target, fetch: Fetch) {
 		this.#setMeta('workspace', '');
 		const workspace = sandboxWorkspace(fetch);
 		for (const service of await workspace.services()) await workspace.stopService(service.name);
 		return this.#stage(`Clone ${target.repo}`, () =>
-			workspace.clone({ remote: target.remote, branch: target.branch, preserveSetup })
+			workspace.clone({ remote: target.remote, branch: target.branch })
 		);
 	}
 

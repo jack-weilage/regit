@@ -1,6 +1,7 @@
 import type { ToolExecutor } from '../types.ts';
 import type {
 	CloneRequest,
+	CloneResponse,
 	CompareRequest,
 	CompareResponse,
 	CommitRequest,
@@ -89,7 +90,7 @@ export function sandboxWorkspace(fetch: Fetch) {
 			await post(fetch, '/workspace/publish-provenance', JSON.stringify(request));
 		},
 		async clone(request: CloneRequest) {
-			return post<{ preserved: boolean }>(fetch, '/workspace/clone', JSON.stringify(request));
+			return post<CloneResponse>(fetch, '/workspace/clone', JSON.stringify(request));
 		},
 		hook(name: HookRequest['name']) {
 			return post<HookResponse>(fetch, '/workspace/hook', JSON.stringify({ name }));

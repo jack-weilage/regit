@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sandboxTools, sandboxWorkspace, type ToolArguments, type ToolName } from '@regit/agent';
@@ -206,7 +206,7 @@ describe('workspace', () => {
 		expect(await readFile(join(empty, 'greeting.ts'), 'utf8')).toContain('hello');
 	});
 
-	test('replaces a clone of a different remote, as left by a restored snapshot', async () => {
+	test('retargets a clone of a different remote, as left by a restored snapshot', async () => {
 		const other = join(dir, 'other.git');
 		await git(dir, ['init', '--bare', '--initial-branch', 'main', other]);
 		await git(root, ['push', other, 'main']);
@@ -218,31 +218,48 @@ describe('workspace', () => {
 		await expect(readFile(join(root, 'stale.ts'), 'utf8')).rejects.toThrow();
 	});
 
-	test('preserves prepared files across fork restores only at the same revision', async () => {
+	test('replaces a workspace whose repository cannot be reused', async () => {
+		await rm(join(root, '.git'), { recursive: true });
+		await mkdir(join(root, '.git'));
+
+		expect(await workspace.clone({ remote, branch: 'main' })).toEqual({
+			preserved: false,
+			setup: null
+		});
+		expect(await git(root, ['remote', 'get-url', 'origin'])).toBe(remote);
+		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toContain('hello');
+	});
+
+	test('keeps prepared files when reusing a restored checkout at any revision', async () => {
 		await call('write_file', { path: '.gitignore', content: '.cache/\n' });
 		await call('write_file', {
 			path: '.agents/setup',
 			content: 'mkdir -p .cache\necho prepared > .cache/ready\n'
 		});
 		await workspace.commit({ message: 'Add setup', author });
+		const setup = await git(root, ['rev-parse', 'HEAD:.agents/setup']);
 		const fork = join(dir, 'fork.git');
 		await git(dir, ['clone', '--bare', root, fork]);
 		await workspace.hook('setup');
-		expect(await workspace.clone({ remote: fork, branch: 'work', preserveSetup: true })).toEqual({
-			preserved: true
+		expect(await workspace.clone({ remote: fork, branch: 'work' })).toEqual({
+			preserved: true,
+			setup
 		});
 		expect(await readFile(join(root, '.cache/ready'), 'utf8')).toBe('prepared\n');
 		expect(await git(root, ['remote', 'get-url', 'origin'])).toBe(fork);
-		expect(await git(root, ['branch', '--show-current'])).toBe('work');
+		expect(await git(root, ['branch', '--format=%(refname:short)'])).toBe('work');
 		await call('write_file', { path: 'greeting.ts', content: 'changed\n' });
-		await workspace.commit({ message: 'Change setup inputs', author });
+		await workspace.commit({ message: 'Change source', author });
 		await git(root, ['push', fork, 'HEAD:main']);
 		await git(root, ['reset', '--hard', 'HEAD~1']);
-		expect(await workspace.clone({ remote: fork, branch: 'main', preserveSetup: true })).toEqual({
-			preserved: false
+		expect(await workspace.clone({ remote: fork, branch: 'main' })).toEqual({
+			preserved: false,
+			setup
 		});
-		await expect(readFile(join(root, '.cache/ready'), 'utf8')).rejects.toThrow();
+		expect(await readFile(join(root, '.cache/ready'), 'utf8')).toBe('prepared\n');
 		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe('changed\n');
+		expect(await git(root, ['rev-parse', '--abbrev-ref', 'main@{upstream}'])).toBe('origin/main');
+		expect(await git(root, ['branch', '--format=%(refname:short)'])).toBe('main');
 	});
 
 	test('installs and reports the toolchain with mise', async () => {
