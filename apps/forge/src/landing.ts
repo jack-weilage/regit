@@ -17,7 +17,15 @@ export interface Landing {
 }
 
 // Thread and candidate forks share the namespace; their names always contain a double hyphen.
-export function canonicalPush({ type, source, payload }: ArtifactsPush): Landing | null {
+// TODO: drop the shape check once a live push confirms what Workflows receive; the docs don't say.
+export function canonicalPush(event: unknown): Landing | null {
+	const { type, source, payload } = (event ?? {}) as Partial<ArtifactsPush>;
+	if (
+		typeof source?.repoName !== 'string' ||
+		typeof payload?.ref !== 'string' ||
+		typeof payload.after !== 'string'
+	)
+		throw new Error(`Unrecognised Artifacts event: ${JSON.stringify(event).slice(0, 1000)}`);
 	if (type !== 'cf.artifacts.repo.pushed' || source.repoName.includes('--')) return null;
 	if (!payload.ref.startsWith('refs/heads/')) return null;
 	const last = payload.commits.at(-1)?.message.split('\n')[0]?.trim() ?? '';

@@ -30,3 +30,9 @@ test('ignores thread and candidate forks, tags and other events', () => {
 	expect(canonicalPush(push('notes', 'refs/tags/v1'))).toBeNull();
 	expect(canonicalPush({ ...push('notes'), type: 'cf.artifacts.repo.fetched' })).toBeNull();
 });
+
+test('fails loudly on an event shape it does not recognise', () => {
+	expect(() => canonicalPush({ payload: push('notes') })).toThrow(
+		/Unrecognised Artifacts event: \{"payload":\{"type":"cf.artifacts.repo.pushed"/
+	);
+});

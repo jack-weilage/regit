@@ -121,6 +121,19 @@ async function toInput(
 			return [
 				{ type: 'message', role: 'user', content: [{ type: 'input_text', text: turn.text }] }
 			];
+		case 'notification':
+			return [
+				{
+					type: 'message',
+					role: 'user',
+					content: [
+						{
+							type: 'input_text',
+							text: `<system-notification>\n${turn.text}\n</system-notification>`
+						}
+					]
+				}
+			];
 		case 'assistant':
 			return [
 				...(turn.reasoning ?? []).map((item) => JSON.parse(item) as ResponseInputItem),

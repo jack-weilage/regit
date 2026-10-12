@@ -926,7 +926,23 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 			(entry) => entry.type === 'message' && entry.text === 'Still on the old main.'
 		)
 	);
-	expect(JSON.stringify((await modelRequests()).at(-1)!.query)).not.toContain('main moved');
+	const notified = JSON.stringify((await modelRequests()).at(-1)!.query);
+	expect(notified).toContain(
+		`<system-notification>\\nMain has 1 new commit (latest ${main.slice(0, 7)} \\"Better notes\\") that conflict with this thread's changes in notes.md.`
+	);
+	expect(notified.indexOf('system-notification')).toBeLessThan(notified.indexOf('Sam: Carry on.'));
+
+	await idle();
+	await script([[{ type: 'response.output_text.delta', delta: 'Still waiting.' }]]);
+	await repo.reply(id, { author: sam, text: 'And now?' });
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Still waiting.')
+	);
+	expect(
+		JSON.stringify((await modelRequests()).at(-1)!.query).split(
+			"conflict with this thread's changes"
+		)
+	).toHaveLength(2);
 	const fork = join(dir, `landing--${id}.git`);
 	expect(sh(fork, 'rev-list', 'main')).not.toContain(main);
 
@@ -957,13 +973,21 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	await idle();
 	await script([
 		writeNotes('# Other notes\\n'),
-		[{ type: 'response.output_text.delta', delta: 'Rewrote the notes.' }]
+		[{ type: 'response.output_text.delta', delta: 'Rewrote the notes.' }],
+		[{ type: 'response.output_text.delta', delta: 'Noted the conflict.' }]
 	]);
 	await repo.reply(clean, { author: sam, text: 'Rewrite the notes too.' });
 	const conflicting = await untilThread(
 		repo,
 		clean,
-		(detail) => detail.summary.behind?.conflicts.length === 1
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some(
+				(entry) => entry.type === 'message' && entry.text === 'Noted the conflict.'
+			)
+	);
+	expect(JSON.stringify((await modelRequests()).at(-1)!.query)).toContain(
+		"that conflict with this thread's changes in notes.md"
 	);
 	expect(conflicting.summary.behind).toEqual({
 		commits: 1,
@@ -972,6 +996,30 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		conflicts: ['notes.md']
 	});
 	expect((await env.ATTEMPTS.getByName(clean).snapshot())!.status).toBe('finished');
+});
+
+test('tells an idle thread about conflicts with main even without a push event', async () => {
+	const { repo, sam, id } = await startedThread('unannounced', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const work = join(dir, 'unannounced-work');
+	await commit(work, { 'notes.md': 'Quiet notes\n' }, 'Quiet notes');
+	sh(work, 'push', '--quiet', join(dir, 'unannounced.git'), 'main');
+
+	await idle();
+	await script([[{ type: 'response.output_text.delta', delta: 'Saw the conflict.' }]]);
+	await repo.reply(id, { author: sam, text: 'Anything new?' });
+	const detail = await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && !!detail.summary.behind
+	);
+	expect(detail.summary.behind).toMatchObject({ commits: 1, conflicts: ['notes.md'] });
+	expect(JSON.stringify((await modelRequests()).at(-1)!.query)).toContain(
+		"that conflict with this thread's changes in notes.md"
+	);
 });
 
 test("ships to the branch the repository's HEAD points to, not its recorded default", async () => {

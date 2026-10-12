@@ -728,8 +728,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			: { main: after, threads: [] };
 		if (this.#meta('main') === scan.main) return;
 		this.#setMeta('main', scan.main);
-		for (const { id, behind, conflicts } of scan.threads)
-			this.#setBehind(id, behind ? { commits: behind, sha: scan.main, headline, conflicts } : null);
+		for (const { id, behind: commits, conflicts } of scan.threads) {
+			const behind = commits ? { commits, sha: scan.main, headline, conflicts } : null;
+			this.#setBehind(id, behind);
+			await this.#agent(id).behindMain(behind);
+		}
 	}
 
 	#setBehind(thread: string, behind: ThreadSummary['behind']) {

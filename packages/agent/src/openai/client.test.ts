@@ -194,6 +194,26 @@ describe('openaiModel', () => {
 		]);
 	});
 
+	test('sends system notifications as tagged user messages', async () => {
+		const { respond, requests } = setup(eventStream([completed]));
+		await respond({
+			...request,
+			history: [{ role: 'notification', text: 'Main has 1 new commit.' }]
+		});
+
+		expect((requests[0]!.query as { input: unknown[] }).input).toContainEqual({
+			type: 'message',
+			role: 'user',
+			content: [
+				{
+					type: 'input_text',
+					text: '<system-notification>\nMain has 1 new commit.\n</system-notification>',
+					prompt_cache_breakpoint: breakpoint
+				}
+			]
+		});
+	});
+
 	test('surfaces HTTP errors as model errors', async () => {
 		const { respond } = setup(
 			Response.json(

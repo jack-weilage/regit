@@ -20,6 +20,7 @@ export type ToolOutput = string | { text: string; imageUrl: string };
 
 export type Turn =
 	| { role: 'user'; text: string }
+	| { role: 'notification'; text: string }
 	| { role: 'assistant'; text: string; calls: ToolCall[]; reasoning?: string[] }
 	| { role: 'tool'; results: ToolResult[] };
 

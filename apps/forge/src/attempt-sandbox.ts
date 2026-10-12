@@ -12,7 +12,8 @@ import {
 	type Revision,
 	type Machine,
 	type StartupStage,
-	type ThreadActivity
+	type ThreadActivity,
+	type ThreadSummary
 } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
@@ -375,15 +376,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 			await this.#rebase(attempt, fetch, fork, token);
 
 			const pending = await this.#drain(attempt.repo);
-			if (pending.length) this.#saveStep({ turns: pending });
-			if (this.#meta('sync')) {
-				const text = await this.#sync(attempt, fetch, fork, token);
-				if (text) this.#saveStep({ turns: [{ role: 'user', text }] });
-				else if (!pending.length) {
-					this.#clearActivity();
-					await this.#reportBehind(attempt, fetch, fork, token);
-					return await this.#finish(attempt, 'finished');
-				}
+			const syncing = !!this.#meta('sync');
+			const synced = syncing ? await this.#sync(attempt, fetch, fork, token) : null;
+			if (!synced) await this.#reportBehind(attempt, fetch, fork, token);
+			const opening: Turn[] = [
+				...(synced ? [] : this.#conflictNotes()),
+				...pending,
+				...(synced ? [{ role: 'notification' as const, text: synced }] : [])
+			];
+			if (opening.length) this.#saveStep({ turns: opening });
+			if (syncing && !synced && !pending.length) {
+				this.#clearActivity();
+				return await this.#finish(attempt, 'finished');
 			}
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
@@ -428,7 +432,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
 				history: this.#history(),
 				signal: controller.signal,
-				steer: () => this.#drain(attempt.repo)
+				steer: async () => [...this.#conflictNotes(), ...(await this.#drain(attempt.repo))]
 			});
 
 			const step = new StepActivity();
@@ -445,6 +449,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						tools: controller.signal.aborted ? [] : tools
 					});
 					this.#stepped(next.value.turns);
+					if (next.value.checkpoint) await this.#reportBehind(attempt, fetch, fork, token);
 					await this.#syncServices(fetch, attempt.repo);
 					if (Date.now() > deadline) {
 						await run.return('aborted');
@@ -548,12 +553,33 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 		attempt.base = head;
 		this.#sql.exec('UPDATE agent SET base = ?', head);
+		this.#setMeta('notified', JSON.stringify(conflicts));
 		const what = landed ? `\n\nWhat landed on main:\n${landed}` : '';
 		if (merged.ok) {
 			await this.#push(fork, token, () => sandboxWorkspace(fetch).push({ ref: fork.branch }));
-			return `ReGit: main moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
+			return `Main moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
 		}
-		return `ReGit: main moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
+		return `Main moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
+	}
+
+	behindMain(behind: ThreadSummary['behind']) {
+		if (this.#agent()) this.#setMeta('behind', JSON.stringify(behind));
+	}
+
+	// Tells the agent once about each file that newly conflicts with main; its workspace is left as is.
+	#conflictNotes(): Turn[] {
+		const behind = JSON.parse(this.#meta('behind') ?? 'null') as ThreadSummary['behind'];
+		const conflicts = behind?.conflicts ?? [];
+		const told = JSON.parse(this.#meta('notified') ?? '[]') as string[];
+		this.#setMeta('notified', JSON.stringify(conflicts));
+		if (!behind || conflicts.every((file) => told.includes(file))) return [];
+		const commits = behind.commits === 1 ? '1 new commit' : `${behind.commits} new commits`;
+		return [
+			{
+				role: 'notification',
+				text: `Main has ${commits} (latest ${behind.sha.slice(0, 7)} "${behind.headline}") that conflict with this thread's changes in ${conflicts.join(', ')}. Main has not been merged into your workspace, so your files are unchanged. Avoid deepening the conflict in those files where you can, and mention it in your reply; a person can bring the thread up to date.`
+			}
+		];
 	}
 
 	async #reportBehind(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
@@ -576,6 +602,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					: merged.output.trim().split('\n').slice(1).filter(Boolean);
 				behind = { commits, sha, headline: subject.join(' '), conflicts };
 			}
+			this.#setMeta('behind', JSON.stringify(behind));
 			await this.#report(attempt.repo, { type: 'behind', behind });
 		} catch (error) {
 			console.warn('Could not compare the thread with main', error);
