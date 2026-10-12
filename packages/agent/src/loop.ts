@@ -13,7 +13,6 @@ export interface AgentOptions {
 	tools: ToolExecutor;
 	instructions: string;
 	history: Turn[];
-	allowedTools?: string[];
 	maxSteps?: number;
 	signal?: AbortSignal;
 	steer?: () => Turn[] | Promise<Turn[]>;
@@ -26,7 +25,6 @@ export async function* runAgent({
 	tools,
 	instructions,
 	history,
-	allowedTools,
 	maxSteps = 50,
 	signal,
 	steer
@@ -42,7 +40,7 @@ export async function* runAgent({
 		let usage: Usage | undefined;
 
 		for await (const event of model.respond(
-			{ instructions, history: turns, tools: tools.specs, ...(allowedTools && { allowedTools }) },
+			{ instructions, history: turns, tools: tools.specs },
 			signal
 		)) {
 			if (event.type === 'text') {

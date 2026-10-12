@@ -16,7 +16,6 @@ import {
 } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
-	analyzeThread,
 	askThreads,
 	askThreadsTools,
 	combineTools,
@@ -29,11 +28,9 @@ import {
 	verificationSkill,
 	repositoryGuidance,
 	withSkills,
-	intentTools,
 	modes,
 	openaiModel,
 	parseDiff,
-	recordTools,
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
@@ -130,8 +127,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 	#published = 0;
 	#publishing?: ReturnType<typeof setTimeout>;
 	#capturing = false;
-	#analysis?: Promise<void>;
-	#reanalyze = false;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -372,7 +367,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
 			const workspace = sandboxWorkspace(fetch);
-			const coordinator = this.env.REPOS.getByName(attempt.repo);
+			const { model, effort } = modes[attempt.mode];
 			const skills = await this.#skills(fetch, [
 				threadsSkill,
 				servicesSkill,
@@ -380,34 +375,35 @@ export class AttemptSandbox extends DurableObject<Env> {
 				verificationSkill
 			]);
 			const guidance = await repositoryGuidance(this.#tools(fetch));
-			const context = {
-				instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
+			const run = runAttempt({
+				model: openaiModel({
+					resolveImage: (url) => this.#resolveImage(attempt.repo, url),
+					gateway: { run: (request) => this.env.MODELS.run(request) },
+					model,
+					effort,
+					sessionId: this.#thread(),
+					metadata: { thread: this.#thread(), mode: attempt.mode, task: 'agent' }
+				}),
 				tools: combineTools(
 					skillTools(skills),
 					guidance.tools,
-					intentTools((intent) => coordinator.intentProposed(this.#thread(), intent)),
-					suggestTools((suggestion) => coordinator.suggestThread(this.#thread(), suggestion)),
+					suggestTools((suggestion) =>
+						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#thread(), suggestion)
+					),
 					threadTools({
-						list: () => coordinator.otherThreads(this.#thread()),
-						send: (to, text) => coordinator.messageThread(this.#thread(), to, text)
+						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.#thread()),
+						send: (to, text) =>
+							this.env.REPOS.getByName(attempt.repo).messageThread(this.#thread(), to, text)
 					}),
 					askThreadsTools((question) => this.#askThreads(attempt.repo, question))
-				)
-			};
-			if (pending.length) this.#analyze(attempt, context);
-			const run = runAttempt({
-				model: this.#model(attempt, 'agent'),
-				tools: context.tools,
-				allowedTools: context.tools.specs
-					.map((spec) => spec.name)
-					.filter((name) => !recordTools.includes(name)),
+				),
 				checkpoints: {
 					commit: (request) => workspace.commit(request),
 					push: (request) => this.#push(fork, token, () => workspace.push(request))
 				},
 				author,
 				push: { ref: fork.branch },
-				instructions: context.instructions,
+				instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
 				history: this.#history(),
 				signal: controller.signal,
 				steer: () => this.#drain(attempt.repo)
@@ -439,7 +435,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			if (this.#agent()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
-			this.#analyze(attempt, context);
 			if (next.value === 'finished') await this.#settle(attempt);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
@@ -451,53 +446,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		} finally {
 			this.#controller = undefined;
 		}
-	}
-
-	#model(attempt: AgentRow, task: 'agent' | 'analysis') {
-		const { model, effort } = modes[attempt.mode];
-		return openaiModel({
-			resolveImage: (url) => this.#resolveImage(attempt.repo, url),
-			gateway: { run: (request) => this.env.MODELS.run(request) },
-			model,
-			effort,
-			sessionId: this.#thread(),
-			metadata: { thread: this.#thread(), mode: attempt.mode, task }
-		});
-	}
-
-	// Records the thread's intent and separate work from a fork of the agent's own context, which
-	// shares its prompt cache; only the record tools may be called.
-	#analyze(attempt: AgentRow, context: { instructions: string; tools: ToolExecutor }) {
-		if (this.#analysis) {
-			this.#reanalyze = true;
-			return;
-		}
-		this.#analysis = (async () => {
-			do {
-				this.#reanalyze = false;
-				await this.#analyzeOnce(attempt, context).catch((error: unknown) =>
-					console.warn('Could not analyze the thread', error)
-				);
-			} while (this.#reanalyze);
-			this.#analysis = undefined;
-		})();
-		this.ctx.waitUntil(this.#analysis);
-	}
-
-	async #analyzeOnce(attempt: AgentRow, context: { instructions: string; tools: ToolExecutor }) {
-		const { usage } = await analyzeThread({
-			model: this.#model(attempt, 'analysis'),
-			...context,
-			history: this.#history(),
-			records: await this.env.REPOS.getByName(attempt.repo).threadRecords(this.#thread())
-		});
-		if (usage.length)
-			await this.#report(attempt.repo, {
-				type: 'usage',
-				task: 'analysis',
-				model: modes[attempt.mode].model,
-				usage
-			});
 	}
 
 	async #settle(attempt: AgentRow) {
