@@ -218,3 +218,23 @@
 - Mergify data (153K merges, 160 teams): AI-stamped PRs broke main 1.9% vs 4.4% others; broken-main grows ~16x with team size → 1 in 8 merges at 40+ engineers; 94% tested one at a time.
 - Mergify formally verifies queue with TLA+. Trunk report of GitHub MQ wrong-base bug 2026-04-23.
 - **Verdict: "landing as a service — nobody yet" PARTLY REFUTED**: pushrebase + productized queues exist. What's novel = handing INTENT/context of colliding change back to losing agent's environment to repair and re-prove.
+
+## 51 Red team: auto-conflicts + affected tests
+- Verdict: "half right, emphasis inverted". RIGHT: forge-run verification = correct trust boundary (promote to core). RIGHT BUT INCOMPLETE: affected tests (economically mandatory, unsafe alone). WRONG as core feature: automatic conflict resolution (textual = commodity; automation raises silent wrong merges 3%→11%→50%; misses semantic/intent conflicts; place for gaming to hide).
+- Sharpened: forge verifies COMBINED state in sealed trust domain; TIA suite = pre-land filter not proof; batch re-verified as trunk+batch; full suite post-land with flake-aware culprit finding + guarded auto-revert; flakiness a forge-level fact agents never see as red; test/spec edits governed separately; mutation + differential adequacy. Conflict LADDER with abstention: (1) deterministic/structured merge for false conflicts/lockfiles; (2) hand-back to losing thread with both intents + symbol-level account → re-derive on new base; (3) human/planner when intents contradict. Every resolution = new change re-earning evidence. Publish (correct, clean-but-wrong, abstained) rates per rung.
+- Headline swap: not "we resolve conflicts" but "we catch collisions that merge cleanly" + "we make collisions rare". Price resolver by its errors not yield. Optimistic mode needed from ~10^4-10^5 changes/day. Domain-tier: docs/UI copy auto; schema/config/auth/regulated never auto-resolve.
+
+## 52 Red team: threads instead of PRs
+- Thread = unit of WORK and PROVENANCE (every landed line → thread::message; /ask; fork with machine; steer via comments). Threads spawn children only as shallow budgeted hierarchy (non-coding coordinator over single-task writers + transactional task store). Authority/consent/credentials stay with named humans.
+- Threads do NOT replace: the INTENT (issue successor, N:1 with threads, unit of planning/dedupe/best-of-N) and the LANDING REQUEST (PR successor: immutable generated view of thread: intent, decisions, rejected alternatives, typed evidence, risk tier, small diff).
+- "Coworkers share intents and decisions, link to threads; agents read threads." A thread is a PROCESS not a document; human-intent bytes 0.4% of transcript. Scarce = attention + verified landing, not parallel compute → "fewer, better-partitioned threads per intent". Issue gains importance. Thread orchestration = security problem first. Sharing a thread shares everything it read.
+- Demo framing: "the PR becomes a generated, evidence-bearing view of a thread; the issue becomes the intent threads compete to satisfy."
+
+## 53 Red team: taste + portals
+- Human input concentrates on JUDGMENT UNDER AMBIGUITY: what to build/not build, choosing among candidates, accepting/answering for risk, keeping understanding for architecture & incidents. Product/visual taste dominant only for user-facing work in small teams.
+- Bootable env necessary; main consumer = VERIFIER (forge-signed proof needs something to drive); secondary = human taste surface.
+- Portals = component/table stakes, not primary review medium. Primary = risk-ranked DECISION & SELECTION queue with domain-appropriate BEHAVIOURAL DIFF: pinned previews + side-by-side candidates (UI), replay diffs (APIs), data diffs (pipelines), plan diffs (infra).
+- Three surfaces: Taste, Understanding, Decision (Amp CEO uses portal + ordered diffs + Oracle).
+- Live portal = steering tool; approval must point at immutable deployment + commit.
+- Amortize taste: portal comments → checks/golden examples/principles ("taste log"); track which human rule caught what.
+- What nobody ships: N-way comparison with pinned previews + behavioural diffs, taste log, promotion of comments into checks.
