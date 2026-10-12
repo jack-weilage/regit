@@ -29,12 +29,7 @@ export class RepositoryGit extends DurableObject<Env> {
 		return next;
 	}
 
-	async prepare(
-		repo: string,
-		revision: Revision,
-		promotion: Promotion,
-		requiredCommits: string[] = []
-	): Promise<Candidate> {
+	async prepare(repo: string, revision: Revision, promotion: Promotion): Promise<Candidate> {
 		return this.#serial(async () => {
 			const key = `candidate:${promotion.id}`;
 			const saved = await this.ctx.storage.get<Candidate>(key);
@@ -66,7 +61,6 @@ export class RepositoryGit extends DurableObject<Env> {
 				const prepared = await workspace.prepareCandidate({
 					sourceSha: revision.sha,
 					base: revision.base,
-					requiredCommits,
 					remote: canonicalInfo.remote,
 					branch,
 					message: [promotion.title, promotion.body, 'Co-authored-by: ReGit <agent@regit.dev>']

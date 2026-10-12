@@ -1,20 +1,5 @@
 import type { DiffFile, DiffHunk, Mentionable, SimilarThread } from './types.ts';
-import type { DependencyState, ProposalControl, Promotion } from '@regit/core';
-
-export const prerequisite = {
-	id: 'member-api',
-	headline: 'feat(api): add cursor-based member pagination'
-};
-export const waitingDependency: DependencyState = {
-	pin: {
-		proposal: prerequisite.id,
-		revision: 'api-run:0123456789abcdef',
-		intent: 'api-intent',
-		sha: '0123456789abcdef0123456789abcdef01234567'
-	},
-	status: 'waiting',
-	reason: 'Waiting for this exact revision to publish.'
-};
+import type { ProposalControl, Promotion } from '@regit/core';
 
 export const acceptance: ProposalControl = {
 	acceptedIntent: {

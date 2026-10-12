@@ -6,7 +6,7 @@
 	import ChatIntent from './ChatIntent.svelte';
 	import ChatGroup from './ChatGroup.svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import { acceptance, readyPromotion, prerequisite, waitingDependency } from './fixtures.ts';
+	import { acceptance, readyPromotion } from './fixtures.ts';
 
 	const { Story } = defineMeta({
 		title: 'Chat/Acceptance',
@@ -24,90 +24,16 @@
 		}
 	});
 	const ready = { ...acceptance, promotions: [readyPromotion] };
-	const dependencyActions = {
-		proposals: [prerequisite],
-		onpin: fn().mockResolvedValue(undefined),
-		onunpin: fn().mockResolvedValue(undefined)
-	};
 </script>
 
 <Story
-	name="Add dependency"
-	args={dependencyActions}
-	play={async ({ args, canvas, userEvent }) => {
-		await expect(canvas.getByRole('button', { name: 'Pin current revision' })).toBeDisabled();
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Prerequisite proposal' }),
-			prerequisite.id
-		);
-		await userEvent.click(canvas.getByRole('button', { name: 'Pin current revision' }));
-		await expect(args.onpin).toHaveBeenCalledWith(prerequisite.id);
-	}}
-/>
-<Story
-	name="Waiting dependency"
-	args={{ ...dependencyActions, control: { ...acceptance, dependencies: [waitingDependency] } }}
-	play={async ({ args, canvas, userEvent }) => {
-		await expect(canvas.getByRole('button', { name: 'Start new run' })).toBeDisabled();
-		await expect(canvas.getByRole('button', { name: 'Prepare candidate' })).toBeDisabled();
-		await userEvent.click(canvas.getByRole('button', { name: 'Update pin' }));
-		await expect(args.onpin).toHaveBeenCalledWith(prerequisite.id);
-		await userEvent.click(canvas.getByRole('button', { name: 'Remove dependency' }));
-		await expect(args.onunpin).toHaveBeenCalledWith(prerequisite.id);
-	}}
-/>
-<Story
-	name="Ready dependency"
+	name="Stale run"
 	args={{
-		...dependencyActions,
-		control: {
-			...acceptance,
-			dependencies: [
-				{
-					...waitingDependency,
-					status: 'ready',
-					reason: 'Pinned revision published.',
-					published: 'a'.repeat(40)
-				}
-			]
-		}
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('button', { name: 'Start new run' })).toBeEnabled();
-		await expect(canvas.getByRole('button', { name: 'Prepare candidate' })).toBeEnabled();
-	}}
-/>
-<Story
-	name="Stale dependency"
-	args={{
-		...dependencyActions,
-		control: {
-			...ready,
-			dependencies: [
-				{
-					...waitingDependency,
-					status: 'stale',
-					reason: 'Accepted intent changed; repin and start a new run.'
-				}
-			]
-		}
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('button', { name: /^Approve and publish/ })).toBeDisabled();
-		await expect(canvas.getByRole('button', { name: 'Start new run' })).toBeDisabled();
-	}}
-/>
-<Story
-	name="Changed pins"
-	args={{
-		...dependencyActions,
 		control: { ...acceptance, acceptedIntent: { ...acceptance.acceptedIntent!, id: 'repinned' } }
 	}}
 	play={async ({ canvas }) => {
 		await expect(
-			canvas.getByText(
-				'Intent or dependency pins changed. Start a new run before preparing a candidate.'
-			)
+			canvas.getByText('Intent changed. Start a new run before preparing a candidate.')
 		).toBeVisible();
 		await expect(canvas.getByRole('button', { name: 'Prepare candidate' })).toBeDisabled();
 		await expect(canvas.getByRole('button', { name: 'Start new run' })).toBeEnabled();

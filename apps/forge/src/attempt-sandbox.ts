@@ -58,7 +58,6 @@ import {
 export interface AttemptInput {
 	proposal?: string;
 	intentVersion?: string;
-	requiredCommits?: string[];
 	task: string;
 	mode: Mode;
 	machine?: Machine;
@@ -506,17 +505,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
 			if (!attempt.base) {
 				attempt.base = await this.#head(fetch);
-				const input = JSON.parse(this.#meta('startInput') ?? '{}') as AttemptInput;
-				for (const sha of input.requiredCommits ?? []) {
-					if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('Invalid dependency commit');
-					const result = await sandboxTools(fetch).execute({
-						id: 'dependency',
-						name: 'run',
-						arguments: JSON.stringify({ command: `git merge-base --is-ancestor ${sha} HEAD` })
-					});
-					if (result !== 'exit code 0')
-						throw new Error('Run base does not contain the pinned dependency');
-				}
 				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
 			}
 

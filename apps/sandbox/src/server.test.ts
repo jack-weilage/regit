@@ -354,11 +354,10 @@ describe('shipping', () => {
 		base = await git(root, ['rev-parse', 'HEAD']);
 	});
 
-	async function prepare(sourceSha: string, requiredCommits: string[] = []) {
+	async function prepare(sourceSha: string) {
 		return workspace.prepareCandidate({
 			sourceSha,
 			base,
-			requiredCommits,
 			remote,
 			branch: 'main',
 			message: 'Trusted squash',
@@ -366,20 +365,6 @@ describe('shipping', () => {
 			committer: author
 		});
 	}
-
-	test('requires dependency ancestry in both the run base and the canonical head', async () => {
-		const dependency = (await checkpoint("export const greeting = 'dependency';\n", 'Dependency'))!;
-		await git(root, ['push', remote, 'HEAD:main']);
-		await writeFile(join(root, 'downstream.txt'), 'Downstream\n');
-		const source = (await workspace.commit({ message: 'Downstream', author }))!;
-		await expect(prepare(source, [dependency])).rejects.toThrow();
-		const oldBase = base;
-		base = dependency;
-		const candidate = await prepare(source, [dependency]);
-		expect(candidate.expectedHead).toBe(dependency);
-		await git(root, ['push', '--force', remote, `${oldBase}:main`]);
-		await expect(prepare(source, [dependency])).rejects.toThrow();
-	});
 
 	test('assembles the exact source tree, retains identities and retries a successful promotion', async () => {
 		await checkpoint("export const greeting = 'hi';\n", 'First');

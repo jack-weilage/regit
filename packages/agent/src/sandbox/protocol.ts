@@ -80,7 +80,6 @@ export interface Identity {
 export interface PrepareCandidateRequest {
 	sourceSha: string;
 	base: string;
-	requiredCommits?: string[];
 	remote: string;
 	branch: string;
 	message: string;
