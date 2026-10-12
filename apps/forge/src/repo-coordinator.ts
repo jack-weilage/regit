@@ -165,7 +165,20 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				headline TEXT NOT NULL,
 				status TEXT NOT NULL,
 				mode TEXT NOT NULL,
-				updated_at INTEGER NOT NULL
+				updated_at INTEGER NOT NULL,
+				reopen_status TEXT,
+				deleted_at INTEGER,
+				deleted_by TEXT,
+				machine TEXT,
+				changes TEXT,
+				shipped_sha TEXT,
+				shipped_by TEXT,
+				shipped_at INTEGER,
+				parent TEXT,
+				context TEXT,
+				services TEXT,
+				preview TEXT,
+				auto INTEGER
 			);
 			CREATE TABLE IF NOT EXISTS entries (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,29 +209,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				input TEXT NOT NULL
 			);
 		`);
-		const columns = new Set(
-			this.#sql
-				.exec<{ name: string }>('PRAGMA table_info(threads)')
-				.toArray()
-				.map((column) => column.name)
-		);
-		for (const [name, type] of [
-			['reopen_status', 'TEXT'],
-			['deleted_at', 'INTEGER'],
-			['deleted_by', 'TEXT'],
-			['machine', 'TEXT'],
-			['changes', 'TEXT'],
-			['shipped_sha', 'TEXT'],
-			['shipped_by', 'TEXT'],
-			['shipped_at', 'INTEGER'],
-			['parent', 'TEXT'],
-			['context', 'TEXT'],
-			['services', 'TEXT'],
-			['preview', 'TEXT'],
-			['auto', 'INTEGER']
-		]) {
-			if (!columns.has(name!)) this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${name} ${type}`);
-		}
 	}
 
 	async openThread({

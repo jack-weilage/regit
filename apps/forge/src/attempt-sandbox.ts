@@ -89,7 +89,6 @@ export type AttemptStatus =
 	| 'queued'
 	| 'running'
 	| 'reviewing'
-	| 'shipping'
 	| 'interrupted'
 	| 'finished'
 	| 'stopped'
@@ -182,13 +181,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 				status TEXT NOT NULL,
 				error TEXT,
 				toolchain TEXT,
-				restored INTEGER
+				restored INTEGER,
+				intent TEXT,
+				base TEXT
 			);
 			CREATE TABLE IF NOT EXISTS reviews (
 				round INTEGER PRIMARY KEY,
 				verdict TEXT NOT NULL,
 				checks TEXT NOT NULL,
-				findings TEXT NOT NULL
+				findings TEXT NOT NULL,
+				head TEXT,
+				intent TEXT
 			);
 			CREATE TABLE IF NOT EXISTS conversation (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,7 +200,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			CREATE TABLE IF NOT EXISTS inbox (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
 				author TEXT NOT NULL,
-				text TEXT NOT NULL
+				text TEXT NOT NULL,
+				entry TEXT
 			);
 			CREATE TABLE IF NOT EXISTS meta (
 				key TEXT PRIMARY KEY,
@@ -213,18 +217,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 				checkpoint TEXT
 			);
 		`);
-		for (const [table, column] of [
-			['inbox', 'entry'],
-			['attempt', 'intent'],
-			['attempt', 'base'],
-			['reviews', 'head'],
-			['reviews', 'intent']
-		] as const) {
-			const columns = this.#sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray();
-			if (!columns.some(({ name }) => name === column)) {
-				this.#sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
-			}
-		}
 	}
 
 	async converse({
@@ -294,7 +286,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async revision(): Promise<Revision | null> {
 		const attempt = this.#attempt();
-		if (!attempt) return null;
+		const intent = this.#meta('intentVersion');
+		if (!attempt || !intent) return null;
 		if (isActive(attempt.status) || this.#controller || this.#conversation || this.#capturing)
 			throw new Error('Stop the run before capturing a revision');
 		if (!attempt.fork || !attempt.branch || !attempt.base) return null;
@@ -308,7 +301,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				id: `${run}:${sha}`,
 				proposal: this.#proposal(),
 				run,
-				intent: this.#meta('intentVersion') ?? 'legacy',
+				intent,
 				repository: attempt.fork,
 				branch: attempt.branch,
 				base: attempt.base,
@@ -556,9 +549,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	override async alarm() {
 		const attempt = this.#attempt();
-		if (attempt?.status === 'shipping')
-			await this.#finish(attempt, 'failed', 'Legacy shipping is disabled');
-		else if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
+		if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
 		else if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) await this.#converse();
 	}
 
@@ -1459,7 +1450,7 @@ function plain(response: Response) {
 }
 
 function isActive(status: AttemptStatus) {
-	return ['queued', 'running', 'reviewing', 'shipping'].includes(status);
+	return ['queued', 'running', 'reviewing'].includes(status);
 }
 
 async function waitUntilHealthy(fetch: Fetch) {
