@@ -168,6 +168,12 @@ export const stopThread = command(thread, async ({ repo, id }) => {
 	getThreads(repo).refresh();
 });
 
+export const bringThreadUpToDate = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo, 'editor')).bringUpToDate(id, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});
+
 export const assessRequest = query(
 	v.object({ repo: name, text: v.pipe(v.string(), v.trim(), v.maxLength(2000)) }),
 	async ({ repo, text }) => {

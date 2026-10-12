@@ -3,6 +3,7 @@
 		ChangesPanel,
 		ChatActivity,
 		ChatBanner,
+		ChatBehindMain,
 		ChatComposer,
 		ChatEvent,
 		ChatFooter,
@@ -33,6 +34,7 @@
 	import { similarThreads } from '#lib/similar.ts';
 	import {
 		approveThreadPromotion,
+		bringThreadUpToDate,
 		shipThread,
 		deleteThread,
 		discardThread,
@@ -174,6 +176,18 @@
 		reopenThread(ref);
 	}
 
+	let updating = $state<{ sha: string; calling: boolean } | null>(null);
+
+	async function bringUpToDate(sha: string) {
+		updating = { sha, calling: true };
+		try {
+			await bringThreadUpToDate(ref);
+			updating = { sha, calling: false };
+		} catch {
+			updating = null;
+		}
+	}
+
 	let blocks = $derived(
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
 			const last = blocks.at(-1);
@@ -307,6 +321,15 @@
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
 				{/each}
+				{#if summary.behind && summary.status !== 'discarded'}
+					{@const behind = summary.behind}
+					<ChatBehindMain
+						{...behind}
+						updating={updating?.sha === behind.sha &&
+							(updating.calling || summary.status !== 'needs-you')}
+						onupdate={() => bringUpToDate(behind.sha)}
+					/>
+				{/if}
 				{#if summary.status !== 'discarded' && (summary.changes?.files || detail.promotions.length)}
 					<PublishPanel
 						promotions={detail.promotions}

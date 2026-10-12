@@ -45,7 +45,8 @@
 			headline: thread.headline || 'New thread',
 			status: thread.status,
 			updatedAt: thread.updatedAt,
-			href: `/${repo}/${thread.id}`
+			href: `/${repo}/${thread.id}`,
+			conflicts: !!thread.behind?.conflicts.length
 		}))
 	);
 

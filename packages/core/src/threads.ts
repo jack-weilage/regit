@@ -169,6 +169,7 @@ export interface RepoCoordinatorApi {
 	delete(thread: string, by: Author): Promise<void>;
 	restore(thread: string): void;
 	stop(thread: string, by: Author): Promise<void>;
+	bringUpToDate(thread: string, by: Author): Promise<void>;
 	changes(thread: string): Promise<DiffFile[] | null>;
 	ship(thread: string, input: ShipInput): Promise<void>;
 	spinOff(thread: string, entry: string, by: Author): Promise<ThreadSummary>;
