@@ -40,6 +40,7 @@ export interface ModelRequest {
 	instructions: string;
 	history: Turn[];
 	tools: ToolSpec[];
+	allowedTools?: string[];
 }
 
 export interface ModelClient {

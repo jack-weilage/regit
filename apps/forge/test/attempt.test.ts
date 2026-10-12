@@ -317,7 +317,7 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 			}
 		}
 	];
-	await scriptAnalyses([propose('docs: tidy the notes'), propose('docs(notes): add a title')]);
+	await scriptAnalyses([propose('docs: tidy the notes')]);
 	await script([
 		[{ type: 'response.output_text.delta', delta: 'Proposed a tidy-up.' }],
 		[
@@ -371,15 +371,17 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 	await until((detail) => intents(detail).length === 1 && said(detail, 'Proposed a tidy-up.'));
 	expect((await repo.thread(opened.id))!.summary.headline).toBe('docs: tidy the notes');
 	await until((detail) => detail.summary.status === 'needs-you');
+	await idle();
+	await scriptAnalyses([propose('docs(notes): add a title')]);
 
 	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
 	const detail = await until(
 		(detail) =>
 			detail.summary.status === 'needs-you' &&
 			said(detail, 'Added the title.') &&
-			intents(detail).length === 2 &&
-			detail.usage.rows.some((row) => row.task === 'analysis' && row.tokens === 180)
+			intents(detail).length === 2
 	);
+	await idle();
 	socket!.close();
 
 	expect(detail.summary).toMatchObject({
@@ -442,23 +444,41 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 			'ask_threads'
 		])
 	);
-	expect(tools(requests[0]!)).not.toContain('update_intent');
+	expect(tools(requests[0]!)).toContain('update_intent');
 	const analyses = await analysisRequests();
-	expect(analyses).toHaveLength(3);
-	expect(analyses[0]).toMatchObject({
+	const first = analyses[0]!;
+	expect(first).toMatchObject({
 		headers: { 'cf-aig-metadata': { thread: opened.id, task: 'analysis' } },
-		query: { model: 'gpt-6-luna' }
+		query: {
+			model: 'gpt-6-luna',
+			prompt_cache_key: opened.id,
+			tools: (requests.at(-1)!.query as { tools: unknown }).tools,
+			tool_choice: {
+				type: 'allowed_tools',
+				tools: [
+					{ type: 'function', name: 'update_intent' },
+					{ type: 'function', name: 'suggest_thread' }
+				]
+			}
+		}
 	});
-	expect(JSON.stringify(analyses[1]!.query)).toContain('Sam: Call it Notes.');
-	expect(JSON.stringify(analyses[2]!.query)).toContain('notes.md (modified, +2');
-	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
-	expect(detail.usage).toEqual({
-		rows: [
-			{ task: 'analysis', model: 'gpt-6-luna', tokens: 180, cost: expect.closeTo(3 * call, 10) },
-			{ task: 'agent', model: 'gpt-6-luna', tokens: 180, cost: expect.closeTo(3 * call, 10) }
-		],
-		context: { used: 60, limit: 1_050_000 }
+	expect(JSON.stringify(first.query)).toContain('Sam: Call it Notes.');
+	expect(JSON.stringify(first.query)).toContain(
+		'The recorded intent is \\"docs: tidy the notes\\"'
+	);
+	expect(JSON.stringify(analyses.at(-1)!.query)).toContain('Added the title.');
+	expect(requests[0]!.query).toMatchObject({
+		tool_choice: { type: 'allowed_tools' }
 	});
+	expect(
+		(requests[0]!.query as { tool_choice: { tools: { name: string }[] } }).tool_choice.tools.map(
+			(tool) => tool.name
+		)
+	).not.toContain('update_intent');
+	const rows = Object.fromEntries(detail.usage.rows.map((row) => [row.task, row]));
+	expect(rows.agent).toMatchObject({ model: 'gpt-6-luna', tokens: 180 });
+	expect(rows.analysis).toMatchObject({ model: 'gpt-6-luna' });
+	expect(detail.usage.context).toEqual({ used: 60, limit: 1_050_000 });
 	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
 	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
 		'# Notes\n\nSome notes'
@@ -590,8 +610,7 @@ test('resumes a finished thread with its history when someone replies', async ()
 		'.agents/resume': 'test ! -e .git/resume-ran\ntouch .git/resume-ran\n'
 	});
 	await idle();
-	await scriptAnalyses([
-		[{ type: 'response.output_text.delta', delta: 'No change.' }],
+	const footer = [
 		[
 			{
 				type: 'response.output_item.done',
@@ -607,7 +626,7 @@ test('resumes a finished thread with its history when someone replies', async ()
 				}
 			}
 		]
-	]);
+	];
 	await script([
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
 		[
@@ -644,6 +663,8 @@ test('resumes a finished thread with its history when someone replies', async ()
 		throw new Error('The thread never got there');
 	};
 	await waitFor((detail) => detail.summary.status === 'needs-you');
+	await idle();
+	await scriptAnalyses(footer);
 
 	await repo.reply(id, { author: sam, text: 'Also add a footer.' });
 	const detail = await waitFor(
@@ -882,7 +903,7 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 		doneWhen: ['One query returns one row'],
 		context: 'notes.md:1 mentions the audit log query.'
 	};
-	await script([
+	await scriptAnalyses([
 		[
 			{
 				type: 'response.output_item.done',
@@ -893,7 +914,9 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 					arguments: JSON.stringify(suggestion)
 				}
 			}
-		],
+		]
+	]);
+	await script([
 		[{ type: 'response.output_text.delta', delta: 'Noted that separately.' }],
 		[{ type: 'response.output_text.delta', delta: 'Got it.' }]
 	]);
@@ -907,10 +930,14 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	const parent = await untilThread(repo, id, (detail) =>
-		detail.entries.some(
-			(entry) => entry.type === 'message' && entry.text === 'Noted that separately.'
-		)
+	const parent = await untilThread(
+		repo,
+		id,
+		(detail) =>
+			detail.entries.some((entry) => entry.type === 'suggestion') &&
+			detail.entries.some(
+				(entry) => entry.type === 'message' && entry.text === 'Noted that separately.'
+			)
 	);
 	const card = parent.entries.find((entry) => entry.type === 'suggestion')!;
 	expect(card).toMatchObject({

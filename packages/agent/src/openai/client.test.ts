@@ -99,6 +99,22 @@ describe('openaiModel', () => {
 		});
 	});
 
+	test('restricts callable tools without changing the cached tool list', async () => {
+		const { respond, requests } = setup(eventStream([completed]), eventStream([completed]));
+		await respond();
+		await respond({ ...request, allowedTools: ['read_file'] });
+
+		expect(requests[0]!.query).toMatchObject({ tool_choice: 'auto' });
+		expect(requests[1]!.query).toMatchObject({
+			tools: [{ type: 'function', name: 'read_file', strict: false }],
+			tool_choice: {
+				type: 'allowed_tools',
+				mode: 'auto',
+				tools: [{ type: 'function', name: 'read_file' }]
+			}
+		});
+	});
+
 	test('caches the instructions and everything up to the newest item', async () => {
 		const { respond, requests } = setup(eventStream([completed]), eventStream([completed]));
 		await respond();

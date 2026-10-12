@@ -51,7 +51,7 @@ export function openaiModel({
 	});
 
 	return {
-		async *respond({ instructions, history, tools }, signal) {
+		async *respond({ instructions, history, tools, allowedTools }, signal) {
 			try {
 				const stream = await client.responses.create(
 					{
@@ -65,7 +65,13 @@ export function openaiModel({
 							)
 						],
 						tools: tools.map((tool) => ({ type: 'function', strict: false, ...tool })),
-						tool_choice: 'auto',
+						tool_choice: allowedTools
+							? {
+									type: 'allowed_tools',
+									mode: 'auto',
+									tools: allowedTools.map((name) => ({ type: 'function', name }))
+								}
+							: 'auto',
 						parallel_tool_calls: true,
 						reasoning: { effort },
 						include: ['reasoning.encrypted_content'],
