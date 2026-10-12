@@ -381,6 +381,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const synced = syncing ? await this.#sync(attempt, fetch, fork, token) : null;
 			if (!synced) await this.#reportBehind(attempt, fetch, fork, token);
 			const opening: Turn[] = [
+				...this.#rebuiltNotes(),
 				...(synced ? [] : this.#conflictNotes()),
 				...pending,
 				...(synced ? [{ role: 'notification' as const, text: synced }] : [])
@@ -565,6 +566,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	behindMain(behind: ThreadSummary['behind']) {
 		if (this.#agent()) this.#setMeta('behind', JSON.stringify(behind));
+	}
+
+	#rebuiltNotes(): Turn[] {
+		if (!this.#meta('rebuilt')) return [];
+		this.#sql.exec("DELETE FROM meta WHERE key = 'rebuilt'");
+		return [
+			{
+				role: 'notification',
+				text: "Your sandbox was rebuilt from this thread's branch since your last turn. Your checkpointed changes are intact, but files Git ignores (installed dependencies, build output, local databases), anything outside the workspace and processes you started are gone. The workspace was prepared again and saved services were restarted; recreate anything else you still need."
+			}
+		];
 	}
 
 	// Tells the agent once about each file that newly conflicts with main; its workspace is left as is.
@@ -999,6 +1011,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			}
 			return fetch;
 		}
+		if (this.#meta('workspace')) this.#setMeta('rebuilt', '1');
 		this.#activity.startup = { cold: true, stages: [] };
 		try {
 			return await this.#coldSandbox(target, fetch);

@@ -312,3 +312,60 @@ test('stopping a native command kills its children without destroying the worksp
 		results: [{ callId: 'check-child', output: 'exit code 0\nstopped' }]
 	});
 });
+
+test('tells the agent when its sandbox was rebuilt between turns', async () => {
+	await seed('rebuilt', { 'README.md': '# Rebuilt\n', '.gitignore': 'built/\n' });
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'build',
+					name: 'run',
+					arguments: JSON.stringify({
+						command: 'mkdir built && touch built/marker && sleep 30',
+						timeout_seconds: 60
+					})
+				}
+			}
+		]
+	]);
+	await start('rebuilt-thread', { task: 'Build it', mode: 'small', repo: 'rebuilt' });
+	await expect.poll(async () => (await modelRequests()).length, { timeout: 300_000 }).toBe(1);
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	const env = await worker.getEnv();
+	const attempt = env.ATTEMPTS.getByName('rebuilt-thread');
+	await attempt.cancel();
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'check-build',
+					name: 'run',
+					arguments: JSON.stringify({ command: 'test ! -e built/marker && printf gone' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'The build output is gone.' }]
+	]);
+	await attempt.converse({
+		repo: 'rebuilt',
+		mode: 'small',
+		author: 'Sam',
+		text: 'Is the build still there?',
+		entry: 'rebuilt-check'
+	});
+	const resumed = await settled('rebuilt-thread', 300_000);
+	expect(resumed).toMatchObject({ status: 'finished', error: null });
+	const turns = resumed.steps.flatMap((step) => step.turns);
+	expect(turns.filter((turn) => turn.role === 'notification')).toEqual([
+		{ role: 'notification', text: expect.stringContaining('Your sandbox was rebuilt') }
+	]);
+	expect(turns).toContainEqual({
+		role: 'tool',
+		results: [{ callId: 'check-build', output: 'exit code 0\ngone' }]
+	});
+});
