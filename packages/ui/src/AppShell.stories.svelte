@@ -100,7 +100,7 @@
 					</ChatGroup>
 				</ChatLog>
 				{#snippet bottom()}
-					<ChatComposer placeholder="Reply to ReGit" onsend={() => {}} />
+					<ChatComposer onsend={() => {}} />
 					<ChatFooter mode="Medium" context={{ used: 48_000, limit: 272_000 }} usage={[]} />
 				{/snippet}
 			</ThreadView>

@@ -18,7 +18,6 @@
 
 	interface Props {
 		value?: string;
-		placeholder?: string;
 		disabled?: boolean;
 		mentions?: Mentionable[];
 		working?: boolean;
@@ -28,7 +27,6 @@
 
 	let {
 		value = $bindable(''),
-		placeholder = 'Message',
 		disabled = false,
 		mentions = [],
 		working = false,
@@ -36,6 +34,7 @@
 		onstop
 	}: Props = $props();
 
+	// TODO: Show automatic hints in the composer.
 	const id = $props.id();
 
 	let form: HTMLFormElement | undefined = $state();
@@ -138,7 +137,6 @@
 		<textarea
 			bind:this={textarea}
 			bind:value
-			{placeholder}
 			{disabled}
 			{onkeydown}
 			{onkeyup}
@@ -146,7 +144,7 @@
 			onclick={findMention}
 			onblur={() => (mention = null)}
 			rows="1"
-			aria-label={placeholder}
+			aria-label="Message"
 			aria-autocomplete="list"
 			aria-controls={open ? `${id}-suggestions` : undefined}
 			aria-activedescendant={open ? `${id}-${active}` : undefined}></textarea>
@@ -257,10 +255,6 @@
 		font-size: var(--text-chat);
 		line-height: 1.5;
 		resize: none;
-
-		&::placeholder {
-			color: var(--color-muted);
-		}
 	}
 
 	.stop {

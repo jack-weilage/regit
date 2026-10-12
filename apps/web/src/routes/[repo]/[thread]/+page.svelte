@@ -455,7 +455,6 @@
 					<ChatComposer
 						working={thinking || ['running', 'reviewing', 'shipping'].includes(summary.status)}
 						onstop={() => stopThread(ref)}
-						placeholder={summary.status === 'draft' ? 'Refine the intent' : 'Reply to ReGit'}
 						onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
 					/>
 				{/if}

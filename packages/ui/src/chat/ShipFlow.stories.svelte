@@ -135,7 +135,6 @@
 			</ChatLog>
 			<div class="bottom">
 				<ChatComposer
-					placeholder="Reply to ReGit"
 					working={phase === 'shipping' || phase === 'resolving'}
 					onsend={() => {}}
 					onstop={() => {}}

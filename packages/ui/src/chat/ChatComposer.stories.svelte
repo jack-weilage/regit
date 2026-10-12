@@ -7,7 +7,7 @@
 	const { Story } = defineMeta({
 		title: 'Chat/Composer',
 		component: ChatComposer,
-		args: { onsend: fn(), placeholder: 'Describe what you want changed', mentions: mentionables }
+		args: { onsend: fn(), mentions: mentionables }
 	});
 </script>
 
@@ -53,13 +53,13 @@
 <Story name="Disabled" args={{ disabled: true }} />
 <Story name="Narrow" asChild>
 	<div style="inline-size: 20rem">
-		<ChatComposer onsend={fn()} placeholder="Reply" mentions={mentionables} />
+		<ChatComposer onsend={fn()} mentions={mentionables} />
 	</div>
 </Story>
 
 <Story
 	name="Working"
-	args={{ working: true, onstop: fn(), placeholder: 'Reply to ReGit' }}
+	args={{ working: true, onstop: fn() }}
 	play={async ({ args, canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: 'Stop' }));
 		await expect(args.onstop).toHaveBeenCalledOnce();

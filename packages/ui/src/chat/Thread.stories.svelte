@@ -248,11 +248,7 @@
 			{/if}
 		</ChatLog>
 		<div class="composer">
-			<ChatComposer
-				mentions={mentionables}
-				placeholder={started ? 'Reply to the thread' : 'Reply to refine the intent'}
-				onsend={send}
-			/>
+			<ChatComposer mentions={mentionables} onsend={send} />
 			<ChatFooter
 				mode="Medium"
 				context={{
