@@ -53,9 +53,6 @@ export type AttemptUpdate =
 	| { type: 'conversation-failed'; error: string }
 	| { type: 'read'; entries: string[] }
 	| { type: 'changes'; summary: DiffSummary; base: string | null }
-	| { type: 'conflicts'; files: string[]; base: string }
-	| { type: 'rebased'; base: string }
-	| { type: 'shipped'; sha: string; base: string }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
 	| {
@@ -909,7 +906,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			notesPublished: false,
 			at: Date.now()
 		});
-		this.#sql.exec('UPDATE threads SET shipped_by = ? WHERE id = ?', by.name, thread);
 		this.#setStatus(thread, 'shipping');
 		this.#add(thread, {
 			type: 'event',
@@ -1098,32 +1094,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#touch(thread);
 			return;
 		}
-		if (update.type === 'conflicts') {
-			const files = update.files.length === 1 ? '1 file' : `${update.files.length} files`;
-			this.#add(thread, { type: 'event', text: `Conflicts with ${update.base} in ${files}` });
-			return;
-		}
-		if (update.type === 'rebased') {
-			this.#add(thread, { type: 'event', text: `Rebased onto ${update.base}` });
-			return;
-		}
-		if (update.type === 'shipped') {
-			this.#sql.exec(
-				'UPDATE threads SET shipped_sha = ?, shipped_at = ? WHERE id = ?',
-				update.sha,
-				Date.now(),
-				thread
-			);
-			const [{ shipped_by: by }] = this.#sql
-				.exec<Pick<ThreadRow, 'shipped_by'>>('SELECT shipped_by FROM threads WHERE id = ?', thread)
-				.toArray() as [Pick<ThreadRow, 'shipped_by'>];
-			this.#add(thread, {
-				type: 'event',
-				text: `Shipped to ${update.base} in ${update.sha.slice(0, 7)} by ${by}`
-			});
-			this.#setStatus(thread, 'shipped');
-			return;
-		}
 		if (update.type === 'review') {
 			for (const usage of update.usage) this.#recordUsage(thread, 'review', update.model, usage);
 			const { round, verdict, checks } = update;
@@ -1177,7 +1147,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			cancelled: ['discarded', 'The attempt was cancelled']
 		};
 		if (update.status === 'reviewing' || update.status === 'running') {
-			if (['running', 'reviewing', 'shipping'].includes(summary.status)) {
+			if (['running', 'reviewing'].includes(summary.status)) {
 				this.#setStatus(thread, update.status);
 			}
 			return;

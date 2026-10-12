@@ -191,7 +191,7 @@ describe('workspace', () => {
 		await rm(join(empty, '.git'), { recursive: true });
 		sandbox = createSandbox(empty);
 
-		await workspace.clone({ remote, token: 'token', branch: 'main' });
+		await workspace.clone({ remote, branch: 'main' });
 		expect(await readFile(join(empty, 'greeting.ts'), 'utf8')).toContain('hello');
 	});
 
@@ -213,7 +213,7 @@ describe('workspace', () => {
 		await git(root, ['remote', 'set-url', 'origin', other]);
 		await call('write_file', { path: 'stale.ts', content: 'export {};\n' });
 
-		await workspace.clone({ remote, token: 'token', branch: 'main' });
+		await workspace.clone({ remote, branch: 'main' });
 		expect(await git(root, ['remote', 'get-url', 'origin'])).toBe(remote);
 		await expect(readFile(join(root, 'stale.ts'), 'utf8')).rejects.toThrow();
 	});
@@ -294,7 +294,7 @@ fi
 		await git(elsewhere, ['push', 'origin', 'main']);
 		await call('write_file', { path: 'draft.ts', content: 'export {};\n' });
 
-		await workspace.clone({ remote, token: 'token', branch: 'main' });
+		await workspace.clone({ remote, branch: 'main' });
 		expect(await readFile(join(root, 'checkpoint.ts'), 'utf8')).toBe('export {};\n');
 		await expect(readFile(join(root, 'draft.ts'), 'utf8')).rejects.toThrow();
 	});
@@ -306,7 +306,7 @@ fi
 		const sha = await workspace.commit({ message: 'Say hi', author });
 		expect(sha).toMatch(/^[0-9a-f]{40}$/);
 
-		await workspace.push({ token: 'token', ref: 'thread/say-hi' });
+		await workspace.push({ ref: 'thread/say-hi' });
 		expect(await git(remote, ['rev-parse', 'thread/say-hi'])).toBe(sha);
 		expect(await git(remote, ['log', '-1', '--format=%an <%ae> %s', 'thread/say-hi'])).toBe(
 			'ReGit <agent@regit.dev> Say hi'
@@ -320,7 +320,7 @@ fi
 		}
 		await call('edit_file', { path: 'greeting.ts', old_string: 'hello', new_string: 'hey' });
 		const sha = await workspace.commit({ message: 'Say hey', author });
-		await workspace.push({ token: 'token', ref: 'thread/say-hey' });
+		await workspace.push({ ref: 'thread/say-hey' });
 		expect(await git(remote, ['rev-parse', 'thread/say-hey'])).toBe(sha);
 	});
 });
@@ -501,97 +501,6 @@ describe('shipping', () => {
 		const diff = await workspace.diff({ base });
 		expect(diff).toContain("-export const greeting = 'hello';\n+export const greeting = 'hi';");
 		expect(diff).toContain('new file mode');
-	});
-
-	test('squashes checkpoints into one commit by the person shipping', async () => {
-		await checkpoint("export const greeting = 'hi';\n", 'Checkpoint 1');
-		await checkpoint("export const greeting = 'hey';\n", 'Checkpoint 2');
-
-		const sha = await workspace.squash({
-			base,
-			message: 'feat: say hey',
-			author: sam,
-			committer: author
-		});
-		expect(await git(root, ['rev-list', '--count', `${base}..HEAD`])).toBe('1');
-		expect(await git(root, ['log', '-1', '--format=%an|%cn|%s', sha!])).toBe(
-			'Sam Rivera|ReGit|feat: say hey'
-		);
-		expect(
-			await workspace.squash({ base: sha!, message: 'empty', author: sam, committer: author })
-		).toBeNull();
-	});
-
-	test('rebases onto the latest main and pushes there', async () => {
-		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
-		await call('write_file', { path: 'farewell.ts', content: "export const bye = 'bye';\n" });
-		await workspace.commit({ message: 'Say bye', author });
-		await workspace.squash({ base, message: 'feat: greet', author: sam, committer: author });
-		const elsewhere = join(dir, 'elsewhere');
-		await git(dir, ['clone', remote, elsewhere]);
-		await writeFile(join(elsewhere, 'other.ts'), 'export {};\n');
-		await git(elsewhere, ['add', '.']);
-		await git(elsewhere, [
-			'-c',
-			'user.name=Lin',
-			'-c',
-			'user.email=lin@example.com',
-			'commit',
-			'-m',
-			'Other'
-		]);
-		await git(elsewhere, ['push', 'origin', 'main']);
-
-		const rebased = await workspace.rebase({ remote, branch: 'main', committer: author });
-		expect(rebased).toMatchObject({
-			conflicts: [],
-			onto: await git(remote, ['rev-parse', 'main'])
-		});
-		const sha = await workspace.push({ remote, ref: 'main' });
-		expect(sha).toBe(rebased.sha);
-		expect(await git(remote, ['log', '--format=%s', 'main'])).toBe('feat: greet\nOther\ninit');
-	});
-
-	test('stops on conflicts, refuses leftover markers, then continues once resolved', async () => {
-		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
-		await workspace.squash({ base, message: 'feat: say hi', author: sam, committer: author });
-		await landOnMain("export const greeting = 'hey';\n");
-
-		const rebased = await workspace.rebase({ remote, branch: 'main', committer: author });
-		expect(rebased).toMatchObject({ sha: null, conflicts: ['greeting.ts'] });
-		expect(await workspace.continueRebase({ committer: author })).toEqual({
-			sha: null,
-			conflicts: ['greeting.ts']
-		});
-
-		await call('write_file', {
-			path: 'greeting.ts',
-			content: "export const greeting = 'hi, hey';\n"
-		});
-		const continued = await workspace.continueRebase({ committer: author });
-		expect(continued.conflicts).toEqual([]);
-		expect(await git(root, ['log', '--format=%s', '-2'])).toBe('feat: say hi\nMain moved');
-		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe(
-			"export const greeting = 'hi, hey';\n"
-		);
-	});
-
-	test('aborts a rebase and force pushes the rewritten branch', async () => {
-		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
-		await workspace.push({ ref: 'thread/hi' });
-		const squashed = await workspace.squash({
-			base,
-			message: 'feat: say hi',
-			author: sam,
-			committer: author
-		});
-		await landOnMain("export const greeting = 'hey';\n");
-		await workspace.rebase({ remote, branch: 'main', committer: author });
-
-		await workspace.abortRebase();
-		expect(await git(root, ['rev-parse', 'HEAD'])).toBe(squashed);
-		await expect(workspace.push({ ref: 'thread/hi' })).rejects.toThrow();
-		expect(await workspace.push({ ref: 'thread/hi', force: true })).toBe(squashed);
 	});
 });
 

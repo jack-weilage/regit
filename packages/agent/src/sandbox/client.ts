@@ -3,8 +3,6 @@ import type {
 	CloneRequest,
 	CommitRequest,
 	CommitResponse,
-	ContinueRebaseRequest,
-	ContinueRebaseResponse,
 	DiffRequest,
 	DiffResponse,
 	ErrorResponse,
@@ -20,11 +18,8 @@ import type {
 	PublishProvenanceRequest,
 	PushRequest,
 	PushResponse,
-	RebaseRequest,
-	RebaseResponse,
 	ServiceInfo,
 	ServicesResponse,
-	SquashRequest,
 	SkillsResponse,
 	ToolchainResponse,
 	ToolArguments,
@@ -148,27 +143,6 @@ export function sandboxWorkspace(fetch: Fetch) {
 		async diff(request: DiffRequest) {
 			const { diff } = await post<DiffResponse>(fetch, '/workspace/diff', JSON.stringify(request));
 			return diff;
-		},
-		async squash(request: SquashRequest) {
-			const { sha } = await post<CommitResponse>(
-				fetch,
-				'/workspace/squash',
-				JSON.stringify(request)
-			);
-			return sha;
-		},
-		rebase(request: RebaseRequest) {
-			return post<RebaseResponse>(fetch, '/workspace/rebase', JSON.stringify(request));
-		},
-		continueRebase(request: ContinueRebaseRequest) {
-			return post<ContinueRebaseResponse>(
-				fetch,
-				'/workspace/continue-rebase',
-				JSON.stringify(request)
-			);
-		},
-		async abortRebase() {
-			await post(fetch, '/workspace/abort-rebase', '{}');
 		},
 		async skills() {
 			const { skills } = await post<SkillsResponse>(fetch, '/workspace/skills', '{}');

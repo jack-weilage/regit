@@ -23,7 +23,6 @@ export interface ErrorResponse {
 export interface CloneRequest {
 	remote: string;
 	branch?: string;
-	token?: string;
 	preserveSetup?: boolean;
 }
 
@@ -65,7 +64,6 @@ export interface ToolchainResponse {
 
 export interface PushRequest {
 	ref: string;
-	token?: string;
 	remote?: string;
 	force?: boolean;
 }
@@ -142,7 +140,6 @@ export interface ServiceLogsRequest extends ServiceRequest {
 
 export interface HeadBranchRequest {
 	remote: string;
-	token?: string;
 }
 
 export interface HeadBranchResponse {
@@ -162,26 +159,6 @@ export interface SquashRequest {
 	message: string;
 	author: Identity;
 	committer: Identity;
-}
-
-export interface RebaseRequest {
-	remote: string;
-	branch: string;
-	token?: string;
-	committer: Identity;
-}
-
-export interface ContinueRebaseRequest {
-	committer: Identity;
-}
-
-export interface ContinueRebaseResponse {
-	sha: string | null;
-	conflicts: string[];
-}
-
-export interface RebaseResponse extends ContinueRebaseResponse {
-	onto: string;
 }
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;

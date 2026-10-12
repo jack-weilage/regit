@@ -2,7 +2,6 @@ export { runAttempt, type AttemptEvent, type AttemptOptions, type Checkpoints } 
 export { codingInstructions, threadInstructions } from './instructions.ts';
 export { repositoryGuidance } from './guidance.ts';
 export { describeTask, intentTools, type ConversationMessage, type Intent } from './intent.ts';
-export { resolveConflicts, type ConflictOptions } from './conflicts.ts';
 export { parseDiff } from './diff.ts';
 export { suggestTools, type Suggestion } from './suggest.ts';
 export { threadTools, type ThreadListing, type ThreadMessaging } from './threads.ts';

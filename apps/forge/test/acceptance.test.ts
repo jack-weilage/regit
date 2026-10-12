@@ -378,7 +378,6 @@ test('new runs are independent from proposals and ignore callbacks from older ru
 		{ type: 'status', status: 'failed', error: 'Old failure' },
 		first.id
 	);
-	await repo.attemptUpdated(id, { type: 'shipped', sha: 'a'.repeat(40), base: 'main' }, first.id);
 	await repo.attemptUpdated(id, {
 		type: 'status',
 		status: 'failed',

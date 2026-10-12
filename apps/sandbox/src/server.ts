@@ -2,10 +2,8 @@ import { createServices, type ServicesOptions } from './services.ts';
 import { discoverSkills } from './skills.ts';
 import { isTool, ToolError, tools } from './tools.ts';
 import {
-	abortRebase,
 	clone,
 	commit,
-	continueRebase,
 	diff,
 	headBranch,
 	hook,
@@ -13,8 +11,6 @@ import {
 	promoteCandidate,
 	publishProvenance,
 	push,
-	rebase,
-	squash,
 	toolchain
 } from './workspace.ts';
 
@@ -46,10 +42,6 @@ export function createSandbox(
 		push: async (body) => ({ sha: await push(root, body) }),
 		diff: async (body) => ({ diff: await diff(root, body) }),
 		'head-branch': async (body) => ({ branch: await headBranch(root, body) }),
-		squash: async (body) => ({ sha: await squash(root, body) }),
-		rebase: (body) => rebase(root, body),
-		'continue-rebase': (body) => continueRebase(root, body),
-		'abort-rebase': async () => (await abortRebase(root), {}),
 		toolchain: async () => ({ tools: await toolchain(root, mise) }),
 		hook: (body) => hook(root, body),
 		skills: async () => ({ skills: await discoverSkills(root) })
