@@ -859,6 +859,80 @@ test('hands a conflicting candidate back to its agent to resolve, then prepares 
 	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
 });
 
+test('warns threads that conflict with a landing and merges main at their next turn', async () => {
+	const { env, repo, sam, id } = await startedThread('landing', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await idle();
+	await script([
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'other',
+					name: 'run',
+					arguments: JSON.stringify({ command: "printf 'More\\n' > other.md" })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Added other.md.' }]
+	]);
+	const { id: clean } = await repo.openThread({
+		repo: 'landing',
+		author: sam,
+		text: 'Add other.md.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await untilThread(repo, clean, (detail) => detail.summary.status === 'needs-you');
+	const work = join(dir, 'landing-work');
+	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
+	sh(work, 'push', '--quiet', join(dir, 'landing.git'), 'main');
+	const main = sh(join(dir, 'landing.git'), 'rev-parse', 'main');
+
+	const landing = {
+		repo: 'landing',
+		ref: 'refs/heads/main',
+		after: main,
+		headline: 'Better notes'
+	};
+	await repo.landed(landing);
+	const warned = (await repo.thread(id))!;
+	expect(warned.summary.conflicts).toEqual({ files: ['notes.md'], headline: 'Better notes' });
+	expect(warned.entries.at(-1)).toMatchObject({
+		type: 'event',
+		text: 'Main moved: "Better notes" conflicts with this thread in notes.md'
+	});
+	expect((await repo.thread(clean))!.summary.conflicts).toBeNull();
+	await repo.landed(landing);
+	expect((await repo.thread(id))!.entries).toHaveLength(warned.entries.length);
+
+	await idle();
+	await script([
+		writeNotes('# Notes\\n\\nSome better notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Merged main.' }]
+	]);
+	await repo.reply(id, { author: sam, text: 'Carry on.' });
+	const merged = await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'needs-you' && detail.summary.conflicts === null
+	);
+	expect(
+		merged.entries.some((entry) => entry.type === 'message' && entry.text === 'Merged main.')
+	).toBe(true);
+	expect(JSON.stringify((await modelRequests()).at(-2)!.query)).toContain(
+		'merging it into this thread conflicts in notes.md'
+	);
+	const fork = join(dir, `landing--${id}.git`);
+	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(main);
+	expect(sh(fork, 'show', 'main:notes.md')).toBe('# Notes\n\nSome better notes');
+	expect((await env.ATTEMPTS.getByName(clean).snapshot())!.status).toBe('finished');
+});
+
 test("ships to the branch the repository's HEAD points to, not its recorded default", async () => {
 	const { repo, sam, id } = await startedThread(
 		'imported',

@@ -8,6 +8,7 @@
 		status: ThreadStatus;
 		updatedAt: number;
 		href: string;
+		conflicts?: boolean;
 		preview?: Omit<ThreadPreviewProps, 'headline'>;
 	}
 
@@ -109,6 +110,17 @@
 							role="img"
 						/>
 						<span class="headline">{thread.headline}</span>
+						{#if thread.conflicts}
+							<svg
+								class="conflicts"
+								viewBox="0 0 16 16"
+								role="img"
+								aria-label="Conflicts with main"
+							>
+								<path d="M8 2.25 14.5 13.5h-13Z" />
+								<path d="M8 6.5v3.25M8 11.75v.01" />
+							</svg>
+						{/if}
 						<time datetime={new Date(thread.updatedAt).toISOString()}
 							>{formatAge(thread.updatedAt, time)}</time
 						>
@@ -224,6 +236,17 @@
 		font-size: var(--text-meta);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.conflicts {
+		flex: none;
+		inline-size: var(--icon-size);
+		block-size: var(--icon-size);
+		fill: none;
+		stroke: var(--color-danger-text);
+		stroke-width: 1.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	time {

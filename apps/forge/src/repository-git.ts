@@ -79,6 +79,33 @@ export class RepositoryGit extends DurableObject<Env> {
 		});
 	}
 
+	async conflicts(repo: string, forks: { id: string; repository: string; branch: string }[]) {
+		return this.#serial(async () => {
+			using canonical = await this.env.ARTIFACTS.get(repo);
+			const canonicalInfo = await canonical.info();
+			const sources = [];
+			for (const fork of forks) {
+				using source = await this.env.ARTIFACTS.get(fork.repository);
+				const { remote } = await source.info();
+				sources.push({ fork, remote, access: await this.#access(source, remote) });
+			}
+			const targets = [
+				await this.#access(canonical, canonicalInfo.remote),
+				...sources.map(({ access }) => access)
+			];
+			const fetch = await this.#sandbox();
+			try {
+				await this.#allow(targets);
+				return await sandboxWorkspace(fetch).conflicts({
+					remote: canonicalInfo.remote,
+					forks: sources.map(({ fork, remote }) => ({ id: fork.id, remote, branch: fork.branch }))
+				});
+			} finally {
+				await this.#revoke(targets);
+			}
+		});
+	}
+
 	async promote(repo: string, candidate: Candidate): Promise<void> {
 		return this.#publish(repo, candidate, async (workspace, remote) => {
 			await workspace.promoteCandidate({

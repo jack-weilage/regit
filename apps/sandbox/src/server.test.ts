@@ -366,6 +366,34 @@ describe('shipping', () => {
 		});
 	}
 
+	test('reports which forks conflict with main', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
+		await git(root, ['push', remote, 'HEAD:refs/heads/conflicting']);
+		await git(root, ['reset', '--hard', base]);
+		await call('write_file', { path: 'farewell.ts', content: "export const bye = 'bye';\n" });
+		await workspace.commit({ message: 'Say bye', author });
+		await git(root, ['push', remote, 'HEAD:refs/heads/clean']);
+		await landOnMain("export const greeting = 'hey';\n");
+
+		expect(
+			await workspace.conflicts({
+				remote,
+				forks: [
+					{ id: 'a', remote, branch: 'conflicting' },
+					{ id: 'b', remote, branch: 'clean' },
+					{ id: 'c', remote, branch: 'missing' }
+				]
+			})
+		).toEqual({
+			main: await git(remote, ['rev-parse', 'main']),
+			threads: [
+				{ id: 'a', files: ['greeting.ts'] },
+				{ id: 'b', files: [] },
+				{ id: 'c', files: null }
+			]
+		});
+	});
+
 	test('holds checkpoints while a merge from main still has conflict markers', async () => {
 		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
 		await landOnMain("export const greeting = 'hey';\n");

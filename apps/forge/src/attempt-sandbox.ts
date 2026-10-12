@@ -253,6 +253,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
 	}
 
+	mainMoved() {
+		if (this.#agent()) this.#setMeta('sync', '1');
+	}
+
+	forkRef() {
+		const attempt = this.#agent();
+		return attempt?.fork && attempt.branch
+			? { repository: attempt.fork, branch: attempt.branch }
+			: null;
+	}
+
 	published(publication: { sha: string; branch: string; from: string }) {
 		this.#setMeta('rebase', JSON.stringify(publication));
 		this.#setMeta('changes', '[]');
@@ -369,9 +380,15 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
-			if (this.#meta('sync')) {
+			const checkedMain = !!this.#meta('sync');
+			if (checkedMain) {
 				const text = await this.#sync(attempt, fetch, fork, token);
-				this.#saveStep({ turns: [{ role: 'user', text }] });
+				if (text) this.#saveStep({ turns: [{ role: 'user', text }] });
+				else if (!pending.length) {
+					this.#clearActivity();
+					await this.#report(attempt.repo, { type: 'synced' });
+					return await this.#finish(attempt, 'finished');
+				}
 			}
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
@@ -445,6 +462,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			if (this.#agent()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
+			if (checkedMain && !(await this.#shell(fetch, 'git rev-parse -q --verify MERGE_HEAD')).ok)
+				await this.#report(attempt.repo, { type: 'synced' });
 			if (next.value === 'finished') await this.#settle(attempt);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
@@ -518,6 +537,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async #sync(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'sync'");
 		await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
+		if ((await this.#shell(fetch, 'git merge-base --is-ancestor FETCH_HEAD HEAD')).ok) return null;
 		const head = (await this.#git(fetch, 'git rev-parse FETCH_HEAD')).trim();
 		const landed = (
 			await this.#git(fetch, `git log --format='- %h %s' -20 ${attempt.base}..FETCH_HEAD`)

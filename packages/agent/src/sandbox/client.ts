@@ -1,6 +1,8 @@
 import type { ToolExecutor } from '../types.ts';
 import type {
 	CloneRequest,
+	ConflictsRequest,
+	ConflictsResponse,
 	CommitRequest,
 	CommitResponse,
 	DiffRequest,
@@ -79,6 +81,9 @@ export function sandboxWorkspace(fetch: Fetch) {
 				'/workspace/promote-candidate',
 				JSON.stringify(request)
 			);
+		},
+		conflicts(request: ConflictsRequest) {
+			return post<ConflictsResponse>(fetch, '/workspace/conflicts', JSON.stringify(request));
 		},
 		async publishProvenance(request: PublishProvenanceRequest) {
 			await post(fetch, '/workspace/publish-provenance', JSON.stringify(request));

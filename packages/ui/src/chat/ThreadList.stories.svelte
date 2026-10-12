@@ -33,7 +33,8 @@
 			headline: 'fix(auth): refresh expired sessions',
 			status: 'needs-you',
 			updatedAt: minutes(60),
-			href: '#sessions'
+			href: '#sessions',
+			conflicts: true
 		},
 		{
 			id: 'invoices',
@@ -93,6 +94,11 @@
 			'aria-current',
 			'page'
 		);
+		await expect(
+			within(canvas.getByRole('link', { name: /refresh expired sessions/ })).getByRole('img', {
+				name: 'Conflicts with main'
+			})
+		).toBeVisible();
 	}}
 >
 	{#snippet template(args)}

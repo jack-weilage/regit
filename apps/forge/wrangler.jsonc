@@ -29,6 +29,18 @@
 		}
 	],
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
+	"workflows": [
+		{ "name": "regit-repo-pushed", "binding": "REPO_PUSHED", "class_name": "RepoPushed" }
+	],
+	"triggers": {
+		"events": [
+			{
+				"type": "cf.artifacts.repo.pushed",
+				"filter": { "namespace": "regit" },
+				"targets": [{ "type": "workflow", "workflow_name": "regit-repo-pushed" }]
+			}
+		]
+	},
 	"durable_objects": {
 		"bindings": [
 			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },

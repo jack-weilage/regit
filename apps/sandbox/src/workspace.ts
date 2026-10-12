@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import type {
 	CloneRequest,
 	CommitRequest,
+	ConflictsRequest,
+	ConflictsResponse,
 	DiffRequest,
 	HeadBranchRequest,
 	HookRequest,
@@ -195,6 +197,38 @@ export async function publishProvenance(
 		sha
 	]);
 	await git(root, ['push', remote, `${ref}:${ref}`]);
+}
+
+export async function conflicts(
+	root: string,
+	{ remote, forks }: ConflictsRequest
+): Promise<ConflictsResponse> {
+	safeRemote(remote);
+	if (!(await exists(join(root, '.git')))) await git(root, ['init', '--quiet']);
+	await git(root, ['fetch', '--no-tags', remote, 'HEAD']);
+	const main = await git(root, ['rev-parse', 'FETCH_HEAD']);
+	const threads: ConflictsResponse['threads'] = [];
+	for (const fork of forks) {
+		safeRemote(fork.remote);
+		const fetched = await exec('git', ['fetch', '--no-tags', fork.remote, fork.branch], {
+			cwd: root
+		});
+		if (fetched.code !== 0) {
+			threads.push({ id: fork.id, files: null });
+			continue;
+		}
+		const head = await git(root, ['rev-parse', 'FETCH_HEAD']);
+		const merged = await exec(
+			'git',
+			['merge-tree', '--write-tree', '--name-only', '--no-messages', main, head],
+			{ cwd: root }
+		);
+		if (merged.code !== 0 && merged.code !== 1)
+			throw new Error(`git merge-tree failed: ${merged.output.trim()}`);
+		const files = merged.code === 1 ? merged.stdout.trim().split('\n').slice(1) : [];
+		threads.push({ id: fork.id, files: files.filter(Boolean) });
+	}
+	return { main, threads };
 }
 
 export async function headBranch(root: string, { remote }: HeadBranchRequest) {

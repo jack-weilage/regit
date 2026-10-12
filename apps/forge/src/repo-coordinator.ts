@@ -40,6 +40,7 @@ import { db } from './db.ts';
 import { Promotions } from './promotions.ts';
 import { Images } from './images.ts';
 import type { AttemptStatus } from './attempt-sandbox.ts';
+import type { Landing } from './landing.ts';
 
 export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string }; tools?: ToolCallRecord[] }
@@ -49,7 +50,8 @@ export type AttemptUpdate =
 	| { type: 'read'; entries: string[] }
 	| { type: 'changes'; summary: DiffSummary }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
-	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] };
+	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
+	| { type: 'synced' };
 
 type ThreadRow = {
 	id: string;
@@ -70,6 +72,7 @@ type ThreadRow = {
 	context: string | null;
 	services: string | null;
 	preview: string | null;
+	conflicts: string | null;
 	parent_headline?: string | null;
 };
 
@@ -163,7 +166,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				context TEXT,
 				services TEXT,
 				preview TEXT,
-				auto INTEGER
+				auto INTEGER,
+				conflicts TEXT
 			);
 			CREATE TABLE IF NOT EXISTS entries (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,6 +192,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				value TEXT NOT NULL
 			);
 		`);
+		// TODO: remove once every repository's coordinator has the conflicts column.
+		try {
+			this.#sql.exec('ALTER TABLE threads ADD COLUMN conflicts TEXT');
+		} catch {
+			/* Already added. */
+		}
 	}
 
 	async openThread({
@@ -692,6 +702,39 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return row && (JSON.parse(row.value) as { input: ShipInput; handBacks: number });
 	}
 
+	// Main moved: warn threads whose changes now conflict, and merge main into each thread at its next turn.
+	async landed({ after, headline }: Landing) {
+		if (this.#meta('main') === after) return;
+		const threads = this.threads().filter((thread) => thread.status !== 'discarded');
+		const forks = [];
+		for (const thread of threads) {
+			const fork = thread.changes?.files ? await this.#agent(thread.id).forkRef() : null;
+			if (fork) forks.push({ id: thread.id, ...fork });
+		}
+		const repo = this.#repo();
+		const scan = forks.length
+			? await this.env.REPOSITORY_GIT.getByName(`scan-${repo}`).conflicts(repo, forks)
+			: { main: after, threads: [] };
+		if (this.#meta('main') === scan.main) return;
+		this.#setMeta('main', scan.main);
+		for (const thread of threads) await this.#agent(thread.id).mainMoved();
+		for (const { id, files } of scan.threads) {
+			if (!files || !this.#summary(id)) continue;
+			const was = this.#summary(id)!.conflicts;
+			this.#sql.exec(
+				'UPDATE threads SET conflicts = ? WHERE id = ?',
+				files.length ? JSON.stringify({ files, headline }) : null,
+				id
+			);
+			if (files.length && JSON.stringify(was?.files) !== JSON.stringify(files))
+				this.#add(id, {
+					type: 'event',
+					text: `Main moved: "${headline}" conflicts with this thread in ${files.join(', ')}`
+				});
+			this.#touch(id);
+		}
+	}
+
 	async approvePromotion(thread: string, id: string, by: Author) {
 		await this.#owner(by);
 		this.#active(thread);
@@ -824,6 +867,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				JSON.stringify(update.summary),
 				thread
 			);
+			this.#touch(thread);
+			return;
+		}
+		if (update.type === 'synced') {
+			this.#sql.exec('UPDATE threads SET conflicts = NULL WHERE id = ?', thread);
 			this.#touch(thread);
 			return;
 		}
@@ -1084,6 +1132,20 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return summary;
 	}
 
+	#meta(key: string) {
+		return this.#sql
+			.exec<{ value: string }>('SELECT value FROM meta WHERE key = ?', key)
+			.toArray()[0]?.value;
+	}
+
+	#setMeta(key: string, value: string) {
+		this.#sql.exec(
+			'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+			key,
+			value
+		);
+	}
+
 	#repo() {
 		const [row] = this.#sql
 			.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'repo'")
@@ -1148,6 +1210,9 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		shipped:
 			row.shipped_sha && row.shipped_at
 				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }
-				: null
+				: null,
+		conflicts: row.conflicts
+			? (JSON.parse(row.conflicts) as { files: string[]; headline: string })
+			: null
 	};
 }

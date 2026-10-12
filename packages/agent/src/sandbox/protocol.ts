@@ -110,6 +110,16 @@ export interface PublishProvenanceRequest {
 	remote?: string;
 }
 
+export interface ConflictsRequest {
+	remote: string;
+	forks: { id: string; remote: string; branch: string }[];
+}
+
+export interface ConflictsResponse {
+	main: string;
+	threads: { id: string; files: string[] | null }[];
+}
+
 export interface ServiceSpec {
 	name: string;
 	command: string;
