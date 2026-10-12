@@ -1140,6 +1140,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 		machine: 'standard-1'
 	});
 	expect(await intent(first.id)).not.toHaveProperty('similar');
+	await idle();
 
 	await scriptDecisions([
 		{
@@ -1175,6 +1176,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 		}
 	});
 
+	await idle();
 	await script([[{ type: 'response.output_text.delta', delta: 'Thanks.' }]]);
 	await repo.forwardIntent(second.id, first.id, sam);
 	expect((await repo.thread(first.id))!.entries).toContainEqual(
