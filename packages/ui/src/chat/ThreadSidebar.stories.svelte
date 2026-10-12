@@ -34,7 +34,7 @@
 		<div class="thread">The thread</div>
 		<ThreadSidebar {...args}>
 			{#snippet changesTab()}
-				<ChangesPanel files={diffFiles} embedded onship={fn()} />
+				<ChangesPanel files={diffFiles} embedded />
 			{/snippet}
 			{#snippet servicesTab()}
 				<ServicesPanel {services} embedded onaction={fn()} />

@@ -40,7 +40,6 @@
 		handoff?: boolean;
 		superseded?: boolean;
 		onstart?: () => void;
-		onship?: () => void;
 		onchanges?: () => void;
 		ondismiss?: () => void;
 		onmessage?: (thread: SimilarThread) => void;
@@ -59,7 +58,6 @@
 		handoff = false,
 		superseded = false,
 		onstart,
-		onship,
 		onchanges,
 		ondismiss,
 		onmessage
@@ -228,13 +226,7 @@
 						</details>
 					{/if}
 
-					{#if onstart}
-						<div class="actions">
-							<Button variant="primary" onclick={onstart}>{same ? 'Start anyway' : 'Start'}</Button>
-						</div>
-					{/if}
-
-					{#if note || onship || changes}
+					{#if note || changes}
 						<div class="footer">
 							{#if note}<p class="note">{note}</p>{/if}
 							{#if changes}
@@ -252,7 +244,6 @@
 									<span class="removed">−{changes.deletions}</span>
 								</Button>
 							{/if}
-							{#if onship}<Button variant="primary" size="sm" onclick={onship}>Ship</Button>{/if}
 						</div>
 					{/if}
 				</div>

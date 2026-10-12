@@ -48,17 +48,3 @@ export function summarizeTools(calls: ToolCallRecord[]) {
 	const text = parts.join(', ') || plural(calls.length, 'tool call', 'tool calls');
 	return `${text[0]!.toUpperCase()}${text.slice(1)}${failed ? ` · ${failed} failed` : ''}`;
 }
-
-const progressive: Record<string, string> = {
-	Start: 'Starting',
-	Restore: 'Restoring',
-	Clone: 'Cloning',
-	Install: 'Installing',
-	Check: 'Checking',
-	Save: 'Saving'
-};
-
-export function stageActivity(label: string) {
-	const [verb = '', ...rest] = label.split(' ');
-	return [progressive[verb] ?? verb, ...rest].join(' ');
-}

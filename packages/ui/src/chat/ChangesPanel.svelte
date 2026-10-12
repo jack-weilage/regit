@@ -6,11 +6,10 @@
 	interface Props {
 		files: DiffFile[];
 		embedded?: boolean;
-		onship?: () => void;
 		onclose?: () => void;
 	}
 
-	let { files, embedded = false, onship, onclose }: Props = $props();
+	let { files, embedded = false, onclose }: Props = $props();
 
 	const id = $props.id();
 
@@ -29,9 +28,6 @@
 				<span class="removed">−{deletions}</span>
 			</p>
 		</div>
-		{#if onship}
-			<Button variant="primary" size="sm" onclick={onship}>Ship</Button>
-		{/if}
 		{#if onclose}
 			<Button variant="ghost" size="sm" icon aria-label="Close changes" onclick={onclose}>
 				<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7" /></svg>

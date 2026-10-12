@@ -167,10 +167,6 @@
 				const resumed = detail!.entries
 					.slice(review ? detail!.entries.indexOf(review) : 0)
 					.some((entry) => entry.type === 'message' && entry.author.kind === 'person');
-				const conflict = detail!.entries.findLast((entry) => entry.type === 'event');
-				if (conflict?.type === 'event' && conflict.text.startsWith('Conflicts with')) {
-					return { status: 'working', note: 'Resolving conflicts' };
-				}
 				if (!review || review.verdict !== 'fail' || resumed) {
 					return { status: 'working', note: 'The agent is working' };
 				}

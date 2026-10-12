@@ -39,7 +39,6 @@
 		).toBeVisible();
 		await userEvent.click(canvas.getByText('Related · 2'));
 		await expect(canvas.getByRole('link', { name: /Cache org settings/ })).toBeVisible();
-		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
 	}}
 />
 
@@ -105,7 +104,6 @@
 	}}
 	play={async ({ canvas }) => {
 		await expect(canvas.getByRole('region', { name: 'Intent' })).toBeVisible();
-		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
 	}}
 />
 
@@ -155,7 +153,6 @@
 	play={async ({ args, canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: /View changes: 4 files/ }));
 		await expect(args.onchanges).toHaveBeenCalledOnce();
-		await expect(canvas.queryByRole('button', { name: 'Ship' })).toBeNull();
 	}}
 />
 
@@ -232,7 +229,6 @@
 		);
 		await userEvent.click(canvas.getByRole('button', { name: /Message perf\(settings\)/ }));
 		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[0]);
-		await expect(canvas.queryByRole('button', { name: 'Start anyway' })).toBeNull();
 	}}
 />
 
@@ -257,7 +253,6 @@
 	play={async ({ args, canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: /Message feat\(api\)/ }));
 		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[1]);
-		await expect(canvas.queryByRole('button', { name: 'Start' })).toBeNull();
 	}}
 />
 

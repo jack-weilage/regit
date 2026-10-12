@@ -35,7 +35,6 @@ export {
 	type ServiceAction,
 	type ServiceView
 } from './chat/ServicesPanel.svelte';
-export { default as ShipDialog } from './chat/ShipDialog.svelte';
 export { default as ThreadList, type ThreadListItem } from './chat/ThreadList.svelte';
 export { default as ThreadSidebar, type SidebarTab } from './chat/ThreadSidebar.svelte';
 export { default as ThreadPreview, type ThreadPreviewProps } from './chat/ThreadPreview.svelte';
