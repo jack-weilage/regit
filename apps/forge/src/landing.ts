@@ -1,4 +1,5 @@
 export interface ArtifactsPush {
+	id: string;
 	type: string;
 	source: { namespace: string; repoName: string };
 	payload: {
@@ -6,6 +7,8 @@ export interface ArtifactsPush {
 		before: string;
 		after: string;
 		commits: { id: string; message: string }[];
+		totalCommitsCount: number;
+		commitsTruncated: boolean;
 	};
 }
 
@@ -17,7 +20,6 @@ export interface Landing {
 }
 
 // Thread and candidate forks share the namespace; their names always contain a double hyphen.
-// TODO: drop the shape check once a live push confirms what Workflows receive; the docs don't say.
 export function canonicalPush(event: unknown): Landing | null {
 	const { type, source, payload } = (event ?? {}) as Partial<ArtifactsPush>;
 	if (
@@ -27,7 +29,8 @@ export function canonicalPush(event: unknown): Landing | null {
 	)
 		throw new Error(`Unrecognised Artifacts event: ${JSON.stringify(event).slice(0, 1000)}`);
 	if (type !== 'cf.artifacts.repo.pushed' || source.repoName.includes('--')) return null;
-	if (!payload.ref.startsWith('refs/heads/')) return null;
-	const last = payload.commits.at(-1)?.message.split('\n')[0]?.trim() ?? '';
-	return { repo: source.repoName, ref: payload.ref, after: payload.after, headline: last };
+	if (!payload.ref.startsWith('refs/heads/') || /^0+$/.test(payload.after)) return null;
+	const head = payload.commits.find((commit) => commit.id === payload.after);
+	const headline = head?.message.split('\n')[0]?.trim() ?? '';
+	return { repo: source.repoName, ref: payload.ref, after: payload.after, headline };
 }
