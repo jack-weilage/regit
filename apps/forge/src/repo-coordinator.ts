@@ -52,7 +52,7 @@ export type AttemptUpdate =
 	| { type: 'startup'; stages: StartupStage[] }
 	| { type: 'conversation-failed'; error: string }
 	| { type: 'read'; entries: string[] }
-	| { type: 'changes'; summary: DiffSummary; base: string | null }
+	| { type: 'changes'; summary: DiffSummary }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
 	| {
@@ -79,7 +79,6 @@ type ThreadRow = {
 	shipped_sha: string | null;
 	shipped_by: string | null;
 	shipped_at: number | null;
-	base: string | null;
 	parent: string | null;
 	context: string | null;
 	services: string | null;
@@ -212,7 +211,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			['shipped_sha', 'TEXT'],
 			['shipped_by', 'TEXT'],
 			['shipped_at', 'INTEGER'],
-			['base', 'TEXT'],
 			['parent', 'TEXT'],
 			['context', 'TEXT'],
 			['services', 'TEXT'],
@@ -1072,9 +1070,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (summary.status === 'shipping' && !['usage', 'read'].includes(update.type)) return;
 		if (update.type === 'changes') {
 			this.#sql.exec(
-				'UPDATE threads SET changes = ?, base = COALESCE(?, base) WHERE id = ?',
+				'UPDATE threads SET changes = ? WHERE id = ?',
 				JSON.stringify(update.summary),
-				update.base,
 				thread
 			);
 			this.#touch(thread);
@@ -1431,7 +1428,6 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		deleted: row.deleted_at === null ? null : { at: row.deleted_at, by: row.deleted_by ?? '' },
 		parent: row.parent ? { id: row.parent, headline: row.parent_headline ?? '' } : null,
 		changes: row.changes ? (JSON.parse(row.changes) as DiffSummary) : null,
-		base: row.base,
 		shipped:
 			row.shipped_sha && row.shipped_at
 				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }

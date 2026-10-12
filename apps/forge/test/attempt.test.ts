@@ -1151,7 +1151,6 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 		id,
 		(detail) => detail.summary.status === 'needs-you' && reviews(detail).length === 1
 	);
-	expect(ready.summary.base).toBe('master');
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	await approveCandidate(repo, id, sam);

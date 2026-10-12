@@ -119,7 +119,6 @@ export interface ThreadSummary {
 	deleted: { at: number; by: string } | null;
 	parent: { id: string; headline: string } | null;
 	changes: DiffSummary | null;
-	base: string | null;
 	shipped: { sha: string; by: string; at: number } | null;
 }
 
@@ -133,7 +132,7 @@ export interface ShipInput {
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface UsageRow {
-	task: 'intent' | 'conversation' | 'attempt' | 'review' | 'search';
+	task: 'conversation' | 'attempt' | 'review' | 'search';
 	model: string;
 	tokens: number;
 	cost: number | null;

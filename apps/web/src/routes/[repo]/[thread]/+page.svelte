@@ -82,7 +82,6 @@
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
 	const tasks = {
-		intent: 'Drafting intents',
 		conversation: 'Conversation',
 		attempt: 'Agent',
 		review: 'Review',

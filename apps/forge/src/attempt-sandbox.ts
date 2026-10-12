@@ -90,7 +90,6 @@ export type AttemptStatus =
 	| 'running'
 	| 'reviewing'
 	| 'shipping'
-	| 'shipped'
 	| 'interrupted'
 	| 'finished'
 	| 'stopped'
@@ -262,7 +261,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
-		if (attempt && !isActive(attempt.status) && attempt.status !== 'shipped') {
+		if (attempt && !isActive(attempt.status)) {
 			this.#setMeta('cycle', String(this.#reviewCount()));
 			this.#setStatus('queued');
 		}
@@ -656,11 +655,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
-			if (!this.#meta('branch')) {
-				using repo = await this.env.ARTIFACTS.get(attempt.repo);
-				await this.#baseBranch(repo, fetch);
-				await this.#allowGit(fork, token, false);
-			}
 			if (!attempt.base) {
 				attempt.base = await this.#head(fetch);
 				const input = JSON.parse(this.#meta('startInput') ?? '{}') as AttemptInput;
@@ -853,24 +847,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 				files = files.map((file) => ({ ...file, hunks: [], tooLarge: true }));
 			}
 			this.#setMeta('changes', JSON.stringify(files));
-			await this.#report(attempt.repo, {
-				type: 'changes',
-				summary: summarize(files),
-				base: this.#meta('branch') ?? null
-			});
+			await this.#report(attempt.repo, { type: 'changes', summary: summarize(files) });
 		} catch (error) {
 			console.warn('Could not save the changes', error);
 		}
-	}
-
-	async #baseBranch(repo: ArtifactsRepo, fetch: Fetch) {
-		const base = await repo.info();
-		const { plaintext: token } = await repo.createToken('read', 60 * 60);
-		await this.#allowGit(base, token, false);
-		const branch =
-			(await sandboxWorkspace(fetch).headBranch({ remote: base.remote })) ?? base.defaultBranch;
-		this.#setMeta('branch', branch);
-		return { base, branch };
 	}
 
 	async #wake(): Promise<{ fetch: Fetch; repo: string }> {
