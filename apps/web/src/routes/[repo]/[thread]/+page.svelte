@@ -402,7 +402,7 @@
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
 				{/each}
-				{#if summary.status !== 'discarded'}
+				{#if summary.status !== 'discarded' && (intent || detail.control?.acceptedIntent || detail.control?.promotions.length)}
 					<AcceptancePanel
 						control={detail.control}
 						{intent}
