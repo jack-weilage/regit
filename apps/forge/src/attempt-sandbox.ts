@@ -253,10 +253,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
 	}
 
-	mainMoved() {
-		if (this.#agent()) this.#setMeta('sync', '1');
-	}
-
 	forkRef() {
 		const attempt = this.#agent();
 		return attempt?.fork && attempt.branch

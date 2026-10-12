@@ -249,6 +249,17 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.#converse(thread, author, text, entry);
 	}
 
+	async bringUpToDate(thread: string, by: Author) {
+		const summary = this.#active(thread);
+		if (summary.status === 'discarded') return;
+		const entry = this.#add(thread, {
+			type: 'event',
+			text: `${by.name} asked to bring this thread up to date with main`
+		});
+		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
+		await this.#converse(thread, by, 'Bring this thread up to date with main.', entry, true);
+	}
+
 	async discard(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		this.#cancelPromotions(thread);
@@ -702,7 +713,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return row && (JSON.parse(row.value) as { input: ShipInput; handBacks: number });
 	}
 
-	// Main moved: warn threads whose changes now conflict, and merge main into each thread at its next turn.
+	// Main moved: warn threads whose changes now conflict. Forks only take main when asked or handed back.
 	async landed({ after, headline }: Landing) {
 		if (this.#meta('main') === after) return;
 		const threads = this.threads().filter((thread) => thread.status !== 'discarded');
@@ -717,7 +728,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			: { main: after, threads: [] };
 		if (this.#meta('main') === scan.main) return;
 		this.#setMeta('main', scan.main);
-		for (const thread of threads) await this.#agent(thread.id).mainMoved();
 		for (const { id, files } of scan.threads) {
 			if (!files || !this.#summary(id)) continue;
 			const was = this.#summary(id)!.conflicts;

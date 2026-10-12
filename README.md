@@ -24,7 +24,7 @@ Preparing a candidate does not publish it. A separate Git-only publisher constru
 
 After publication, `refs/notes/regit` records the source revision, the thread's intent and the authorizing principal. Notes publication retries independently of the code update. Operational state remains in SQLite; Git notes are exported provenance, not the mutable coordination database. The next time the thread's agent works, its fork is rebased onto the published commit, so a thread can keep going and publish again.
 
-Every push to a repository's branch arrives as an Artifacts `cf.artifacts.repo.pushed` event, which starts forge's `RepoPushed` Workflow. The repository coordinator then checks each active thread's fork against the new main with `git merge-tree`, warns threads that now conflict, and has every thread merge main at the start of its next turn.
+Every push to a repository's branch arrives as an Artifacts `cf.artifacts.repo.pushed` event, which starts forge's `RepoPushed` Workflow. The repository coordinator then checks each active thread's fork against the new main with `git merge-tree`, and warns threads that now conflict. A thread's fork only takes main when someone brings it up to date or a stale candidate is handed back, and the agent is told what landed each time.
 
 Stacked execution on unpublished revisions, dependencies between threads, standing policies and budgets, an attention inbox, and explicit outcome confirmation are not implemented yet. Local CLI and other-agent contribution access remain TODO.
 

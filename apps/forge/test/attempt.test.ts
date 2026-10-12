@@ -859,7 +859,7 @@ test('hands a conflicting candidate back to its agent to resolve, then prepares 
 	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
 });
 
-test('warns threads that conflict with a landing and merges main at their next turn', async () => {
+test('warns threads that conflict with a landing and merges main only when asked', async () => {
 	const { env, repo, sam, id } = await startedThread('landing', [
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
@@ -911,25 +911,40 @@ test('warns threads that conflict with a landing and merges main at their next t
 	expect((await repo.thread(id))!.entries).toHaveLength(warned.entries.length);
 
 	await idle();
+	await script([[{ type: 'response.output_text.delta', delta: 'Still on the old main.' }]]);
+	await repo.reply(id, { author: sam, text: 'Carry on.' });
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some(
+			(entry) => entry.type === 'message' && entry.text === 'Still on the old main.'
+		)
+	);
+	expect(JSON.stringify((await modelRequests()).at(-1)!.query)).not.toContain('main moved');
+	const fork = join(dir, `landing--${id}.git`);
+	expect(sh(fork, 'rev-list', 'main')).not.toContain(main);
+
+	await idle();
 	await script([
 		writeNotes('# Notes\\n\\nSome better notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Merged main.' }]
 	]);
-	await repo.reply(id, { author: sam, text: 'Carry on.' });
+	await repo.bringUpToDate(id, sam);
 	const merged = await untilThread(
 		repo,
 		id,
 		(detail) => detail.summary.status === 'needs-you' && detail.summary.conflicts === null
 	);
-	expect(
-		merged.entries.some((entry) => entry.type === 'message' && entry.text === 'Merged main.')
-	).toBe(true);
+	expect(merged.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'event',
+			text: `${sam.name} asked to bring this thread up to date with main`
+		})
+	);
 	expect(JSON.stringify((await modelRequests()).at(-2)!.query)).toContain(
 		'merging it into this thread conflicts in notes.md'
 	);
-	const fork = join(dir, `landing--${id}.git`);
 	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(main);
 	expect(sh(fork, 'show', 'main:notes.md')).toBe('# Notes\n\nSome better notes');
+	expect(sh(join(dir, `landing--${clean}.git`), 'rev-list', 'main')).not.toContain(main);
 	expect((await env.ATTEMPTS.getByName(clean).snapshot())!.status).toBe('finished');
 });
 
