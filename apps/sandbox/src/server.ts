@@ -1,6 +1,7 @@
 import { createServices, type ServicesOptions } from './services.ts';
 import { discoverSkills } from './skills.ts';
 import { isTool, ToolError, tools } from './tools.ts';
+import { trustInterception } from './trust.ts';
 import {
 	clone,
 	commit,
@@ -46,7 +47,8 @@ export function createSandbox(
 		'head-branch': async (body) => ({ branch: await headBranch(root, body) }),
 		toolchain: async () => ({ tools: await toolchain(root, mise) }),
 		hook: (body) => hook(root, body),
-		skills: async () => ({ skills: await discoverSkills(root) })
+		skills: async () => ({ skills: await discoverSkills(root) }),
+		trust: () => trustInterception()
 	};
 
 	async function handle(request: Request): Promise<Response> {

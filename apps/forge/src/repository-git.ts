@@ -171,7 +171,7 @@ export class RepositoryGit extends DurableObject<Env> {
 		}
 	}
 
-	// Call after #allow: the container only trusts the interception CA if interception exists when it starts.
+	// Call after #allow, so the interception CA exists for the container to trust.
 	async #sandbox(): Promise<Fetch> {
 		if (this.env.SANDBOX_URL) {
 			const base = `${this.env.SANDBOX_URL}/${this.ctx.id.name ?? this.ctx.id.toString()}`;
@@ -179,13 +179,28 @@ export class RepositoryGit extends DurableObject<Env> {
 		}
 		const container = this.ctx.container!;
 		const fetch: Fetch = (url, init) => container.getTcpPort(8080).fetch(url, init);
-		if (!container.running)
-			container.start({
-				image: container.images.sandbox!,
-				instance: defaultMachine,
-				enableInternet: true
-			});
+		const trusted = () =>
+			sandboxWorkspace(fetch)
+				.trust()
+				.catch(() => false);
+		if (container.running) {
+			await this.#healthy(fetch);
+			if (await trusted()) return fetch;
+			await container.destroy();
+		}
+		container.start({
+			image: container.images.sandbox!,
+			instance: defaultMachine,
+			enableInternet: true
+		});
 		await container.setInactivityTimeout(5 * 60 * 1000);
+		await this.#healthy(fetch);
+		if (!(await trusted()))
+			throw new Error('The Git sandbox has no HTTPS interception CA to trust');
+		return fetch;
+	}
+
+	async #healthy(fetch: Fetch) {
 		const deadline = Date.now() + 5 * 60 * 1000;
 		while (Date.now() < deadline) {
 			try {
@@ -193,13 +208,13 @@ export class RepositoryGit extends DurableObject<Env> {
 					signal: AbortSignal.timeout(1000)
 				});
 				await response.body?.cancel();
-				if (response.ok) return fetch;
+				if (response.ok) return;
 			} catch {
 				/* Retry until the bounded startup deadline. */
 			}
 			await scheduler.wait(200);
 		}
-		await container.destroy();
+		await this.ctx.container!.destroy();
 		throw new Error('The Git sandbox did not become healthy');
 	}
 }

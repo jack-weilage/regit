@@ -157,6 +157,10 @@ export function sandboxWorkspace(fetch: Fetch) {
 		async toolchain() {
 			const { tools } = await post<ToolchainResponse>(fetch, '/workspace/toolchain', '{}');
 			return tools;
+		},
+		async trust() {
+			const { trusted } = await post<{ trusted: boolean }>(fetch, '/workspace/trust', '{}');
+			return trusted;
 		}
 	};
 }
