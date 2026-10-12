@@ -1,0 +1,82 @@
+attempted pairs 156 repos 25
+textual conflicts among ALL attempted merges 20 156 (0.08454734307512554, 0.1897341956482105)
+usable 143 repos 20
+| subset | pairs | repos | textual conflict (95% CI) | clean merges | semantic conflict (95% Wilson CI) |
+|---|---|---|---|---|---|
+| All usable | 143 | 20 | 19 (13%; 9%-20%) | 124 | 0 (0.0%; 0.0%-3.0%) |
+| Truly concurrent (neither head contains the other's landed commit) | 105 | 16 | 6 (6%; 3%-12%) | 99 | 0 (0.0%; 0.0%-3.7%) |
+| ... and share >=1 changed file | 39 | 13 | 6 (15%; 7%-30%) | 33 | 0 (0.0%; 0.0%-10.4%) |
+| ... and >=20 tests pass in both A and B | 91 | 14 | 6 (7%; 3%-14%) | 85 | 0 (0.0%; 0.0%-4.3%) |
+| Overlap >= 1 h (by AIDev timestamps) | 0 | 0 | 0 (0%; nan%-nan%) | 0 | 0 (0.0%; nan%-nan%) |
+sequential 38 unknown 0
+agents usable Counter({'OpenAI_Codex': 79, 'Copilot': 52, 'Devin': 8, 'Cursor': 4})
+cross-agent attempted 0
+overlap_h median 0.0011111111111111111 frac <0.1h 0.958041958041958
+flaky-excluded (r1 only): [('briangu/klongpy', '40', '33', ['tests.test_sys_fn_timer.TestSysFnTimer::test_timer_return_1_cancel']), ('microsoft/lisa', '4056', '4062', ['selftests.test_parallel.TaskManagerTestCase::test_task_manager_immediate_scheduling'])]
+SEMANTIC: []
+
+per repo:
+| repo | agent(s) | attempted | usable | textual | clean | sem | median tests passing in both |
+|---|---|---|---|---|---|---|---|
+| Archmonger/django-dbbackup | Copilot | 1 | 0 | 0 | 0 | 0 | - |
+| Josverl/micropython-stubber | Copilot | 1 | 1 | 0 | 1 | 0 | 582 |
+| Kiln-AI/Kiln | OpenAI_Codex | 10 | 10 | 5 | 5 | 0 | 960 |
+| NewFuture/DDNS | Copilot | 6 | 6 | 4 | 2 | 0 | 396 |
+| PyLabRobot/pylabrobot | OpenAI_Codex | 10 | 10 | 1 | 9 | 0 | 272 |
+| briangu/klongpy | OpenAI_Codex | 3 | 3 | 1 | 2 | 0 | 278 |
+| charlesvestal/extending-move | OpenAI_Codex | 14 | 8 | 0 | 8 | 0 | 37 |
+| deepmodeling/dpgen | Copilot | 8 | 8 | 0 | 8 | 0 | 8 |
+| featureform/enrichmcp | OpenAI_Codex | 8 | 8 | 1 | 7 | 0 | 65 |
+| ikamensh/flynt | OpenAI_Codex | 1 | 1 | 0 | 1 | 0 | 389 |
+| lidofinance/diffyscan | OpenAI_Codex | 1 | 0 | 0 | 0 | 0 | - |
+| machinewrapped/llm-subtrans | OpenAI_Codex | 1 | 1 | 0 | 1 | 0 | 173 |
+| mangiucugna/json_repair | OpenAI_Codex | 1 | 1 | 0 | 1 | 0 | 21 |
+| marin-community/haliax | OpenAI_Codex | 3 | 1 | 2 | 0 | 0 | 231 |
+| microsoft/fabric-cicd | Copilot | 6 | 6 | 0 | 6 | 0 | 136 |
+| microsoft/lisa | Copilot | 11 | 11 | 1 | 10 | 0 | 101 |
+| numbagg/numbagg | Claude_Code | 1 | 0 | 0 | 0 | 0 | - |
+| openai/openai-agents-python | OpenAI_Codex | 2 | 2 | 0 | 2 | 0 | 161 |
+| robertmartin8/KindleClippings | OpenAI_Codex | 1 | 0 | 0 | 0 | 0 | - |
+| run-llama/workflows-py | Cursor | 4 | 4 | 0 | 4 | 0 | 134 |
+| scoringengine/scoringengine | OpenAI_Codex | 7 | 7 | 0 | 7 | 0 | 4 |
+| tomquist/b2500-meter | OpenAI_Codex | 1 | 0 | 0 | 0 | 0 | - |
+| translate/translate | Copilot | 20 | 20 | 2 | 18 | 0 | 3459 |
+| vlm-run/vlmrun-hub | Devin | 8 | 8 | 3 | 5 | 0 | 18 |
+| willmiao/ComfyUI-Lora-Manager | OpenAI_Codex | 27 | 27 | 0 | 27 | 0 | 180 |
+
+unusable:
+  charlesvestal/extending-move 45 42 rcA 1 passA 0 TC False
+  robertmartin8/KindleClippings 11 12 rcA 5 passA 0 TC False
+  Archmonger/django-dbbackup 632 633 rcA 3 passA 0 TC False
+  tomquist/b2500-meter 127 126 rcA 1 passA 0 TC False
+  lidofinance/diffyscan 90 93 rcA 5 passA 0 TC False
+  charlesvestal/extending-move 45 44 rcA 1 passA 0 TC False
+  charlesvestal/extending-move 45 43 rcA 1 passA 0 TC False
+  charlesvestal/extending-move 44 43 rcA 1 passA 0 TC False
+  charlesvestal/extending-move 44 42 rcA 1 passA 0 TC False
+  charlesvestal/extending-move 43 42 rcA 1 passA 5 TC False
+  marin-community/haliax 143 142 rcA timeout passA 0 TC True
+  numbagg/numbagg 393 397 rcA timeout passA 0 TC False
+  marin-community/haliax 142 145 rcA timeout passA 0 TC False
+
+textual conflicts:
+  featureform/enrichmcp 118 120 OpenAI_Codex ['src/enrichmcp/__init__.py'] seq True usable True
+  briangu/klongpy 48 33 OpenAI_Codex ['setup.py'] seq False usable True
+  translate/translate 5753 5754 Copilot ['tests/translate/convert/test_po2html.py', 'tests/translate/storage/test_html.py'] seq True usable True
+  Kiln-AI/Kiln 358 355 OpenAI_Codex ['AGENTS.md'] seq False usable True
+  Kiln-AI/Kiln 353 355 OpenAI_Codex ['AGENTS.md'] seq False usable True
+  Kiln-AI/Kiln 354 355 OpenAI_Codex ['AGENTS.md'] seq False usable True
+  Kiln-AI/Kiln 352 355 OpenAI_Codex ['AGENTS.md'] seq False usable True
+  Kiln-AI/Kiln 355 361 OpenAI_Codex ['AGENTS.md'] seq False usable True
+  vlm-run/vlmrun-hub 58 60 Devin ['vlmrun/hub/catalog.yaml'] seq True usable True
+  vlm-run/vlmrun-hub 122 123 Devin ['vlmrun/hub/schemas/contrib/catalog.yaml'] seq True usable True
+  translate/translate 5787 5786 Copilot ['tests/translate/storage/test_yaml.py', 'translate/storage/yaml.py'] seq True usable True
+  vlm-run/vlmrun-hub 122 124 Devin ['vlmrun/hub/schemas/contrib/catalog.yaml'] seq True usable True
+  PyLabRobot/pylabrobot 573 549 OpenAI_Codex ['pylabrobot/liquid_handling/liquid_handler.py'] seq True usable True
+  microsoft/lisa 3843 3839 Copilot ['microsoft/runbook/azure.yml'] seq True usable True
+  NewFuture/DDNS 498 501 Copilot ['tests/test_provider_dnspod.py', 'tests/test_provider_tencentcloud.py'] seq True usable True
+  NewFuture/DDNS 498 499 Copilot ['tests/test_config_ssl.py'] seq True usable True
+  NewFuture/DDNS 505 498 Copilot ['README.md', 'ddns/provider/noip.py', 'doc/providers/README.md', 'schema/v4.0.json'] seq True usable True
+  NewFuture/DDNS 500 498 Copilot ['ddns/__main__.py'] seq True usable True
+  marin-community/haliax 143 142 OpenAI_Codex ['tests/test_namedarray_typing.py'] seq False usable False
+  marin-community/haliax 157 153 OpenAI_Codex ['src/haliax/nn/scan.py'] seq True usable True

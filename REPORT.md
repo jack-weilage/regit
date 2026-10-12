@@ -1,6 +1,6 @@
 # The Forge of the Future: Research Report
 
-> Live, editable version: https://claude.ai/code/artifact/62af7a1e-2200-4bf8-944c-0c378b448d7b (diagrams and charts render there). Research corpus: `research/`.
+> Live, editable version: https://claude.ai/code/artifact/62af7a1e-2200-4bf8-944c-0c378b448d7b (diagrams and charts render there). Research corpus: `research/`. Prototype: `prototype/`.
 
 Oct 12, 2026 · @Jack Weilage
 
@@ -179,6 +179,30 @@ The largest correction is to your model of **where attention goes**. In a 2029 c
 - **Decision:** a risk-ranked queue of the one or two forks in the road that are blocking threads, each with options, a default and a deadline. OpenAI: "many reviews are blocked on one or two decisions."
 - **Taste:** N candidates side by side on pinned previews, with behavioural diffs for APIs, data and infrastructure. Every comment is offered back as a reusable check or golden example, so taste is amortized instead of re-spent.
 - **Understanding:** executed walkthroughs, intent records, asking the thread why, and a per-path rule that a named human can explain high-risk changes. For that risk-selected minority, people still read the diff. A LeadDev survey found 57% of orgs require 100% human review of AI code, and the red team rates "review moves off diffs" as about 60% likely wrong through 2029. Even Amp says: "Outsource your coding, but not your understanding of the code."
+
+**New evidence: linking the thread does not change review outcomes.** Nobody had measured whether reviewers use the agent session behind a PR, so this research ran the test on the public AIDev dataset. The sample was 71,677 agent PRs in 6,673 repos with more than 100 stars (Dec 2024 to Oct 2025), checked against all 2.74M PRs.
+
+| Comparison (session link vs none) | Merge-rate difference | 95% CI |
+| --- | --- | --- |
+| Codex, raw | +18.5 pp | +9.5 to +25.1 |
+| Cursor, raw | −19.9 pp | −25.8 to −14.3 |
+| Same repo and agent | −15.9 pp | −20.0 to −11.8 |
+| Only PRs reviewed by a human other than the author | −2.7 pp | −6.3 to +0.9 |
+| Full 2.74M PRs, same repo (Codex) | −1.1 pp | −3.8 to +1.6 |
+
+The raw gaps are large but point in opposite directions, because they reflect how a PR was produced, not the link:
+
+- Agents insert links by default: Codex 84% of PRs, Devin 97%, Cursor 57%.
+- 69% of linked Codex PRs were merged within 5 minutes, and only 2.6% got a review from anyone other than the author.
+
+Once like is compared with like, the link has no measurable effect on merge rate. Linked PRs also merged faster, but that disappears once the number of commits is controlled for.
+
+Two caveats:
+
+- **This isn't causal.** Links are inserted automatically, and nobody measured whether reviewers opened them.
+- **Most sessions are private.** A reviewer often can't open the link at all.
+
+The finding supports the report's position: a thread link alone doesn't help reviewers. A distilled, evidence-bearing landing request, plus "ask the thread why", is what has to carry the weight. Full method: `research/80-study-session-links-aidev.md`.
 
 ## The forge of the future
 
@@ -425,6 +449,16 @@ Platform facts that change the brief's plan:
 
 Avoid the phrases "no PRs" and "no humans". Say: **"the PR becomes an evidence-bearing view of a thread, and the issue becomes the intent that threads compete to satisfy."**
 
+**A runnable prototype of the mechanism is in the repo** at `prototype/`. Run `python3 prototype/demo.py`; it uses only Python and git, takes about 4 seconds, and has 10 passing tests. It plays five scenes against a toy shop codebase:
+
+1. Disjoint changes auto-land.
+2. A textual conflict is handed back with the winner's intent. The losing thread re-derives its change and lands as rev 2.
+3. **The headline scene.** One thread renames `discount()` to `apply_code()`. Another adds a new file that calls `discount()`. They touch no common file, the rebase is clean, and each passes its tests alone. The combined re-test catches the break, main never goes red, and the losing thread rebuilds on the rename.
+4. A billing change waits for a Decision. The requester's own approval is refused (403), and a direct push to main is rejected by a hook.
+5. Blame on a line resolves to its landing record, thread, intent and the exact agent message.
+
+Across the run there were 7 landings, 2 hand-backs, 11 signed evidence envelopes (all verified) and 6 reuses of cached evidence.
+
 **A buildable spec is in the repo** at `research/60-build-spec-landing-layer.md` (about 4,000 words). It covers:
 
 - **Architecture.** One Worker with three kinds of Durable Object, each owning a container: one per thread (running Claude Code), one per proof run, and one per repo for the Lander. Two Workflows: one triggered by `cf.artifacts.repo.pushed`, and one per landing attempt.
@@ -492,12 +526,20 @@ Watch for these over the next 12–24 months. Each one says which way the forge 
 
 The research left some questions open:
 
-- **Do reviewers read linked transcripts at all?** No study measures it. The nearest evidence comes from a study of 265 PRs that linked shared ChatGPT conversations (Jun 2026 preprint). How well the prompts asked for verification predicted whether the code was adopted, but no prompt quality predicted merge. Separately, AI-attribution disclosure brought about 21–23% more questions and comments. Meanwhile, about 61% of public agent PRs have no recorded human review at all. That is the biggest unknown behind "share threads".
+- **Do reviewers read linked transcripts at all?** No study measures opening rates. This research's own AIDev analysis found that a session link has no measurable effect on merge outcomes once agent and repo are controlled for (see "Your ideas, tested"). The nearest evidence comes from a study of 265 PRs that linked shared ChatGPT conversations (Jun 2026 preprint). How well the prompts asked for verification predicted whether the code was adopted, but no prompt quality predicted merge. Separately, AI-attribution disclosure brought about 21–23% more questions and comments. Meanwhile, about 61% of public agent PRs have no recorded human review at all. That is the biggest unknown behind "share threads".
 - **How often do concurrent agent changes collide semantically?** Only textual conflicts have been measured: 41.7% of cross-agent pairs. Semantic rates are unmeasured, and the landing math depends on them. Even the best broken-main data (Mergify, 200K+ merges) has no separate metric for changes that pass alone and fail together. That data found AI-assisted PRs broke main less often (1.9% vs 4.4%), and broken main rising from 0.77% at teams of 2–5 engineers to 12.5% at 40+. A forge that owns landing is the only place this rate can be measured.
 - **Does reviewing proof artifacts catch as many defects as reading diffs?** No controlled study exists.
 - **What is Anthropic's internal merge queue?** It exists ("merge queue stats"), but no post describes it.
 - **What share of internal PRs land with no human approver, by risk tier?** No lab discloses it.
 - **What did Google, Meta and Microsoft change in their internal forges for agents?** Their agent-era review tooling (for example, Google's reviewer for agent changes) is not publicly documented, and none publishes revert rates for agent-written changes against human ones.
+
+**A first pilot on semantic collisions.** Nobody had tested whether concurrent agent PRs that merge cleanly still break each other, so this research ran a small replay. It used 143 usable pairs of agent PRs from 20 small Python repos in AIDev, each merged with `git merge` and tested as A, B and A+B.
+
+- **Textual conflicts:** 6% of 105 truly concurrent pairs (95% CI 3–12%), far below the 41.7% reported for cross-agent pairs.
+- **Semantic conflicts:** 0 of 99 clean merges broke a test (95% upper bound 3.7%). A synthetic pair, one change renaming a function and the other calling the old name, was correctly flagged, so the detector works.
+- **Strong caveats.** The pairs are same-agent and both merged, the repos are small and hand-picked, and the test suites are weak. 96% of pairs overlapped by under 6 minutes, so AIDev timestamps barely show concurrency.
+
+Read it as "semantic collisions are not common in small repos at today's volume," not as a population rate. The rate that matters at 50k changes a day is around 10⁻⁵ per pair, far below what a pilot can resolve. That is one more reason the landing service itself must measure it. Method and per-pair data: `research/81-pilot-semantic-conflicts.md`.
 
 **A note on bias.** I wrote my priors down before the research came back. The consensus red team warns that they shaped the corpus and that its agreement with them should be discounted. The items it rated most likely wrong are kept as caveats above:
 
