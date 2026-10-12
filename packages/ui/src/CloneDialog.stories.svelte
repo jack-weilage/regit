@@ -10,11 +10,10 @@
 		{
 			id: 'laptop',
 			label: 'Laptop',
-			scope: 'write',
 			expiresAt: now + 80 * day,
 			lastUsedAt: now - 2 * 60 * 60 * 1000
 		},
-		{ id: 'ci', label: 'CI', scope: 'read', expiresAt: now - day, lastUsedAt: null }
+		{ id: 'ci', label: 'CI', expiresAt: now - day, lastUsedAt: null }
 	];
 
 	const { Story } = defineMeta({
@@ -39,13 +38,12 @@
 		await waitFor(() =>
 			expect(canvas.getByText('git clone https://git.regit.dev/regit.git')).toBeVisible()
 		);
-		await expect(canvas.getByText(/Read · expired/)).toBeVisible();
+		await expect(canvas.getByText(/expired · never used/)).toBeVisible();
 		await userEvent.click(canvas.getByRole('button', { name: 'Revoke CI' }));
 		await expect(args.onrevoke).toHaveBeenCalledWith('ci');
 		await userEvent.type(canvas.getByRole('textbox', { name: 'Token name' }), 'Desktop');
-		await userEvent.selectOptions(canvas.getByRole('combobox', { name: 'Access' }), 'read');
 		await userEvent.click(canvas.getByRole('button', { name: 'Create token' }));
-		await expect(args.oncreate).toHaveBeenCalledWith({ label: 'Desktop', scope: 'read', days: 90 });
+		await expect(args.oncreate).toHaveBeenCalledWith({ label: 'Desktop', days: 90 });
 	}}
 />
 

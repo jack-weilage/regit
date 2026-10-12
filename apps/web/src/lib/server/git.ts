@@ -6,14 +6,12 @@ const day = 24 * 60 * 60 * 1000;
 
 export async function createGitToken(input: {
 	repo: string;
-	scope: 'read' | 'write';
 	label: string;
 	days: number;
 	createdBy: string;
 	principalId?: string;
 }) {
 	// TODO: External contribution/API access requires a separately authorized write boundary.
-	if (input.scope !== 'read') throw new Error('Write Git tokens are not supported');
 	const secret = newGitToken();
 	const now = Date.now();
 	const [token] = await db()
@@ -23,7 +21,7 @@ export async function createGitToken(input: {
 			principalId: input.principalId,
 			hash: await hashGitToken(secret),
 			repo: input.repo,
-			scope: input.scope,
+			scope: 'read',
 			label: input.label,
 			createdBy: input.createdBy,
 			createdAt: new Date(now),

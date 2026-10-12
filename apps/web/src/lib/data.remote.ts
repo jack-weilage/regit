@@ -228,12 +228,10 @@ export const createGitAccessToken = command(
 	v.object({
 		repo: name,
 		label: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(60)),
-		scope: v.picklist(['read', 'write']),
 		days: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(365))
 	}),
 	async ({ repo, ...token }) => {
 		await coordinator(repo, 'editor');
-		if (token.scope !== 'read') error(400, 'Write Git tokens are not supported');
 		const created = await createGitToken({
 			repo,
 			...token,

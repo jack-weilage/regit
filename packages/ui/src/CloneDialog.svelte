@@ -2,7 +2,6 @@
 	export interface GitTokenView {
 		id: string;
 		label: string;
-		scope: 'read' | 'write';
 		expiresAt: number;
 		lastUsedAt: number | null;
 	}
@@ -20,7 +19,7 @@
 		tokens: GitTokenView[];
 		created?: { label: string; secret: string } | null;
 		now?: number;
-		oncreate: (token: { label: string; scope: 'read' | 'write'; days: number }) => void;
+		oncreate: (token: { label: string; days: number }) => void;
 		onrevoke: (id: string) => void;
 	}
 
@@ -37,7 +36,6 @@
 
 	const id = $props.id();
 	let label = $state('');
-	let scope = $state<'read' | 'write'>('write');
 	let days = $state(90);
 	let copied = $state<string | null>(null);
 
@@ -55,7 +53,7 @@
 
 	function create(event: SubmitEvent) {
 		event.preventDefault();
-		oncreate({ label: label.trim() || 'Access token', scope, days });
+		oncreate({ label: label.trim() || 'Access token', days });
 		label = '';
 	}
 </script>
@@ -96,7 +94,6 @@
 					<span class="token">
 						<span>{token.label}</span>
 						<span class="hint">
-							{token.scope === 'write' ? 'Read and write' : 'Read'} ·
 							{token.expiresAt <= time ? 'expired' : `expires ${formatDate(token.expiresAt)}`} ·
 							{token.lastUsedAt ? `used ${formatAgo(token.lastUsedAt, time)}` : 'never used'}
 						</span>
@@ -116,10 +113,6 @@
 
 	<form class="new" onsubmit={create}>
 		<input aria-label="Token name" placeholder="Laptop" bind:value={label} />
-		<select aria-label="Access" bind:value={scope}>
-			<option value="write">Read and write</option>
-			<option value="read">Read</option>
-		</select>
 		<select aria-label="Expires after" bind:value={days}>
 			<option value={30}>30 days</option>
 			<option value={90}>90 days</option>

@@ -2,7 +2,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createGitToken, listGitTokens, revokeGitToken } from '../src/lib/server/git.ts';
 
 export default class TokensWorker extends WorkerEntrypoint<Env> {
-	create(input: { repo: string; scope: 'read' | 'write'; days: number; createdBy: string }) {
+	create(input: { repo: string; days: number; createdBy: string }) {
 		return createGitToken({ label: 'Laptop', ...input });
 	}
 
