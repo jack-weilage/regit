@@ -186,26 +186,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				value TEXT NOT NULL
 			);
 		`);
-		// TODO: remove once every repository's coordinator has started on the single-agent thread model.
-		const [model] = this.#sql
-			.exec<{ value: string }>("SELECT value FROM meta WHERE key = 'threads'")
-			.toArray();
-		if (model?.value !== 'agent') {
-			this.#sql.exec(`
-				DELETE FROM threads;
-				DELETE FROM entries;
-				DELETE FROM usage;
-				DELETE FROM promotions;
-				DELETE FROM images;
-				DROP TABLE IF EXISTS run_dispatch;
-				DROP TABLE IF EXISTS accepted_intents;
-				DROP TABLE IF EXISTS runs;
-				DROP TABLE IF EXISTS revisions;
-				DROP TABLE IF EXISTS assessments;
-				INSERT INTO meta (key, value) VALUES ('threads', 'agent')
-					ON CONFLICT (key) DO UPDATE SET value = excluded.value;
-			`);
-		}
 	}
 
 	async openThread({
