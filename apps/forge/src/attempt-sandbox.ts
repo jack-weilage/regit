@@ -936,6 +936,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (attempt.fork && attempt.remote && attempt.branch) {
 			return { name: attempt.fork, remote: attempt.remote, branch: attempt.branch };
 		}
+		// TODO: move thread and candidate forks to their own namespace so pushes to them stop starting RepoPushed; fork() can't target one, so it means create-and-push.
 		const name = `${attempt.repo}--${this.ctx.id.name}`;
 		using base = await this.env.ARTIFACTS.get(attempt.repo);
 		const fork = await base
