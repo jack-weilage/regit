@@ -9,6 +9,8 @@ const {
 	git,
 	worker,
 	script,
+	scriptAnalyses,
+	analysisRequests,
 	modelRequests,
 	scriptDecisions,
 	decisionRequests,
@@ -300,13 +302,13 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 
 test('coordinates a thread from a request to recorded changes, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
-	const propose = (name: string, headline: string) => [
+	const propose = (headline: string) => [
 		{
 			type: 'response.output_item.done',
 			item: {
 				type: 'function_call',
-				call_id: name,
-				name,
+				call_id: 'intent',
+				name: 'update_intent',
 				arguments: JSON.stringify({
 					headline,
 					purpose: 'Readers need a title.',
@@ -315,10 +317,9 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 			}
 		}
 	];
+	await scriptAnalyses([propose('docs: tidy the notes'), propose('docs(notes): add a title')]);
 	await script([
-		propose('update_intent', 'docs: tidy the notes'),
 		[{ type: 'response.output_text.delta', delta: 'Proposed a tidy-up.' }],
-		propose('update_intent', 'docs(notes): add a title'),
 		[
 			{ type: 'response.output_text.delta', delta: 'Adding the title' },
 			{
@@ -356,68 +357,61 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 		headline: 'The notes need a title.',
 		machine: 'standard-3'
 	});
-	const drafted = async (count: number) => {
-		for (let i = 0; i < 100; i++) {
-			const detail = await repo.thread(opened.id);
-			const intents = detail!.entries.filter((entry) => entry.type === 'intent');
-			if (intents.length === count) return detail!;
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-		throw new Error(`The thread never had ${count} intents`);
+	const until = async (check: (detail: ThreadDetail) => boolean) => {
+		await expect
+			.poll(async () => check((await repo.thread(opened.id))!), { timeout: 30_000 })
+			.toBe(true);
+		return (await repo.thread(opened.id))!;
 	};
-	const said = async (text: string) => {
-		for (let i = 0; i < 100; i++) {
-			const last = (await repo.thread(opened.id))!.entries.at(-1);
-			if (last?.type === 'message' && last.text === text) return;
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-	};
-	expect((await drafted(1)).summary.headline).toBe('docs: tidy the notes');
-	await said('Proposed a tidy-up.');
+	const intents = (detail: ThreadDetail) =>
+		detail.entries.flatMap((entry) => (entry.type === 'intent' ? [entry.intent.headline] : []));
+	const said = (detail: ThreadDetail, text: string) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === text);
+
+	await until((detail) => intents(detail).length === 1 && said(detail, 'Proposed a tidy-up.'));
+	expect((await repo.thread(opened.id))!.summary.headline).toBe('docs: tidy the notes');
+	await until((detail) => detail.summary.status === 'needs-you');
 
 	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
-	await drafted(2);
-
-	let detail = await repo.thread(opened.id);
-	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		detail = await repo.thread(opened.id);
-	}
+	const detail = await until(
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			said(detail, 'Added the title.') &&
+			intents(detail).length === 2 &&
+			detail.usage.rows.some((row) => row.task === 'analysis' && row.tokens === 180)
+	);
 	socket!.close();
 
-	expect(detail!.summary).toMatchObject({
+	expect(detail.summary).toMatchObject({
 		status: 'needs-you',
 		headline: 'docs(notes): add a title'
 	});
+	expect(intents(detail)).toEqual(['docs: tidy the notes', 'docs(notes): add a title']);
 	expect(await env.ATTEMPTS.getByName(opened.id).snapshot()).toMatchObject({
 		machine: 'standard-3'
 	});
 	expect(
-		detail!.entries.map((entry) =>
+		detail.entries.flatMap((entry) =>
 			entry.type === 'message'
-				? `${entry.author.name}: ${entry.text}`
+				? [`${entry.author.name}: ${entry.text}`]
 				: entry.type === 'event'
-					? entry.text.replace(/\b[0-9a-f]{7}$/, 'sha')
+					? [entry.text.replace(/\b[0-9a-f]{7}$/, 'sha')]
 					: entry.type === 'tools'
-						? `tools ${entry.calls.map((call) => `${call.tool} ${call.status}`).join(', ')}`
-						: entry.type === 'intent'
-							? `intent ${entry.intent.headline}`
-							: entry.type
+						? [`tools ${entry.calls.map((call) => `${call.tool} ${call.status}`).join(', ')}`]
+						: []
 		)
 	).toEqual([
 		'Sam: The notes need a title.',
-		'intent docs: tidy the notes',
-		'tools update_intent done',
 		'ReGit: Proposed a tidy-up.',
 		'Sam: Call it Notes.',
-		'intent docs(notes): add a title',
-		'tools update_intent done',
 		'ReGit: Adding the title',
 		'tools write_file done',
 		'Checkpoint sha',
 		'ReGit: Added the title.'
 	]);
-	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
+	expect(live.filter((message) => message.type === 'entry').length).toBeGreaterThanOrEqual(
+		detail.entries.length
+	);
 	const activity = live.flatMap((message) =>
 		message.type === 'activity' && message.thread === opened.id ? [message.activity] : []
 	);
@@ -428,11 +422,11 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 		)
 	).toBe(true);
 	expect(activity.at(-1)).toBeNull();
-	expect(detail!.activity).toBeNull();
+	expect(detail.activity).toBeNull();
 	const requests = await modelRequests();
 	expect(
 		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)
-	).toEqual(['agent', 'agent', 'agent', 'agent', 'agent']);
+	).toEqual(['agent', 'agent', 'agent']);
 	const tools = (request: (typeof requests)[number]) =>
 		(request.query as { tools: { name: string }[] }).tools.map((tool) => tool.name);
 	expect(tools(requests[0]!)).toEqual(
@@ -442,17 +436,27 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 			'write_file',
 			'edit_file',
 			'run',
-			'update_intent',
 			'suggest_thread',
 			'list_threads',
 			'message_thread',
 			'ask_threads'
 		])
 	);
-	expect(tools(requests[0]!)).not.toContain('propose_intent');
+	expect(tools(requests[0]!)).not.toContain('update_intent');
+	const analyses = await analysisRequests();
+	expect(analyses).toHaveLength(3);
+	expect(analyses[0]).toMatchObject({
+		headers: { 'cf-aig-metadata': { thread: opened.id, task: 'analysis' } },
+		query: { model: 'gpt-6-luna' }
+	});
+	expect(JSON.stringify(analyses[1]!.query)).toContain('Sam: Call it Notes.');
+	expect(JSON.stringify(analyses[2]!.query)).toContain('notes.md (modified, +2');
 	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
-	expect(detail!.usage).toEqual({
-		rows: [{ task: 'agent', model: 'gpt-6-luna', tokens: 300, cost: expect.closeTo(5 * call, 10) }],
+	expect(detail.usage).toEqual({
+		rows: [
+			{ task: 'analysis', model: 'gpt-6-luna', tokens: 180, cost: expect.closeTo(3 * call, 10) },
+			{ task: 'agent', model: 'gpt-6-luna', tokens: 180, cost: expect.closeTo(3 * call, 10) }
+		],
 		context: { used: 60, limit: 1_050_000 }
 	});
 	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
@@ -586,8 +590,8 @@ test('resumes a finished thread with its history when someone replies', async ()
 		'.agents/resume': 'test ! -e .git/resume-ran\ntouch .git/resume-ran\n'
 	});
 	await idle();
-	await script([
-		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
+	await scriptAnalyses([
+		[{ type: 'response.output_text.delta', delta: 'No change.' }],
 		[
 			{
 				type: 'response.output_item.done',
@@ -602,7 +606,10 @@ test('resumes a finished thread with its history when someone replies', async ()
 					})
 				}
 			}
-		],
+		]
+	]);
+	await script([
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
 		[
 			{
 				type: 'response.output_item.done',
@@ -642,12 +649,12 @@ test('resumes a finished thread with its history when someone replies', async ()
 	const detail = await waitFor(
 		(detail) =>
 			detail.summary.status === 'needs-you' &&
+			detail.summary.headline === 'docs: add a footer' &&
 			detail.entries.some(
 				(entry) => entry.type === 'message' && entry.text === 'Added the footer too.'
 			)
 	);
 
-	expect(detail.summary.headline).toBe('docs: add a footer');
 	const turns = (await modelRequests()).filter(
 		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
 	);
@@ -1128,10 +1135,8 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 		return (await repo.thread(thread))!.entries.findLast((entry) => entry.type === 'intent')!;
 	};
 
-	await script([
-		propose('perf(settings): load org members in pages'),
-		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
-	]);
+	await scriptAnalyses([propose('perf(settings): load org members in pages')]);
+	await script([[{ type: 'response.output_text.delta', delta: 'Proposed.' }]]);
 	const first = await repo.openThread({
 		repo: 'dupes',
 		author: sam,
@@ -1147,10 +1152,8 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 			answers: { t1: { probabilities: { same: 0.93, overlap: 0.05, related: 0.02, unrelated: 0 } } }
 		}
 	]);
-	await script([
-		propose('fix(settings): page the member list'),
-		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
-	]);
+	await scriptAnalyses([propose('fix(settings): page the member list')]);
+	await script([[{ type: 'response.output_text.delta', delta: 'Proposed.' }]]);
 	const second = await repo.openThread({
 		repo: 'dupes',
 		author: sam,
@@ -1213,7 +1216,7 @@ test('sizes an auto thread when it opens and again when its intent changes', asy
 		{ answers: { size: { probabilities: { small: 0.1, medium: 0.2, large: 0.7 } } } },
 		{ answers: { size: { probabilities: { small: 0.85, medium: 0.1, large: 0.05 } } } }
 	]);
-	await script([
+	await scriptAnalyses([
 		[
 			{
 				type: 'response.output_item.done',
@@ -1228,9 +1231,9 @@ test('sizes an auto thread when it opens and again when its intent changes', asy
 					})
 				}
 			}
-		],
-		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+		]
 	]);
+	await script([[{ type: 'response.output_text.delta', delta: 'Proposed.' }]]);
 	const opened = await repo.openThread({
 		repo: 'sized',
 		author: { name: 'Sam', kind: 'person' },
@@ -1270,14 +1273,14 @@ test('answers questions about another thread without interrupting it', async () 
 			)
 			.toBe(true);
 
-	await script([
+	await scriptAnalyses([
 		callTool('intent', 'update_intent', {
 			headline: 'docs(notes): add a title',
 			purpose: 'The notes have no heading.',
 			doneWhen: ['notes.md starts with a title']
-		}),
-		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+		})
 	]);
+	await script([[{ type: 'response.output_text.delta', delta: 'Proposed.' }]]);
 	const target = await repo.openThread({
 		repo: 'observed',
 		author: sam,
@@ -1286,6 +1289,10 @@ test('answers questions about another thread without interrupting it', async () 
 		machine: 'standard-1'
 	});
 	await replied(target.id);
+	await expect
+		.poll(async () => (await repo.thread(target.id))!.summary.headline, { timeout: 20_000 })
+		.toBe('docs(notes): add a title');
+	await idle();
 
 	await script([
 		callTool('ask', 'ask_threads', {

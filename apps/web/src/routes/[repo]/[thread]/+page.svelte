@@ -69,7 +69,7 @@
 	const agent: Author = { name: 'ReGit', kind: 'agent' };
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
-	const tasks = { agent: 'Agent', search: 'Thread search' };
+	const tasks = { agent: 'Agent', analysis: 'Thread analysis', search: 'Thread search' };
 
 	let { params } = $props();
 

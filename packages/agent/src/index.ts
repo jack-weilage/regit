@@ -26,6 +26,7 @@ export {
 	type Skill
 } from './skills.ts';
 export { askThreads, askThreadsTools } from './search.ts';
+export { analyzeThread } from './analysis.ts';
 export { combineTools } from './tools.ts';
 export { runAgent, type AgentOutcome } from './loop.ts';
 export { modes, searcher, type Mode } from './modes.ts';

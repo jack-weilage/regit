@@ -3,7 +3,7 @@ import { expect, test } from 'vitest';
 import type { ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
-const { dir, worker, seed, commit, sh, idle, script } = await setup();
+const { dir, worker, seed, commit, sh, idle, script, scriptAnalyses } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
 const intent = {
 	headline: 'docs: add a title',
@@ -50,11 +50,8 @@ async function finishedThread(name: string) {
 		.bind(name, 'editor', 'editor')
 		.run();
 	await idle();
-	await script([
-		tool('update_intent', intent),
-		tool('write_file', { path: 'notes.md', content: '# Notes\n' }),
-		say('Done.')
-	]);
+	await scriptAnalyses([tool('update_intent', intent)]);
+	await script([tool('write_file', { path: 'notes.md', content: '# Notes\n' }), say('Done.')]);
 	const repo = env.REPOS.getByName(name);
 	const opened = await repo.openThread({
 		repo: name,
@@ -64,7 +61,13 @@ async function finishedThread(name: string) {
 		machine: 'standard-1'
 	});
 	const id = opened.id;
-	const detail = await until(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const detail = await until(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some((entry) => entry.type === 'intent')
+	);
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
 	return { env, repo, id, detail, work, canonical, original };
 }

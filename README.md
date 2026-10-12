@@ -18,7 +18,7 @@ Forge serves `git.regit.dev` outside Access, authenticating clone/fetch with has
 
 ## Threads and publication
 
-Each thread has one agent, running in its own Durable Object with its own fork of the repository. It answers, investigates and edits whenever someone in the thread asks, and keeps the thread's intent (a headline, purpose and done-when checks) current with `update_intent`. The intent explains what the thread's changes are for: people follow it, and other threads' agents use it to spot duplicate or overlapping work and to understand the changes later.
+Each thread has one agent, running in its own Durable Object with its own fork of the repository. It answers, investigates and edits whenever someone in the thread asks. A small analysis model runs alongside it after each person's message and each turn that leaves changes, keeping the thread's intent (a headline, purpose and done-when checks) current. The intent explains what the thread's changes are for: people follow it, and other threads' agents use it to spot duplicate or overlapping work and to understand the changes later.
 
 Preparing a candidate does not publish it. A separate Git-only publisher constructs a single commit against an exact canonical head, and a repository owner explicitly approves that exact candidate. Publication uses a conditional ref update; a stale base requires preparing and approving a new candidate. Thread containers never receive canonical write authority.
 
