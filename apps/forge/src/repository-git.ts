@@ -50,10 +50,9 @@ export class RepositoryGit extends DurableObject<Env> {
 				await this.#access(canonical, canonicalInfo.remote),
 				await this.#access(candidateRepo, fork.remote, true)
 			];
-			const fetch = await this.#sandbox();
 			try {
 				await this.#allow(targets);
-				const workspace = sandboxWorkspace(fetch);
+				const workspace = sandboxWorkspace(await this.#sandbox());
 				await workspace.clone({ remote: sourceInfo.remote, branch: revision.branch });
 				const branch =
 					(await workspace.headBranch({ remote: canonicalInfo.remote })) ??
@@ -93,10 +92,9 @@ export class RepositoryGit extends DurableObject<Env> {
 				await this.#access(canonical, canonicalInfo.remote),
 				...sources.map(({ access }) => access)
 			];
-			const fetch = await this.#sandbox();
 			try {
 				await this.#allow(targets);
-				return await sandboxWorkspace(fetch).compare({
+				return await sandboxWorkspace(await this.#sandbox()).compare({
 					remote: canonicalInfo.remote,
 					forks: sources.map(({ fork, remote }) => ({ id: fork.id, remote, branch: fork.branch }))
 				});
@@ -137,10 +135,9 @@ export class RepositoryGit extends DurableObject<Env> {
 				await this.#access(source, sourceInfo.remote),
 				await this.#access(canonical, canonicalInfo.remote, true)
 			];
-			const fetch = await this.#sandbox();
 			try {
 				await this.#allow(targets.map((target) => ({ ...target, push: false })));
-				const workspace = sandboxWorkspace(fetch);
+				const workspace = sandboxWorkspace(await this.#sandbox());
 				await workspace.clone({ remote: sourceInfo.remote, branch: candidate.branch });
 				await this.#allow(targets);
 				await run(workspace, canonicalInfo.remote);
@@ -174,6 +171,7 @@ export class RepositoryGit extends DurableObject<Env> {
 		}
 	}
 
+	// Call after #allow: the container only trusts the interception CA if interception exists when it starts.
 	async #sandbox(): Promise<Fetch> {
 		if (this.env.SANDBOX_URL) {
 			const base = `${this.env.SANDBOX_URL}/${this.ctx.id.name ?? this.ctx.id.toString()}`;

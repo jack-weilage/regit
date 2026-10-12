@@ -192,12 +192,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				value TEXT NOT NULL
 			);
 		`);
-		// TODO: remove once every repository's coordinator has the behind column.
-		try {
-			this.#sql.exec('ALTER TABLE threads ADD COLUMN behind TEXT');
-		} catch {
-			/* Already added. */
-		}
 	}
 
 	async openThread({
