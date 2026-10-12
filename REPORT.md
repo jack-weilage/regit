@@ -459,7 +459,7 @@ Avoid the phrases "no PRs" and "no humans". Say: **"the PR becomes an evidence-b
 
 A sixth scene shows collision *avoidance*. Two threads claim the same symbol and get an advisory overlap warning the moment the second one is created. When the first lands, only the overlapping thread receives a `base_moved` event. An unrelated thread that is also behind main is left alone. The warned thread re-syncs early and lands with zero hand-backs.
 
-Across the run there were 10 landings, 2 hand-backs, 15 signed evidence envelopes (all verified) and 8 reuses of cached evidence.
+Across the run there were 10 landings, 2 hand-backs, 15 signed evidence envelopes (all verified) and 8 reuses of cached evidence. A benchmark (\`prototype/bench.py\`) shows where a single lane's time goes. The git ref swap plus note costs about 13 ms, so git alone could sustain roughly 4,500 landings a minute. The lander actually managed about 132 a minute with a near-instant test suite. Adding 0.5 s to the suite halved that to about 65, because every landing needs a fresh combined test once main has moved. At a realistic 2-minute suite, one lane lands about 30 changes an hour. The trunk ref isn't the limit; verification time is, so partitioning and test-impact analysis are what scale landing.
 
 **A buildable spec is in the repo** at `research/60-build-spec-landing-layer.md` (about 4,000 words). It covers:
 
