@@ -901,7 +901,11 @@ test('warns threads that conflict with a landing and merges main only when asked
 	};
 	await repo.landed(landing);
 	const warned = (await repo.thread(id))!;
-	expect(warned.summary.conflicts).toEqual({ files: ['notes.md'], headline: 'Better notes' });
+	expect(warned.summary.conflicts).toEqual({
+		files: ['notes.md'],
+		sha: main,
+		headline: 'Better notes'
+	});
 	expect(warned.entries.at(-1)).toMatchObject({
 		type: 'event',
 		text: 'Main moved: "Better notes" conflicts with this thread in notes.md'

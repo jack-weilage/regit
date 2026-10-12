@@ -733,7 +733,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			const was = this.#summary(id)!.conflicts;
 			this.#sql.exec(
 				'UPDATE threads SET conflicts = ? WHERE id = ?',
-				files.length ? JSON.stringify({ files, headline }) : null,
+				files.length ? JSON.stringify({ files, sha: scan.main, headline }) : null,
 				id
 			);
 			if (files.length && JSON.stringify(was?.files) !== JSON.stringify(files))
@@ -1222,7 +1222,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }
 				: null,
 		conflicts: row.conflicts
-			? (JSON.parse(row.conflicts) as { files: string[]; headline: string })
+			? (JSON.parse(row.conflicts) as { files: string[]; sha: string; headline: string })
 			: null
 	};
 }

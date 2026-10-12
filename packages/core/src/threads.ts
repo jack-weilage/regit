@@ -105,7 +105,7 @@ export interface ThreadSummary {
 	parent: { id: string; headline: string } | null;
 	changes: DiffSummary | null;
 	shipped: { sha: string; by: string; at: number } | null;
-	conflicts: { files: string[]; headline: string } | null;
+	conflicts: { files: string[]; sha: string; headline: string } | null;
 }
 
 export interface ShipInput {
