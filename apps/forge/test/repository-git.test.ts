@@ -33,6 +33,7 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 		revision: revision.id,
 		intent: 'intent',
 		requestedBy: { name: 'Sam', kind: 'person' },
+		approvedBy: null,
 		email: 'sam@example.com',
 		title: 'Ship pinned',
 		body: '',

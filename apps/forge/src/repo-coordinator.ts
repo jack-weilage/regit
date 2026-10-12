@@ -898,6 +898,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			revision: revision.id,
 			intent: accepted.id,
 			requestedBy: by,
+			approvedBy: null,
 			email,
 			title,
 			body,
@@ -933,7 +934,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#requireDependencies(thread);
 		if (this.#acceptance.promotions().some((p) => p.status === 'publishing'))
 			throw new Error('Another publication is being reconciled. Try again when it completes.');
-		this.#acceptance.putPromotion({ ...promotion, status: 'publishing', requestedBy: by });
+		this.#acceptance.putPromotion({ ...promotion, status: 'publishing', approvedBy: by });
 		this.#setStatus(thread, 'shipping');
 		this.#add(thread, {
 			type: 'event',
@@ -990,7 +991,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 						source: revision,
 						intent: this.#acceptance.acceptedIntent(p.intent),
 						assessment: p.assessment,
-						authorizedBy: p.requestedBy
+						authorizedBy: p.approvedBy
 					})
 				);
 				this.#acceptance.putPromotion({ ...p, notesPublished: true, error: null });
@@ -1004,7 +1005,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 					'UPDATE threads SET shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
 					p.candidate!.sha,
 					Date.now(),
-					p.requestedBy.name,
+					p.approvedBy!.name,
 					p.proposal
 				);
 				this.#setStatus(p.proposal, 'shipped');

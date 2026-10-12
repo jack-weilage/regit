@@ -69,6 +69,7 @@ export interface Promotion {
 	revision: string;
 	intent: string;
 	requestedBy: Author;
+	approvedBy: Author | null;
 	email: string;
 	title: string;
 	body: string;

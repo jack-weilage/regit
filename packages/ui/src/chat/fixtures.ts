@@ -62,6 +62,7 @@ export const readyPromotion: Promotion = {
 	revision: 'revision-1',
 	intent: 'intent-1',
 	requestedBy: acceptance.acceptedIntent!.acceptedBy,
+	approvedBy: null,
 	email: 'sam@example.com',
 	title: acceptance.acceptedIntent!.intent.headline,
 	body: acceptance.acceptedIntent!.intent.purpose,
