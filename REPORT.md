@@ -218,6 +218,26 @@ Cross-repo atomic landing is weak everywhere, so a campaign orders changes as ex
 9. **Rollout.** Config is staged like code. Health-mediated canaries, flake-aware culprit finding over the landing log, and guarded auto-revert apply, and a fix-forward is handed back to the thread that caused the problem.
 10. **Learning.** Every human answer, revert and incident updates the policy and the lane thresholds. Autonomy is *earned per path* from landed-without-revert records and lost automatically after incidents.
 
+### A day with this forge (illustrative, late 2027)
+
+This composite scenario comes from the human-attention design. The numbers are assumptions, not measurements. The point is the *shape* of the job.
+
+A staff engineer at a 200-person fintech sponsors 18 intents with 312 threads running under them. Overnight there were 241 landings. 22 decisions were answered by precedent. One currency-format change failed its 1% canary, was auto-reverted, and was re-derived by its own thread.
+
+She spends **66 minutes on 24 decisions** in three scheduled sessions:
+
+- She picks one of three empty-state designs. The forge offers her reason back as a precedent, which goes into shadow mode.
+- She signs a teach-back attestation that she understands an idempotency-key change in settlement code.
+- She resolves two intents that both wanted to own retry behaviour. No code conflict ever reached her.
+- She accepts only phase 1 of an irreversible schema change that the forge had already split into add-then-activate.
+- She catches a planted "canary" error in a walkthrough. Canaries measure whether approvers are actually reading.
+
+She gets one phone interrupt, a 90-second passkey approval for a credential rotation that was blocking 14 threads. The rest of the day is deep work writing next quarter's intents.
+
+The compliance lead's view that evening: 4,920 landings and 431 human decisions (an escalation rate of 0.09), all irreversible accepts signed. A learned taste model agreed with humans 91% of the time on web UI but only 78% on dispute flows, so dispute flows stay human-only.
+
+Nobody read a transcript, and the only code anyone read all day was the settlement walkthrough. Every irreversible effect still had a named human on it.
+
 ### Proof for what a preview cannot show
 
 "Every change is bootable" holds for UI and stateless code. It breaks on state, time, external systems and scale. So the forge classifies each change by its *effect* and requires the matching kind of proof.
@@ -240,6 +260,17 @@ Each piece of evidence should record which dependencies were isolated, shared, m
 - **Show humans raw transcripts**; it shows answers to "why" with citations to specific messages.
 - **Make thread links public**; access to a thread follows the strictest access of anything it read.
 - **Build another storage engine or another orchestrator UI**; those are commodities, and orchestrators should submit *into* the forge.
+
+### How it gets paid for
+
+Charge **per verified landing, sold as monthly capacity**. Compute and model costs pass through near cost, or customers bring their own runners and keys. Charge seats only for humans with authority: approvers and policy owners. A rough range is $0.25–2 per landing, tiered by risk class.
+
+Why this unit:
+
+- **Storage is not where the money is.** A repo per agent costs about $0.003 per thread on Cloudflare Artifacts. CI costs about $0.10–1.00 per landing, and inference is the largest variable cost.
+- **Incumbents kept the seat but turned it into a wallet.** GitHub moved Copilot to token-based AI Credits on Jun 1 2026, with each seat including credits worth its price. GitLab moved agents to pooled $1 credits and charges a flat $0.25 per agentic code review.
+- **The closest precedent for paying for verified results** is Depot, which charges only for passing tests.
+- **Analysts favour hybrid capacity pricing.** Bain (Aug 2026) says software outcomes are hard to measure, which makes pure outcome pricing a poor fit.
 
 ## Bottlenecks as intelligence gets cheaper
 
@@ -329,37 +360,6 @@ One step up, at a company with 802 developers (196k PRs), agents roughly doubled
 
 So the regulated version of the forge is: **humans approve policies, policy approves changes, and approver ≠ requester is enforced as an invariant.** Two exceptions explicitly require human review: SLSA Source L4 (two-party review) and the optional NIST SA-11(4). Roll out in shadow mode first. Run the policy engine over the existing PR flow for a quarter and publish "what would have auto-landed and its revert rate" before switching.
 
-### A day with this forge (illustrative, late 2027)
-
-This composite scenario comes from the human-attention design. The numbers are assumptions, not measurements. The point is the *shape* of the job.
-
-A staff engineer at a 200-person fintech sponsors 18 intents with 312 threads running under them. Overnight there were 241 landings. 22 decisions were answered by precedent. One currency-format change failed its 1% canary, was auto-reverted, and was re-derived by its own thread.
-
-She spends **66 minutes on 24 decisions** in three scheduled sessions:
-
-- She picks one of three empty-state designs. The forge offers her reason back as a precedent, which goes into shadow mode.
-- She signs a teach-back attestation that she understands an idempotency-key change in settlement code.
-- She resolves two intents that both wanted to own retry behaviour. No code conflict ever reached her.
-- She accepts only phase 1 of an irreversible schema change that the forge had already split into add-then-activate.
-- She catches a planted "canary" error in a walkthrough. Canaries measure whether approvers are actually reading.
-
-She gets one phone interrupt, a 90-second passkey approval for a credential rotation that was blocking 14 threads. The rest of the day is deep work writing next quarter's intents.
-
-The compliance lead's view that evening: 4,920 landings and 431 human decisions (an escalation rate of 0.09), all irreversible accepts signed. A learned taste model agreed with humans 91% of the time on web UI but only 78% on dispute flows, so dispute flows stay human-only.
-
-Nobody read a transcript, and the only code anyone read all day was the settlement walkthrough. Every irreversible effect still had a named human on it.
-
-### How it gets paid for
-
-Charge **per verified landing, sold as monthly capacity**. Compute and model costs pass through near cost, or customers bring their own runners and keys. Charge seats only for humans with authority: approvers and policy owners. A rough range is $0.25–2 per landing, tiered by risk class.
-
-Why this unit:
-
-- **Storage is not where the money is.** A repo per agent costs about $0.003 per thread on Cloudflare Artifacts. CI costs about $0.10–1.00 per landing, and inference is the largest variable cost.
-- **Incumbents kept the seat but turned it into a wallet.** GitHub moved Copilot to token-based AI Credits on Jun 1 2026, with each seat including credits worth its price. GitLab moved agents to pooled $1 credits and charges a flat $0.25 per agentic code review.
-- **The closest precedent for paying for verified results** is Depot, which charges only for passing tests.
-- **Analysts favour hybrid capacity pricing.** Bain (Aug 2026) says software outcomes are hard to measure, which makes pure outcome pricing a poor fit.
-
 ## What to build first
 
 Build the **landing layer**, not a new host: a change identity that survives rebase, evidence the forge produces and signs, per-path policy over that evidence, and a lander that hands collisions back to the thread that caused them. This is the one piece every design converged on, the piece nobody ships, and it works on top of any git host. Never build a storage engine, an orchestrator UI, CRDT co-editing, or an LLM that picks merge hunks.
@@ -439,12 +439,6 @@ The seven designs produced primitives that no shipping product has yet. These ar
 - **Comprehension ledger.** For each critical module: who last attested understanding, at which tree, and how much code has churned since. A walkthrough is scheduled when churn crosses a threshold, so somebody can still debug it at 3 a.m.
 - **Proof-of-human.** Every Decision answer needs a fresh passkey assertion (Amp shipped a primitive like this in May 2026). An agent holding a human's token can read decisions but never answer them.
 
-**Making verification cheap**
-
-- **Verification facts as a content-addressed cache.** A signed result of "these exact inputs produced this outcome" is reused by every rebase, best-of-N candidate and batch with the same inputs, so N candidates cost far less than N times as much.
-- **Predicted-pass admission.** Order speculative builds by predicted success, as Uber does, and refuse admission under overload, because throughput collapses rather than plateaus.
-- **Pay for passing.** Sell verified landings rather than CI minutes.
-
 **Changes as intent**
 
 - **Obligations instead of text conflicts.** Two changes conflict when their *obligations* cannot all hold on the combined state, not when their text overlaps. Real intent conflicts go to the intent owners with a minimal counterexample.
@@ -474,8 +468,8 @@ Watch for these over the next 12–24 months. Each one says which way the forge 
 
 The research left some questions open:
 
-- **Do reviewers read linked transcripts at all?** No study measures it. That is the biggest unknown behind "share threads".
-- **How often do concurrent agent changes collide semantically?** Only textual conflicts have been measured: 41.7% of cross-agent pairs. Semantic rates are unmeasured, and the landing math depends on them.
+- **Do reviewers read linked transcripts at all?** No study measures it. The nearest evidence comes from a study of 265 PRs that linked shared ChatGPT conversations (Jun 2026 preprint). How well the prompts asked for verification predicted whether the code was adopted, but no prompt quality predicted merge. Separately, AI-attribution disclosure brought about 21–23% more questions and comments. Meanwhile, about 61% of public agent PRs have no recorded human review at all. That is the biggest unknown behind "share threads".
+- **How often do concurrent agent changes collide semantically?** Only textual conflicts have been measured: 41.7% of cross-agent pairs. Semantic rates are unmeasured, and the landing math depends on them. Even the best broken-main data (Mergify, 200K+ merges) has no separate metric for changes that pass alone and fail together. That data found AI-assisted PRs broke main less often (1.9% vs 4.4%), and broken main rising from 0.77% at teams of 2–5 engineers to 12.5% at 40+. A forge that owns landing is the only place this rate can be measured.
 - **Does reviewing proof artifacts catch as many defects as reading diffs?** No controlled study exists.
 - **What is Anthropic's internal merge queue?** It exists ("merge queue stats"), but no post describes it.
 - **What share of internal PRs land with no human approver, by risk tier?** No lab discloses it.
