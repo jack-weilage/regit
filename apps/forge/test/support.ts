@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll } from 'vitest';
 import type { GatewayRequest, JevRequest, JevResponse } from '@regit/agent';
-import type { AttemptInput } from '../src/attempt-sandbox.ts';
+import type { Machine, Mode } from '@regit/core';
 import type FakeModels from './fake-models.ts';
 import { startGitServer } from './git-process.ts';
 import { startSandbox } from './sandbox-process.ts';
@@ -103,8 +103,17 @@ export async function setup({ containers = false } = {}) {
 		);
 	}
 
-	function start(thread: string, input: AttemptInput) {
-		return worker.getEnv().then((env) => env.ATTEMPTS.getByName(thread).start(input));
+	async function start(
+		thread: string,
+		{ task, ...input }: { task: string; mode: Mode; repo: string; machine?: Machine }
+	) {
+		const env = await worker.getEnv();
+		await env.ATTEMPTS.getByName(thread).converse({
+			...input,
+			author: 'Sam',
+			text: task,
+			entry: ''
+		});
 	}
 
 	async function settled(thread: string, timeoutMs = 120_000) {

@@ -12,7 +12,6 @@ const verbs: Record<string, [running: string, done: string]> = {
 	find_files: ['Finding', 'Found'],
 	search: ['Searching for', 'Searched for'],
 	run: ['Running', 'Ran'],
-	propose_intent: ['Proposing', 'Proposed'],
 	update_intent: ['Updating the intent to', 'Updated the intent to'],
 	suggest_thread: ['Suggesting', 'Suggested'],
 	list_threads: ['Listing threads', 'Listed threads'],
@@ -37,7 +36,7 @@ export function summarizeTools(calls: ToolCallRecord[]) {
 		count('edit_file', 'write_file') &&
 			`edited ${plural(count('edit_file', 'write_file'), 'file', 'files')}`,
 		count('run') && `ran ${plural(count('run'), 'command', 'commands')}`,
-		count('propose_intent', 'update_intent') && 'updated the intent',
+		count('update_intent') && 'updated the intent',
 		count('suggest_thread') && `suggested ${plural(count('suggest_thread'), 'thread', 'threads')}`,
 		count('list_threads') && 'listed threads',
 		count('message_thread') && `messaged ${plural(count('message_thread'), 'thread', 'threads')}`,

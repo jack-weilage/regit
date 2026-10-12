@@ -6,7 +6,7 @@ test('lists the other threads and messages one of them', async () => {
 	const tools = threadTools({
 		list: async () => [
 			{ id: 'abc123', headline: 'feat(api): rename user id', status: 'running' as const },
-			{ id: 'def456', headline: '', status: 'draft' as const }
+			{ id: 'def456', headline: '', status: 'needs-you' as const }
 		],
 		send: async (thread, text) => {
 			sent.push({ thread, text });
@@ -16,7 +16,7 @@ test('lists the other threads and messages one of them', async () => {
 	expect(tools.specs.map((spec) => spec.name)).toEqual(['list_threads', 'message_thread']);
 
 	expect(await tools.execute({ id: 'l', name: 'list_threads', arguments: '{}' })).toBe(
-		'abc123 · running · feat(api): rename user id\ndef456 · draft · New thread'
+		'abc123 · running · feat(api): rename user id\ndef456 · needs-you · New thread'
 	);
 	expect(
 		await tools.execute({

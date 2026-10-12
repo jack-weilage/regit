@@ -52,7 +52,7 @@
 
 <Story name="Needs you" args={{ status: 'needs-you' }} />
 <Story name="Shipped" args={{ status: 'shipped', onpreview: undefined }} />
-<Story name="Draft" args={{ status: 'draft', parent: undefined, people: [], actions: [] }} />
+<Story name="Idle" args={{ status: 'needs-you', parent: undefined, people: [], actions: [] }} />
 
 <Story name="Narrow" asChild>
 	<div style="inline-size: 22rem">

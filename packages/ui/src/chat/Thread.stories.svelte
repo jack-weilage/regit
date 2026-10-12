@@ -11,9 +11,9 @@
 	import ChatLog from './ChatLog.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import AcceptancePanel from './AcceptancePanel.svelte';
-	import { acceptance, readyPromotion, mentionables, similarThreads } from './fixtures.ts';
-	import type { ProposalControl, ThreadStatus } from '@regit/core';
+	import PublishPanel from './PublishPanel.svelte';
+	import { intent as members, readyPromotion, mentionables, similarThreads } from './fixtures.ts';
+	import type { Promotion, ThreadStatus } from '@regit/core';
 	import type { Author, Mentionable, SimilarThread } from './types.ts';
 
 	interface Intent {
@@ -39,7 +39,7 @@
 
 	const revisions: Intent[] = [
 		{
-			...acceptance.acceptedIntent!.intent,
+			...members,
 			similar: [similarThreads[3]!]
 		},
 		{
@@ -92,15 +92,9 @@
 		},
 		{ type: 'intent', id: id(), intent: revisions[0]! }
 	]);
-	let refining = $state(false);
 	let started = $state(false);
-	let status = $state<ThreadStatus>('draft');
-	let control = $state<ProposalControl>({
-		acceptedIntent: null,
-		runs: [],
-		revisions: [],
-		promotions: []
-	});
+	let status = $state<ThreadStatus>('needs-you');
+	let promotions = $state<Promotion[]>([]);
 	let intent = $derived(entries.findLast((entry) => entry.type === 'intent')!.intent);
 
 	let latestIntent = $derived(entries.findLast((entry) => entry.type === 'intent')?.id);
@@ -124,36 +118,25 @@
 
 	function send(text: string) {
 		add({ type: 'message', id: id(), author: sam, text });
-		if (started) return;
-
-		refining = true;
+		status = 'running';
 		setTimeout(() => {
-			const count = entries.filter((entry) => entry.type === 'intent').length;
-			add({ type: 'intent', id: id(), intent: revisions[count % revisions.length]! });
-			refining = false;
-		}, 1200);
-	}
-
-	async function accept() {
-		control.acceptedIntent = { ...acceptance.acceptedIntent!, intent };
-	}
-
-	async function start() {
-		await accept();
-		started = true;
-		status = 'needs-you';
-		control.runs = acceptance.runs;
-		control.revisions = acceptance.revisions;
-		add(
-			{ type: 'event', id: id(), text: 'Run 1 finished · revision captured' },
-			{
-				type: 'message',
-				id: id(),
-				author: agent,
-				text: 'Updated the member query and captured a revision. Ready to prepare an exact candidate.'
-			},
-			{ type: 'handoff', id: id(), intent: separateWork }
-		);
+			if (started) {
+				const count = entries.filter((entry) => entry.type === 'intent').length;
+				add({ type: 'intent', id: id(), intent: revisions[count % revisions.length]! });
+			} else {
+				add(
+					{
+						type: 'message',
+						id: id(),
+						author: agent,
+						text: 'Members now load as you scroll, and the checks pass.'
+					},
+					{ type: 'handoff', id: id(), intent: separateWork }
+				);
+			}
+			started = true;
+			status = 'needs-you';
+		}, 600);
 	}
 
 	function resolve(entryId: string, outcome: 'dismissed' | Mentionable) {
@@ -193,10 +176,16 @@
 					<ChatIntent
 						{...block.intent}
 						superseded={block.id !== latestIntent}
-						status={status === 'shipped' ? 'shipped' : started ? 'ready' : undefined}
+						status={status === 'shipped'
+							? 'shipped'
+							: promotions.length
+								? 'ready'
+								: status === 'running'
+									? 'working'
+									: 'needs-you'}
 						note={status === 'shipped'
 							? 'Shipped in a1b2c3d'
-							: control.promotions.length
+							: promotions.length
 								? 'Exact candidate awaits owner approval'
 								: undefined}
 					/>
@@ -223,25 +212,23 @@
 					<ChatEvent>{block.text}</ChatEvent>
 				{/if}
 			{/each}
-			<AcceptancePanel
-				{control}
-				{intent}
-				{status}
-				hasChanges={started}
-				onaccept={accept}
-				onstart={start}
-				onprepare={async (commit) => {
-					control.promotions = [{ ...readyPromotion, ...commit }];
-				}}
-				onapprove={async () => {
-					control.promotions = [
-						{ ...control.promotions[0]!, status: 'shipped', notesPublished: true }
-					];
-					status = 'shipped';
-				}}
-			/>
-			{#if refining}
-				<ChatActivity>Refining intent</ChatActivity>
+			{#if started || promotions.length}
+				<PublishPanel
+					{promotions}
+					{intent}
+					{status}
+					hasChanges={started && status !== 'shipped'}
+					onprepare={async (commit) => {
+						promotions = [{ ...readyPromotion, ...commit }];
+					}}
+					onapprove={async () => {
+						promotions = [{ ...promotions[0]!, status: 'shipped', notesPublished: true }];
+						status = 'shipped';
+					}}
+				/>
+			{/if}
+			{#if status === 'running'}
+				<ChatActivity>ReGit is working</ChatActivity>
 			{/if}
 		</ChatLog>
 		<div class="composer">
@@ -273,11 +260,8 @@
 	name="Start and spin off"
 	asChild
 	play={async ({ canvas, userEvent }) => {
-		await userEvent.click(canvas.getByRole('button', { name: 'Accept intent and start new run' }));
-		await waitFor(() =>
-			expect(canvas.getByText('Run 1 finished · revision captured')).toBeVisible()
-		);
-		await userEvent.click(canvas.getByRole('button', { name: 'Spin off' }));
+		await userEvent.type(canvas.getByRole('textbox', { name: 'Message' }), 'Go ahead.{Enter}');
+		await userEvent.click(await canvas.findByRole('button', { name: 'Spin off' }));
 		await waitFor(() => expect(canvas.getByText(/Spun off/)).toBeVisible());
 		await expect(
 			canvas.getByRole('link', { name: 'Stop loading the full audit log' })
@@ -291,8 +275,8 @@
 	name="Prepare and publish"
 	asChild
 	play={async ({ canvas, userEvent }) => {
-		await userEvent.click(canvas.getByRole('button', { name: 'Accept intent and start new run' }));
-		await userEvent.click(canvas.getByRole('button', { name: 'Prepare candidate' }));
+		await userEvent.type(canvas.getByRole('textbox', { name: 'Message' }), 'Go ahead.{Enter}');
+		await userEvent.click(await canvas.findByRole('button', { name: 'Prepare candidate' }));
 		await expect(canvas.getByRole('textbox', { name: 'Commit title' })).toHaveValue(
 			revisions[0]!.headline
 		);

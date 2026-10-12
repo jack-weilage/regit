@@ -6,11 +6,6 @@ export interface Intent {
 	doneWhen: string[];
 }
 
-export interface ConversationMessage {
-	author: string;
-	text: string;
-}
-
 export const intentParameters = {
 	type: 'object',
 	properties: {
@@ -32,27 +27,16 @@ export const intentParameters = {
 	required: ['headline', 'purpose', 'doneWhen']
 };
 
-const specs: ToolSpec[] = [
-	{
-		name: 'propose_intent',
-		description:
-			'Propose the change this thread should make. The person reviews it and decides whether to start the work.',
-		parameters: intentParameters
-	},
-	{
-		name: 'update_intent',
-		description:
-			'Propose a revised intent after the person refines what they want. This does not change the accepted intent for the current run; a person must accept it and start a new run.',
-		parameters: intentParameters
-	}
-];
+const spec: ToolSpec = {
+	name: 'update_intent',
+	description:
+		"Record what this thread is doing: the change, why it matters and when it's done. Call it once the goal of the work is clear and again whenever it changes. People read it to follow the thread, and other agents use it to spot duplicate or overlapping work and to understand the changes later.",
+	parameters: intentParameters
+};
 
-export function intentTools(
-	onIntent: (intent: Intent) => void | Promise<void>,
-	only?: ('propose_intent' | 'update_intent')[]
-): ToolExecutor {
+export function intentTools(onIntent: (intent: Intent) => void | Promise<void>): ToolExecutor {
 	return {
-		specs: only ? specs.filter((spec) => only.includes(spec.name as 'update_intent')) : specs,
+		specs: [spec],
 		async execute(call) {
 			const { headline, purpose, doneWhen } = JSON.parse(call.arguments) as Intent;
 			await onIntent({
@@ -60,15 +44,7 @@ export function intentTools(
 				purpose: purpose.trim(),
 				doneWhen: doneWhen.map((check) => check.trim()).filter(Boolean)
 			});
-			return call.name === 'propose_intent'
-				? 'Proposed. The person can now start the work or ask for changes.'
-				: 'Proposed the revised intent. The accepted intent for this run is unchanged.';
+			return 'Recorded the intent.';
 		}
 	};
-}
-
-export function describeTask(intent: Intent, conversation: ConversationMessage[]) {
-	const checks = intent.doneWhen.map((check) => `- ${check}`).join('\n');
-	const context = conversation.map(({ author, text }) => `${author}: ${text}`).join('\n\n');
-	return `${intent.headline}\n\n${intent.purpose}\n\nDone when:\n${checks}\n\nConversation:\n${context}`;
 }

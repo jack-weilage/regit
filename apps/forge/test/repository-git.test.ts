@@ -17,10 +17,7 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 	await harness.commit(work, { 'file.txt': 'later\n' }, 'later');
 	harness.sh(work, 'push', join(harness.dir, `${source}.git`), 'HEAD:main');
 	const revision: Revision = {
-		id: 'revision',
 		proposal: 'proposal',
-		run: 'run',
-		intent: 'intent',
 		repository: source,
 		branch: 'main',
 		base,
@@ -30,8 +27,8 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 	const promotion: Promotion = {
 		id: 'publish',
 		proposal: 'proposal',
-		revision: revision.id,
-		intent: 'intent',
+		source: revision,
+		intent: null,
 		requestedBy: { name: 'Sam', kind: 'person' },
 		approvedBy: null,
 		email: 'sam@example.com',
@@ -57,7 +54,7 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(candidate.sha);
 	await expect(publisher.notes(repo, candidate, 'invalid JSON')).rejects.toThrow();
 	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(candidate.sha);
-	const note = JSON.stringify({ revision: revision.id, sourceSha: sha });
+	const note = JSON.stringify({ source: revision });
 	await publisher.notes(repo, candidate, note);
 	expect(harness.sh(canonical, 'notes', '--ref=regit', 'show', candidate.sha)).toBe(note);
 });

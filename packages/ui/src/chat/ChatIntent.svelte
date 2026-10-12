@@ -59,7 +59,7 @@
 		onmessage
 	}: Props = $props();
 
-	const messageable = (status: ThreadStatus) => ['draft', 'running', 'shipping'].includes(status);
+	const messageable = (status: ThreadStatus) => ['running', 'needs-you'].includes(status);
 
 	let same = $derived(similar.find((thread) => thread.relation === 'same'));
 	let overlaps = $derived(similar.filter((thread) => thread.relation === 'overlap'));

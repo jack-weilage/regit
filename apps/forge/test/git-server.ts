@@ -57,6 +57,7 @@ function forkOnFirstUse(root: string, path: string) {
 	const name = path.split('/')[1]?.replace(/\.git$/, '');
 	const base = name?.split('--')[0];
 	if (!name || !base || base === name || existsSync(join(root, `${name}.git`))) return;
+	if (!existsSync(join(root, `${base}.git`))) return;
 	execFileSync('git', [
 		'clone',
 		'--quiet',

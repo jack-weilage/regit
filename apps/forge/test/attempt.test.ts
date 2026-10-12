@@ -156,10 +156,13 @@ test('runs the agent on a fork of the repository, checkpointing its work', async
 
 	const snapshot = await settled('thread-1');
 	expect(snapshot).toMatchObject({ status: 'finished', error: null });
-	expect(snapshot.steps).toHaveLength(2);
+	expect(snapshot.steps).toHaveLength(3);
+	expect(snapshot.steps[0]!.turns).toEqual([
+		{ role: 'user', text: 'Sam: Make the greeting say hi' }
+	]);
 
 	const fork = join(dir, 'greeting--thread-1.git');
-	const sha = snapshot.steps[0]!.checkpoint;
+	const sha = snapshot.steps[1]!.checkpoint;
 	expect(sha).toMatch(/^[0-9a-f]{40}$/);
 	expect(sh(fork, 'rev-parse', 'main')).toBe(sha);
 	expect(sh(fork, 'show', 'main:greeting.ts')).toBe("export const greeting = 'hi';");
@@ -176,7 +179,7 @@ test('runs the agent on a fork of the repository, checkpointing its work', async
 	expect(first).toMatchObject({
 		provider: 'openai',
 		endpoint: 'responses',
-		headers: { 'cf-aig-metadata': { thread: 'thread-1', mode: 'small', task: 'code' } },
+		headers: { 'cf-aig-metadata': { thread: 'thread-1', mode: 'small', task: 'agent' } },
 		query: { model: 'gpt-6-luna' }
 	});
 	expect((second!.query as { input: unknown[] }).input.at(-1)).toMatchObject({
@@ -201,11 +204,11 @@ test('fails the attempt when the model fails', async () => {
 	expect(await settled('thread-2')).toMatchObject({
 		status: 'failed',
 		error: 'No credits',
-		steps: []
+		steps: [{ turns: [{ role: 'user', text: 'Sam: Anything' }] }]
 	});
 });
 
-test('records a failed reply in the thread', async () => {
+test('records a failed agent turn in the thread', async () => {
 	await seed('drafts', { 'README.md': '# Drafts\n' });
 	await script([
 		[
@@ -230,7 +233,7 @@ test('records a failed reply in the thread', async () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		entries = (await repo.thread(opened.id))!.entries;
 	}
-	expect(entries.at(-1)).toMatchObject({ type: 'event', text: "Couldn't reply: No credits" });
+	expect(entries.at(-1)).toMatchObject({ type: 'event', text: 'The agent failed: No credits' });
 });
 
 test('discards, reopens, deletes, restores and purges a thread', async () => {
@@ -255,7 +258,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	expect((await repo.thread(id))!.summary.status).toBe('discarded');
 	await repo.reopen(id, sam);
 	const reopened = await repo.thread(id);
-	expect(reopened!.summary.status).toBe('draft');
+	expect(reopened!.summary.status).toBe('needs-you');
 	expect(reopened!.entries.map((entry) => entry.type === 'event' && entry.text)).toEqual(
 		expect.arrayContaining(['Discarded by Sam', 'Reopened by Sam'])
 	);
@@ -295,7 +298,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	expect(await repo.thread(later.id)).toMatchObject({ summary: { deleted: { by: 'Sam' } } });
 });
 
-test('coordinates a thread from conversation to a finished attempt, live', async () => {
+test('coordinates a thread from a request to recorded changes, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
 	const propose = (name: string, headline: string) => [
 		{
@@ -313,10 +316,9 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		}
 	];
 	await script([
-		propose('propose_intent', 'docs: tidy the notes'),
+		propose('update_intent', 'docs: tidy the notes'),
 		[{ type: 'response.output_text.delta', delta: 'Proposed a tidy-up.' }],
 		propose('update_intent', 'docs(notes): add a title'),
-		[{ type: 'response.output_text.delta', delta: 'Updated it.' }],
 		[
 			{ type: 'response.output_text.delta', delta: 'Adding the title' },
 			{
@@ -350,7 +352,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		machine: 'standard-3'
 	});
 	expect(opened).toMatchObject({
-		status: 'draft',
+		status: 'running',
 		headline: 'The notes need a title.',
 		machine: 'standard-3'
 	});
@@ -375,8 +377,6 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 
 	await repo.reply(opened.id, { author: sam, text: 'Call it Notes.' });
 	await drafted(2);
-	await said('Updated it.');
-	await repo.start(opened.id);
 
 	let detail = await repo.thread(opened.id);
 	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
@@ -389,7 +389,7 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 		status: 'needs-you',
 		headline: 'docs(notes): add a title'
 	});
-	expect(await env.ATTEMPTS.getByName(detail!.control!.runs.at(-1)!.id).snapshot()).toMatchObject({
+	expect(await env.ATTEMPTS.getByName(opened.id).snapshot()).toMatchObject({
 		machine: 'standard-3'
 	});
 	expect(
@@ -407,19 +407,15 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	).toEqual([
 		'Sam: The notes need a title.',
 		'intent docs: tidy the notes',
-		'tools propose_intent done',
+		'tools update_intent done',
 		'ReGit: Proposed a tidy-up.',
 		'Sam: Call it Notes.',
 		'intent docs(notes): add a title',
 		'tools update_intent done',
-		'ReGit: Updated it.',
-		'Repository member accepted the intent',
-		`Started run ${detail!.control!.runs.at(-1)!.id.slice(0, 8)}`,
 		'ReGit: Adding the title',
 		'tools write_file done',
 		'Checkpoint sha',
-		'ReGit: Added the title.',
-		'The attempt finished'
+		'ReGit: Added the title.'
 	]);
 	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
 	const activity = live.flatMap((message) =>
@@ -436,65 +432,38 @@ test('coordinates a thread from conversation to a finished attempt, live', async
 	const requests = await modelRequests();
 	expect(
 		requests.map((request) => (request.headers['cf-aig-metadata'] as { task: string }).task)
-	).toEqual(['conversation', 'conversation', 'conversation', 'conversation', 'code', 'code']);
+	).toEqual(['agent', 'agent', 'agent', 'agent', 'agent']);
 	const tools = (request: (typeof requests)[number]) =>
 		(request.query as { tools: { name: string }[] }).tools.map((tool) => tool.name);
-	expect(tools(requests[0]!)).toEqual([
-		'load_skill',
-		'view_image',
-		'read_file',
-		'find_files',
-		'search',
-		'run',
-		'read_guidance',
-		'propose_intent',
-		'update_intent',
-		'suggest_thread',
-		'list_threads',
-		'message_thread',
-		'ask_threads'
-	]);
-	expect(tools(requests[4]!)).toContain('write_file');
-	expect(tools(requests[4]!)).toContain('suggest_thread');
-	expect(tools(requests[4]!)).toContain('message_thread');
+	expect(tools(requests[0]!)).toEqual(
+		expect.arrayContaining([
+			'load_skill',
+			'read_file',
+			'write_file',
+			'edit_file',
+			'run',
+			'update_intent',
+			'suggest_thread',
+			'list_threads',
+			'message_thread',
+			'ask_threads'
+		])
+	);
+	expect(tools(requests[0]!)).not.toContain('propose_intent');
 	const call = (50 * 0.1 + 10 * 0.5) / 1_000_000;
 	expect(detail!.usage).toEqual({
-		rows: [
-			{
-				task: 'conversation',
-				model: 'gpt-6-luna',
-				tokens: 240,
-				cost: expect.closeTo(4 * call, 10)
-			},
-			{ task: 'attempt', model: 'gpt-6-luna', tokens: 120, cost: expect.closeTo(2 * call, 10) }
-		],
+		rows: [{ task: 'agent', model: 'gpt-6-luna', tokens: 300, cost: expect.closeTo(5 * call, 10) }],
 		context: { used: 60, limit: 1_050_000 }
 	});
 	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
-	expect(
-		sh(join(dir, `notes--${detail!.control!.runs.at(-1)!.id}.git`), 'show', 'main:notes.md')
-	).toBe('# Notes\n\nSome notes');
+	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
+		'# Notes\n\nSome notes'
+	);
 });
 
 test('steers a running attempt with messages read after the current step', async () => {
 	await seed('steer', { 'notes.md': 'Some notes\n' });
 	await script([
-		[
-			{
-				type: 'response.output_item.done',
-				item: {
-					type: 'function_call',
-					call_id: 'propose',
-					name: 'propose_intent',
-					arguments: JSON.stringify({
-						headline: 'docs: add a title',
-						purpose: 'Readers need a title.',
-						doneWhen: ['notes.md starts with a title']
-					})
-				}
-			}
-		],
-		[{ type: 'response.output_text.delta', delta: 'Proposed.' }],
 		[
 			{
 				type: 'response.output_item.done',
@@ -518,13 +487,6 @@ test('steers a running attempt with messages read after the current step', async
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	for (let i = 0; i < 100; i++) {
-		const last = (await repo.thread(id))!.entries.at(-1);
-		if (last?.type === 'message' && last.text === 'Proposed.') break;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-
-	await repo.start(id);
 	await repo.reply(id, { author: sam, text: 'Keep the title short.' });
 	let detail = await repo.thread(id);
 	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
@@ -536,10 +498,10 @@ test('steers a running attempt with messages read after the current step', async
 	expect(detail!.entries.find((entry) => entry.type === 'message' && entry.steering)).toMatchObject(
 		{ text: 'Keep the title short.', steering: { read: true } }
 	);
-	const coding = (await modelRequests()).filter(
-		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
+	const turns = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
 	);
-	expect(JSON.stringify(coding.at(-1)!.query)).toContain('Sam: Keep the title short.');
+	expect(JSON.stringify(turns.at(-1)!.query)).toContain('Sam: Keep the title short.');
 });
 
 const sleepCall = [
@@ -554,21 +516,21 @@ const sleepCall = [
 	}
 ];
 
-async function untilRequests(task: string, count: number) {
+async function untilRequests(thread: string, count: number) {
 	for (let i = 0; i < 300; i++) {
 		const requests = await modelRequests();
 		const matching = requests.filter(
-			(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === task
+			(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === thread
 		);
 		if (matching.length >= count) return;
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
-	throw new Error(`Never saw ${count} ${task} requests`);
+	throw new Error(`Never saw ${count} requests from ${thread}`);
 }
 
 test('stops a running attempt mid tool call', async () => {
 	await seed('stopping', { 'notes.md': 'Some notes\n' });
-	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], sleepCall]);
+	await script([sleepCall]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('stopping');
 	const sam = { name: 'Sam', kind: 'person' as const };
@@ -579,19 +541,7 @@ test('stops a running attempt mid tool call', async () => {
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	await untilRequests('conversation', 1);
-	for (let i = 0; i < 100; i++) {
-		const last = (await repo.thread(id))!.entries.at(-1);
-		if (last?.type === 'message' && last.text === 'Sure.') break;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-	await repo.intentProposed(id, {
-		headline: 'chore: wait',
-		purpose: 'Testing.',
-		doneWhen: ['It waited']
-	});
-	await repo.start(id);
-	await untilRequests('code', 1);
+	await untilRequests(id, 1);
 	await new Promise((resolve) => setTimeout(resolve, 500));
 
 	const stoppedAt = Date.now();
@@ -600,9 +550,9 @@ test('stops a running attempt mid tool call', async () => {
 	expect(Date.now() - stoppedAt).toBeLessThan(20_000);
 	expect(detail!.summary.status).toBe('needs-you');
 	expect(detail!.entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
-	expect((await env.ATTEMPTS.getByName(detail!.control!.runs.at(-1)!.id).snapshot())!.status).toBe(
-		'interrupted'
-	);
+	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	expect((await repo.thread(id))!.entries.at(-1)).toMatchObject({ text: 'Stopped by Sam' });
 });
 
 test('reports a sandbox that fails before asking the model', async () => {
@@ -621,7 +571,7 @@ test('reports a sandbox that fails before asking the model', async () => {
 		.poll(async () => (await repo.thread(id))!.entries.at(-1), { timeout: 20_000 })
 		.toMatchObject({
 			type: 'event',
-			text: expect.stringMatching(/^Couldn't reply: git clone failed/)
+			text: expect.stringMatching(/^The agent failed: /)
 		});
 	const requests = (await modelRequests()).filter(
 		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
@@ -629,32 +579,7 @@ test('reports a sandbox that fails before asking the model', async () => {
 	expect(requests).toHaveLength(0);
 });
 
-test('stops a conversation turn mid tool call', async () => {
-	await seed('quiet', { 'notes.md': 'Some notes\n' });
-	await script([sleepCall]);
-	const env = await worker.getEnv();
-	const repo = env.REPOS.getByName('quiet');
-	const sam = { name: 'Sam', kind: 'person' as const };
-	const { id } = await repo.openThread({
-		repo: 'quiet',
-		author: sam,
-		text: 'Look around.',
-		mode: 'small',
-		machine: 'standard-1'
-	});
-	await untilRequests('conversation', 1);
-	await new Promise((resolve) => setTimeout(resolve, 500));
-
-	await repo.stop(id, sam);
-	await new Promise((resolve) => setTimeout(resolve, 1000));
-	const entries = (await repo.thread(id))!.entries;
-	expect(entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
-	expect(
-		entries.some((entry) => entry.type === 'event' && entry.text.startsWith("Couldn't reply"))
-	).toBe(false);
-});
-
-test('resumes a finished run without letting the coding agent replace its accepted intent', async () => {
+test('resumes a finished thread with its history when someone replies', async () => {
 	await seed('resume', {
 		'notes.md': 'Some notes\n',
 		'.agents/setup': 'test ! -e .git/setup-ran\ntouch .git/setup-ran\n',
@@ -662,7 +587,6 @@ test('resumes a finished run without letting the coding agent replace its accept
 	});
 	await idle();
 	await script([
-		[{ type: 'response.output_text.delta', delta: 'Sure.' }],
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
 		[
 			{
@@ -712,17 +636,7 @@ test('resumes a finished run without letting the coding agent replace its accept
 		}
 		throw new Error('The thread never got there');
 	};
-	await waitFor((detail) =>
-		detail.entries.some((entry) => entry.type === 'message' && entry.author.kind === 'agent')
-	);
-	await repo.intentProposed(id, {
-		headline: 'docs: add a title',
-		purpose: 'Readers need a title.',
-		doneWhen: ['notes.md starts with a title']
-	});
-	await repo.start(id);
-	const finished = await waitFor((detail) => detail.summary.status === 'needs-you');
-	const accepted = finished.control!.acceptedIntent;
+	await waitFor((detail) => detail.summary.status === 'needs-you');
 
 	await repo.reply(id, { author: sam, text: 'Also add a footer.' });
 	const detail = await waitFor(
@@ -733,14 +647,12 @@ test('resumes a finished run without letting the coding agent replace its accept
 			)
 	);
 
-	expect(detail.control!.acceptedIntent).toEqual(accepted);
 	expect(detail.summary.headline).toBe('docs: add a footer');
-	expect(detail.control!.runs).toEqual(finished.control!.runs);
-	const coding = (await modelRequests()).filter(
-		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'code'
+	const turns = (await modelRequests()).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
 	);
-	expect(JSON.stringify(coding[1]!.query)).toContain('Added the title.');
-	expect(JSON.stringify(coding[1]!.query)).toContain('Sam: Also add a footer.');
+	expect(JSON.stringify(turns[1]!.query)).toContain('Added the title.');
+	expect(JSON.stringify(turns[1]!.query)).toContain('Sam: Also add a footer.');
 });
 
 async function untilThread(
@@ -762,7 +674,7 @@ async function untilThread(
 async function startedThread(name: string, steps: object[][], branch?: string) {
 	await seed(name, { 'notes.md': 'Some notes\n' }, branch);
 	await idle();
-	await script([[{ type: 'response.output_text.delta', delta: 'Sure.' }], ...steps]);
+	await script(steps);
 	const env = await worker.getEnv();
 	await env.DB.prepare('INSERT INTO repos (name, created_at) VALUES (?, ?)')
 		.bind(name, Date.now())
@@ -779,30 +691,18 @@ async function startedThread(name: string, steps: object[][], branch?: string) {
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	await untilThread(repo, id, (detail) =>
-		detail.entries.some((entry) => entry.type === 'message' && entry.author.kind === 'agent')
-	);
-	await repo.intentProposed(id, {
-		headline: 'docs: add a title',
-		purpose: 'Readers need a title.',
-		doneWhen: ['notes.md starts with a title']
-	});
-	await repo.start(id);
 	return { env, repo, sam, id };
 }
 
-test('resumes a discarded attempt once the thread is reopened', async () => {
+test('resumes a discarded thread once it is reopened', async () => {
 	const { env, repo, sam, id } = await startedThread('reopened', [
 		sleepCall,
 		[{ type: 'response.output_text.delta', delta: 'Carried on.' }]
 	]);
-	await untilRequests('code', 1);
+	await untilRequests(id, 1);
 	await new Promise((resolve) => setTimeout(resolve, 500));
 	await repo.discard(id, sam);
-	expect(
-		(await env.ATTEMPTS.getByName((await repo.thread(id))!.control!.runs.at(-1)!.id).snapshot())!
-			.status
-	).toBe('cancelled');
+	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('cancelled');
 
 	repo.reopen(id, sam);
 	await repo.reply(id, { author: sam, text: 'Carry on.' });
@@ -818,11 +718,11 @@ test('resumes a discarded attempt once the thread is reopened', async () => {
 	const tasks = requests.map(
 		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task
 	);
-	expect(tasks).toEqual(['conversation', 'code', 'code']);
-	expect(JSON.stringify(requests[2]!.query)).toContain('Sam: Carry on.');
+	expect(tasks.slice(-2)).toEqual(['agent', 'agent']);
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain('Sam: Carry on.');
 });
 
-test('finishes again when a reply to a finished run leads to no changes', async () => {
+test('answers a reply to a finished thread without changes', async () => {
 	const { repo, sam, id } = await startedThread('unchanged', [
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
 		[{ type: 'response.output_text.delta', delta: 'Because readers asked for one.' }]
@@ -840,11 +740,11 @@ test('finishes again when a reply to a finished run leads to no changes', async 
 			)
 	);
 
-	expect(detail.entries.at(-1)).toMatchObject({ type: 'event', text: 'The attempt finished' });
-	const tasks = (await modelRequests()).map(
-		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task
-	);
-	expect(tasks).toEqual(['conversation', 'code', 'code']);
+	expect(detail.entries.at(-1)).toMatchObject({
+		type: 'message',
+		text: 'Because readers asked for one.'
+	});
+	expect(detail.summary.changes).toEqual({ files: 0, additions: 0, deletions: 0 });
 });
 
 const writeNotes = (content: string) => [
@@ -867,9 +767,9 @@ async function approveCandidate(
 	const ready = await untilThread(
 		repo,
 		id,
-		(detail) => detail.control!.promotions.at(-1)?.status === 'ready'
+		(detail) => detail.promotions.at(-1)?.status === 'ready'
 	);
-	await repo.approvePromotion(id, ready.control!.promotions.at(-1)!.id, sam);
+	await repo.approvePromotion(id, ready.promotions.at(-1)!.id, sam);
 }
 
 test('ships finished work as one commit on main', async () => {
@@ -909,12 +809,17 @@ test('ships finished work as one commit on main', async () => {
 	expect((await git.requests()).some((headers) => headers.authorization)).toBe(false);
 
 	await repo.reply(id, { author: sam, text: 'Where is the title?' });
-	const answered = await untilThread(repo, id, (detail) =>
-		detail.entries.some(
-			(entry) => entry.type === 'message' && entry.text === 'It is the first line.'
-		)
+	const answered = await untilThread(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some(
+				(entry) => entry.type === 'message' && entry.text === 'It is the first line.'
+			)
 	);
-	expect(answered.summary.status).toBe('shipped');
+	expect(answered.summary.changes).toEqual({ files: 0, additions: 0, deletions: 0 });
+	expect(sh(join(dir, `shipping--${id}.git`), 'rev-parse', 'main')).toBe(main);
 });
 
 test('rejects integration conflicts without rebasing the run or writing main', async () => {
@@ -928,16 +833,15 @@ test('rejects integration conflicts without rebasing the run or writing main', a
 	sh(work, 'push', '--quiet', join(dir, 'conflicting.git'), 'main');
 
 	const ship = { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' };
-	const before = (await repo.thread(id))!;
-	const runFork = join(dir, `conflicting--${before.control!.runs.at(-1)!.id}.git`);
+	const runFork = join(dir, `conflicting--${id}.git`);
 	const runHead = sh(runFork, 'rev-parse', 'main');
 	await repo.ship(id, ship);
 	const resolved = await untilThread(
 		repo,
 		id,
-		(detail) => detail.control!.promotions.at(-1)?.status === 'failed'
+		(detail) => detail.promotions.at(-1)?.status === 'failed'
 	);
-	expect(resolved.control!.promotions.at(-1)!.error).toMatch(/conflict/i);
+	expect(resolved.promotions.at(-1)!.error).toMatch(/conflict/i);
 	expect(sh(runFork, 'rev-parse', 'main')).toBe(runHead);
 	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
 });
@@ -948,7 +852,7 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 		[writeNotes('# Notes\\n'), [{ type: 'response.output_text.delta', delta: 'Added the title.' }]],
 		'master'
 	);
-	const ready = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	await approveCandidate(repo, id, sam);
@@ -1011,7 +915,7 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 	const child = await repo.spinOff(id, card.id, sam);
 	expect(child).toMatchObject({
 		headline: suggestion.headline,
-		status: 'draft',
+		status: 'needs-you',
 		mode: 'small',
 		parent: { id, headline: 'Tidy the notes.' }
 	});
@@ -1202,7 +1106,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 			item: {
 				type: 'function_call',
 				call_id: 'intent',
-				name: 'propose_intent',
+				name: 'update_intent',
 				arguments: JSON.stringify({
 					headline,
 					purpose: 'Big orgs wait for every member to load.',
@@ -1314,7 +1218,7 @@ test('sizes an auto thread when it opens and again when its intent changes', asy
 				item: {
 					type: 'function_call',
 					call_id: 'intent',
-					name: 'propose_intent',
+					name: 'update_intent',
 					arguments: JSON.stringify({
 						headline: 'docs: fix a typo in the notes',
 						purpose: 'The notes misspell "receive".',
@@ -1365,7 +1269,7 @@ test('answers questions about another thread without interrupting it', async () 
 			.toBe(true);
 
 	await script([
-		callTool('intent', 'propose_intent', {
+		callTool('intent', 'update_intent', {
 			headline: 'docs(notes): add a title',
 			purpose: 'The notes have no heading.',
 			doneWhen: ['notes.md starts with a title']
@@ -1480,7 +1384,7 @@ test('offers built-in and repository skills, and loads one on request', async ()
 	expect(first).toContain('- release: Cut a release. Use when asked to publish a version.');
 	expect(first).toContain('- threads: Work alongside other threads');
 	expect(first).toContain('- services: Run long-running processes');
-	expect(first).not.toContain('- toolchains:');
+	expect(first).toContain('- toolchains:');
 	const loaded = JSON.stringify(requests[1]!.query);
 	expect(loaded).toContain('Run scripts/release.sh, then tag the commit.');
 	expect(loaded).toContain('Skill directory: .agents/skills/release');

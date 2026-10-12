@@ -18,7 +18,6 @@ import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	askThreads,
 	askThreadsTools,
-	codingInstructions,
 	combineTools,
 	mergeSkills,
 	browserSkill,
@@ -33,8 +32,6 @@ import {
 	modes,
 	openaiModel,
 	parseDiff,
-	readOnlyTools,
-	runAgent,
 	runAttempt,
 	sandboxTools,
 	sandboxWorkspace,
@@ -55,18 +52,7 @@ import {
 	type Turn
 } from '@regit/agent';
 
-export interface AttemptInput {
-	proposal?: string;
-	intentVersion?: string;
-	task: string;
-	mode: Mode;
-	machine?: Machine;
-	repo: string;
-}
-
 export interface ConverseInput {
-	proposal?: string;
-	intentVersion?: string;
 	repo: string;
 	mode: Mode;
 	machine?: Machine;
@@ -99,8 +85,7 @@ interface Target {
 	branch: string;
 }
 
-type AttemptRow = {
-	task: string;
+type AgentRow = {
 	mode: Mode;
 	repo: string;
 	fork: string | null;
@@ -139,7 +124,6 @@ const outcomes: Record<AgentOutcome, AttemptStatus> = {
 export class AttemptSandbox extends DurableObject<Env> {
 	#sql = this.ctx.storage.sql;
 	#controller?: AbortController;
-	#conversation?: AbortController;
 	#activity: ThreadActivity = idle();
 	#published = 0;
 	#publishing?: ReturnType<typeof setTimeout>;
@@ -151,9 +135,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			void ctx.blockConcurrencyWhile(() => ctx.container!.setInactivityTimeout(idleTimeoutMs));
 		}
 		this.#sql.exec(`
-			CREATE TABLE IF NOT EXISTS attempt (
+			CREATE TABLE IF NOT EXISTS agent (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
-				task TEXT NOT NULL,
 				mode TEXT NOT NULL,
 				repo TEXT NOT NULL,
 				fork TEXT,
@@ -164,10 +147,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 				toolchain TEXT,
 				restored INTEGER,
 				base TEXT
-			);
-			CREATE TABLE IF NOT EXISTS conversation (
-				seq INTEGER PRIMARY KEY AUTOINCREMENT,
-				turns TEXT NOT NULL
 			);
 			CREATE TABLE IF NOT EXISTS inbox (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,84 +170,40 @@ export class AttemptSandbox extends DurableObject<Env> {
 		`);
 	}
 
-	async converse({
-		repo,
-		mode,
-		machine,
-		context,
-		author,
-		text,
-		entry,
-		proposal,
-		intentVersion
-	}: ConverseInput) {
-		if (this.#capturing) throw new Error('This run cannot accept messages now');
-		if (
-			this.#attempt() &&
-			((proposal && proposal !== this.#proposal()) ||
-				(intentVersion && intentVersion !== this.#meta('intentVersion')))
-		) {
-			throw new Error('A new accepted intent requires a new run');
-		}
-		if (proposal) this.#setMeta('proposal', proposal);
-		if (intentVersion) this.#setMeta('intentVersion', intentVersion);
+	async converse({ repo, mode, machine, context, author, text, entry }: ConverseInput) {
 		this.#setMeta('repo', repo);
-		this.#setMeta('mode', mode);
 		if (machine) this.#setMeta('machine', machine);
-		if (context && !this.#sql.exec('SELECT 1 FROM conversation LIMIT 1').toArray().length) {
-			const seed = `This thread was spun off from another one. What it found:\n\n${context}`;
+		if (!this.#agent()) {
 			this.#sql.exec(
-				'INSERT INTO conversation (turns) VALUES (?)',
-				JSON.stringify([{ role: 'user', text: seed }])
+				`INSERT INTO agent (id, mode, repo, status) VALUES (1, ?, ?, 'finished')`,
+				mode,
+				repo
 			);
+			if (context) {
+				const seed = `This thread was spun off from another one. What it found:\n\n${context}`;
+				this.#saveStep({ turns: [{ role: 'user', text: seed }] });
+			}
 		}
+		this.#sql.exec('UPDATE agent SET mode = ?', mode);
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
-		const attempt = this.#attempt();
-		if (attempt && !isActive(attempt.status)) this.#setStatus('queued');
-		const current = this.#attempt();
-		if (!current || current.status === 'queued' || !isActive(current.status)) {
-			await this.ctx.storage.setAlarm(Date.now());
-		}
-	}
-
-	async start(input: AttemptInput) {
-		const serialized = JSON.stringify(input);
-		if (this.#meta('startInput') === serialized) return;
-		if (this.#meta('startInput') || this.#attempt())
-			throw new Error('This run has already started');
-		const { task, mode, machine, repo, proposal, intentVersion } = input;
-		this.#setMeta('startInput', serialized);
-		if (proposal) this.#setMeta('proposal', proposal);
-		if (intentVersion) this.#setMeta('intentVersion', intentVersion);
-		this.#setMeta('repo', repo);
-		if (machine) this.#setMeta('machine', machine);
-		this.#sql.exec(
-			`INSERT INTO attempt (id, task, mode, repo, status) VALUES (1, ?, ?, ?, 'queued')`,
-			task,
-			mode,
-			repo
-		);
+		if (isActive(this.#agent()!.status)) return;
+		this.#setStatus('queued');
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
 	async revision(): Promise<Revision | null> {
-		const attempt = this.#attempt();
-		const intent = this.#meta('intentVersion');
-		if (!attempt || !intent) return null;
-		if (isActive(attempt.status) || this.#controller || this.#conversation || this.#capturing)
-			throw new Error('Stop the run before capturing a revision');
+		const attempt = this.#agent();
+		if (!attempt) return null;
+		if (isActive(attempt.status) || this.#controller || this.#capturing)
+			throw new Error('Stop the agent before capturing a revision');
 		if (!attempt.fork || !attempt.branch || !attempt.base) return null;
 		this.#capturing = true;
 		try {
 			const { fetch } = await this.#wake();
 			const sha = await this.#head(fetch);
 			if (!sha) return null;
-			const run = this.ctx.id.name!;
 			return {
-				id: `${run}:${sha}`,
-				proposal: this.#proposal(),
-				run,
-				intent,
+				proposal: this.#thread(),
 				repository: attempt.fork,
 				branch: attempt.branch,
 				base: attempt.base,
@@ -281,7 +216,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	snapshot(): AttemptSnapshot | null {
-		const attempt = this.#attempt();
+		const attempt = this.#agent();
 		if (!attempt) return null;
 		const steps = this.#sql.exec<StepRow>('SELECT * FROM steps ORDER BY seq').toArray();
 		return {
@@ -308,7 +243,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async cancel() {
-		const attempt = this.#attempt();
+		const attempt = this.#agent();
 		if (!attempt || !isActive(attempt.status)) return;
 		await this.#finish(attempt, 'cancelled');
 		this.#controller?.abort();
@@ -316,10 +251,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
 	}
 
+	published(publication: { sha: string; branch: string; from: string }) {
+		this.#setMeta('rebase', JSON.stringify(publication));
+		this.#setMeta('changes', '[]');
+	}
+
 	async stop() {
-		this.#conversation?.abort();
 		this.#sql.exec('DELETE FROM inbox');
-		const attempt = this.#attempt();
+		const attempt = this.#agent();
 		if (!attempt || !isActive(attempt.status)) return;
 		this.#setStatus('interrupted');
 		this.#controller?.abort();
@@ -328,7 +267,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async destroy() {
 		await this.cancel();
-		// TODO: garbage collect retained forks only when no revisions reference them.
+		// TODO: garbage collect the thread's fork once no promotion references it.
 		await this.ctx.storage.deleteAlarm();
 		await this.ctx.storage.deleteAll();
 	}
@@ -406,94 +345,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	override async alarm() {
-		const attempt = this.#attempt();
-		if (attempt && isActive(attempt.status)) await this.#runAttempt(attempt);
-		else if (this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length) await this.#converse();
+		const attempt = this.#agent();
+		if (attempt && isActive(attempt.status)) await this.#run(attempt);
 	}
 
-	async #converse() {
-		const controller = (this.#conversation = new AbortController());
-		const repo = this.#meta('repo')!;
-		this.#think('Starting');
-		const mode = this.#meta('mode') as Mode;
-		const thread = this.#proposal();
-		try {
-			using base = await this.env.ARTIFACTS.get(repo);
-			const info = await base.info();
-			const { plaintext: token } = await base.createToken('read', 60 * 60);
-			const fetch = await this.#sandbox(
-				{ repo, remote: info.remote, branch: info.defaultBranch },
-				token
-			);
-			const { model, effort } = modes[mode];
-			const coordinator = this.env.REPOS.getByName(repo);
-			const skills = await this.#skills(fetch, [threadsSkill, servicesSkill, verificationSkill]);
-			const guidance = await repositoryGuidance(this.#tools(fetch, readOnlyTools));
-			const tools = combineTools(
-				skillTools(skills),
-				guidance.tools,
-				intentTools((intent) => coordinator.intentProposed(thread, intent)),
-				suggestTools((suggestion) => coordinator.suggestThread(thread, suggestion)),
-				threadTools({
-					list: () => coordinator.otherThreads(thread),
-					send: (to, text) => coordinator.messageThread(thread, to, text)
-				}),
-				askThreadsTools((question) => this.#askThreads(repo, question))
-			);
-
-			for (let turns = await this.#drain(repo); turns.length; turns = await this.#drain(repo)) {
-				this.#saveConversation(turns);
-				const history = this.#sql
-					.exec<{ turns: string }>('SELECT turns FROM conversation ORDER BY seq')
-					.toArray()
-					.flatMap((row) => JSON.parse(row.turns) as Turn[]);
-				const run = runAgent({
-					model: openaiModel({
-						resolveImage: (url) => this.#resolveImage(repo, url),
-						gateway: { run: (request) => this.env.MODELS.run(request) },
-						model,
-						effort,
-						sessionId: `${thread}/conversation`,
-						metadata: { thread, mode, task: 'conversation' }
-					}),
-					tools,
-					instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
-					history,
-					signal: controller.signal,
-					steer: () => this.#drain(repo)
-				});
-				const step = new StepActivity();
-				this.#think();
-				for await (const event of run) {
-					if (event.type !== 'step') {
-						this.#stream(step, event);
-						continue;
-					}
-					this.#saveConversation(event.turns);
-					const tools = step.take();
-					await this.#report(repo, {
-						type: 'reply',
-						step: event,
-						tools: controller.signal.aborted ? [] : tools
-					});
-					this.#stepped(event.turns);
-					await this.#syncServices(fetch, repo);
-				}
-				if (controller.signal.aborted) return;
-			}
-			this.#clearActivity();
-		} catch (error) {
-			this.#sql.exec('DELETE FROM inbox');
-			this.#clearActivity();
-			if (controller.signal.aborted) return;
-			const reason = error instanceof Error ? error.message : String(error);
-			await this.#report(repo, { type: 'conversation-failed', error: reason });
-		} finally {
-			this.#conversation = undefined;
-		}
-	}
-
-	async #runAttempt(attempt: AttemptRow) {
+	async #run(attempt: AgentRow) {
 		this.#setStatus('running');
 
 		const controller = (this.#controller = new AbortController());
@@ -505,8 +361,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
 			if (!attempt.base) {
 				attempt.base = await this.#head(fetch);
-				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
+				this.#sql.exec('UPDATE agent SET base = ?', attempt.base);
 			}
+			await this.#rebase(attempt, fetch, fork, token);
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
@@ -525,29 +382,22 @@ export class AttemptSandbox extends DurableObject<Env> {
 					gateway: { run: (request) => this.env.MODELS.run(request) },
 					model,
 					effort,
-					sessionId: this.ctx.id.toString(),
-					metadata: {
-						thread: this.ctx.id.name ?? this.ctx.id.toString(),
-						mode: attempt.mode,
-						task: 'code'
-					}
+					sessionId: this.#thread(),
+					metadata: { thread: this.#thread(), mode: attempt.mode, task: 'agent' }
 				}),
 				tools: combineTools(
 					skillTools(skills),
 					guidance.tools,
-					intentTools(
-						async (intent) => {
-							await this.env.REPOS.getByName(attempt.repo).intentProposed(this.#proposal(), intent);
-						},
-						['update_intent']
+					intentTools((intent) =>
+						this.env.REPOS.getByName(attempt.repo).intentProposed(this.#thread(), intent)
 					),
 					suggestTools((suggestion) =>
-						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#proposal(), suggestion)
+						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#thread(), suggestion)
 					),
 					threadTools({
-						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.#proposal()),
+						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.#thread()),
 						send: (to, text) =>
-							this.env.REPOS.getByName(attempt.repo).messageThread(this.#proposal(), to, text)
+							this.env.REPOS.getByName(attempt.repo).messageThread(this.#thread(), to, text)
 					}),
 					askThreadsTools((question) => this.#askThreads(attempt.repo, question))
 				),
@@ -557,8 +407,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 				},
 				author,
 				push: { ref: fork.branch },
-				instructions: withSkills(`${codingInstructions}\n\n${guidance.instructions}`, skills),
-				history: this.#history(attempt),
+				instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
+				history: this.#history(),
 				signal: controller.signal,
 				steer: () => this.#drain(attempt.repo)
 			});
@@ -587,13 +437,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 				next = await run.next();
 			}
 			this.#clearActivity();
-			if (this.#attempt()?.status !== 'running') return;
+			if (this.#agent()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
 			if (next.value === 'finished') await this.#settle(attempt);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
 			this.#clearActivity();
-			const status = this.#attempt()?.status;
+			const status = this.#agent()?.status;
 			if (status !== 'running') return;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
 			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
@@ -602,7 +452,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async #settle(attempt: AttemptRow) {
+	async #settle(attempt: AgentRow) {
 		const queued = this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0;
 		if (!queued) return await this.#finish(attempt, 'finished');
 		this.#setStatus('running');
@@ -610,7 +460,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
-	async #saveChanges(attempt: AttemptRow, fetch: Fetch) {
+	async #saveChanges(attempt: AgentRow, fetch: Fetch) {
 		if (!attempt.base) return;
 		try {
 			let files = parseDiff(await sandboxWorkspace(fetch).diff({ base: attempt.base }));
@@ -625,25 +475,54 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #wake(): Promise<{ fetch: Fetch; repo: string }> {
-		const attempt = this.#attempt();
-		if (attempt?.fork) {
-			const fork = await this.#fork(attempt);
-			const token = await this.#token(fork);
-			return {
-				fetch: await this.#sandbox({ repo: attempt.repo, ...fork }, token),
-				repo: attempt.repo
-			};
+		const attempt = this.#agent();
+		if (!attempt) throw new Error("This thread hasn't started a sandbox yet");
+		const fork = await this.#fork(attempt);
+		const token = await this.#token(fork);
+		return {
+			fetch: await this.#sandbox({ repo: attempt.repo, ...fork }, token),
+			repo: attempt.repo
+		};
+	}
+
+	async #rebase(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+		const pending = this.#meta('rebase');
+		if (!pending) return;
+		const { sha, branch, from } = JSON.parse(pending) as {
+			sha: string;
+			branch: string;
+			from: string;
+		};
+		using canonical = await this.env.ARTIFACTS.get(attempt.repo);
+		const info = await canonical.info();
+		const { plaintext } = await canonical.createToken('read', 60 * 60);
+		await this.#allowGit(info, plaintext, false);
+		try {
+			await this.#git(fetch, `git fetch --no-tags ${info.remote} ${branch}`);
+		} finally {
+			await this.#allowGit(fork, token, false);
 		}
-		const repo = this.#meta('repo');
-		if (!repo) throw new Error("This thread hasn't started a sandbox yet");
-		using base = await this.env.ARTIFACTS.get(repo);
-		const info = await base.info();
-		const { plaintext: token } = await base.createToken('read', 60 * 60);
-		const fetch = await this.#sandbox(
-			{ repo, remote: info.remote, branch: info.defaultBranch },
-			token
+		// TODO: let the agent resolve conflicts when later work no longer applies on top of the published commit.
+		await this.#git(
+			fetch,
+			`git -c user.name='${author.name}' -c user.email=${author.email} rebase --onto ${sha} ${from} || (git rebase --abort; exit 1)`
 		);
-		return { fetch, repo };
+		await this.#push(fork, token, () =>
+			sandboxWorkspace(fetch).push({ ref: fork.branch, force: true })
+		);
+		attempt.base = sha;
+		this.#sql.exec('UPDATE agent SET base = ?', sha);
+		this.#sql.exec("DELETE FROM meta WHERE key = 'rebase'");
+	}
+
+	async #git(fetch: Fetch, command: string) {
+		const output = await this.#tools(fetch).execute({
+			id: 'git',
+			name: 'run',
+			arguments: JSON.stringify({ command })
+		});
+		const text = typeof output === 'string' ? output : output.text;
+		if (!text.startsWith('exit code 0')) throw new Error(`${command} failed: ${text}`);
 	}
 
 	#serviceRequest(name: string) {
@@ -699,7 +578,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #askThreads(repo: string, question: string) {
 		const coordinator = this.env.REPOS.getByName(repo);
-		const thread = this.#proposal();
+		const thread = this.#thread();
 		const { answer, usage } = await askThreads({
 			model: openaiModel({
 				gateway: { run: (request) => this.env.MODELS.run(request) },
@@ -838,7 +717,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 							signal
 						)
 		);
-		return this.#imageTools(tools, this.#meta('repo')!, this.#proposal());
+		return this.#imageTools(tools, this.#meta('repo')!, this.#thread());
 	}
 
 	#imageTools(tools: ToolExecutor, repo: string, thread: string): ToolExecutor {
@@ -863,7 +742,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return (typeof output === 'string' ? output : output.text).split('\n')[1]?.trim() || null;
 	}
 
-	async #finish(attempt: AttemptRow, status: AttemptStatus, error: string | null = null) {
+	async #finish(attempt: AgentRow, status: AttemptStatus, error: string | null = null) {
 		if (['finished', 'stopped', 'failed'].includes(status)) this.#controller = undefined;
 		this.#setStatus(status, error);
 		await this.#report(attempt.repo, { type: 'status', status, error });
@@ -871,11 +750,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #report(repo: string, update: AttemptUpdate) {
 		try {
-			await this.env.REPOS.getByName(repo).attemptUpdated(
-				this.#proposal(),
-				update,
-				this.ctx.id.name!
-			);
+			await this.env.REPOS.getByName(repo).attemptUpdated(this.#thread(), update);
 		} catch (error) {
 			console.warn('Could not report the attempt to its repository', error);
 		}
@@ -885,8 +760,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return (this.#meta('machine') as Machine | null) ?? defaultMachine;
 	}
 
-	#proposal() {
-		return this.#meta('proposal') ?? this.ctx.id.name!;
+	#thread() {
+		return this.ctx.id.name!;
 	}
 
 	#meta(key: string) {
@@ -916,26 +791,19 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return messages.map(({ author, text }) => ({ role: 'user', text: `${author}: ${text}` }));
 	}
 
-	#saveConversation(turns: Turn[]) {
-		this.#sql.exec('INSERT INTO conversation (turns) VALUES (?)', JSON.stringify(turns));
-	}
-
-	#attempt() {
-		return this.#sql.exec<AttemptRow>('SELECT * FROM attempt').toArray()[0];
+	#agent() {
+		return this.#sql.exec<AgentRow>('SELECT * FROM agent').toArray()[0];
 	}
 
 	#setStatus(status: AttemptStatus, error: string | null = null) {
-		this.#sql.exec('UPDATE attempt SET status = ?, error = ?', status, error);
+		this.#sql.exec('UPDATE agent SET status = ?, error = ?', status, error);
 	}
 
-	#history(attempt: AttemptRow): Turn[] {
-		const steps = this.#sql
+	#history(): Turn[] {
+		return this.#sql
 			.exec<{ turns: string }>('SELECT turns FROM steps ORDER BY seq')
-			.toArray();
-		return [
-			{ role: 'user', text: attempt.task },
-			...steps.flatMap((row) => JSON.parse(row.turns) as Turn[])
-		];
+			.toArray()
+			.flatMap((row) => JSON.parse(row.turns) as Turn[]);
 	}
 
 	#saveStep({ turns, usage, checkpoint }: Step & { checkpoint?: string }) {
@@ -950,21 +818,21 @@ export class AttemptSandbox extends DurableObject<Env> {
 		);
 	}
 
-	async #fork(attempt: AttemptRow): Promise<Fork> {
+	async #fork(attempt: AgentRow): Promise<Fork> {
 		if (attempt.fork && attempt.remote && attempt.branch) {
 			return { name: attempt.fork, remote: attempt.remote, branch: attempt.branch };
 		}
 		const name = `${attempt.repo}--${this.ctx.id.name}`;
 		using base = await this.env.ARTIFACTS.get(attempt.repo);
 		const fork = await base
-			.fork(name, { description: attempt.task.slice(0, 200) })
+			.fork(name, { description: `ReGit thread ${this.#thread()}` })
 			.catch(async (error) => {
 				if ((error as ArtifactsError).code !== 'ALREADY_EXISTS') throw error;
 				using existing = await this.env.ARTIFACTS.get(name);
 				return existing.info();
 			});
 		this.#sql.exec(
-			'UPDATE attempt SET fork = ?, remote = ?, branch = ?',
+			'UPDATE agent SET fork = ?, remote = ?, branch = ?',
 			fork.name,
 			fork.remote,
 			fork.defaultBranch
@@ -1063,7 +931,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					: 'Check toolchains'
 		);
 		this.#sql.exec(
-			'UPDATE attempt SET toolchain = ?, restored = ?',
+			'UPDATE agent SET toolchain = ?, restored = ?',
 			JSON.stringify(tools),
 			restored ? 1 : 0
 		);

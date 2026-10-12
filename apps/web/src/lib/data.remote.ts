@@ -83,19 +83,6 @@ export const reply = command(v.object({ ...thread.entries, text }), async ({ rep
 	getThreads(repo).refresh();
 });
 
-export const startThread = command(thread, async ({ repo, id }) => {
-	await (await coordinator(repo, 'editor')).start(id, author());
-	getThread({ repo, id }).refresh();
-	getThreads(repo).refresh();
-});
-
-// TODO: Define the acceptance boundary for local CLI and other agent access.
-export const acceptThreadIntent = command(thread, async ({ repo, id }) => {
-	await (await coordinator(repo, 'editor')).acceptIntent(id, author());
-	getThread({ repo, id }).refresh();
-	getThreads(repo).refresh();
-});
-
 export const approveThreadPromotion = command(
 	v.object({ ...thread.entries, promotion: v.pipe(v.string(), v.minLength(1)) }),
 	async ({ repo, id, promotion }) => {

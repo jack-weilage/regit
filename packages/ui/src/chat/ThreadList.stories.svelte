@@ -52,7 +52,7 @@
 		{
 			id: 'router',
 			headline: 'refactor(api): split the router',
-			status: 'draft',
+			status: 'discarded',
 			updatedAt: minutes(180),
 			href: '#router'
 		},
@@ -164,7 +164,7 @@
 				id: 'router',
 				headline:
 					'refactor(api): split the router into per-resource modules and move the auth middleware',
-				status: 'draft',
+				status: 'discarded',
 				updatedAt: minutes(60 * 48),
 				href: '#'
 			},
@@ -193,7 +193,7 @@
 			'Running',
 			'Running',
 			'Shipping',
-			'Not started',
+			'Discarded',
 			'Shipped',
 			'Discarded'
 		]);

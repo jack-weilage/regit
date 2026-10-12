@@ -1,6 +1,5 @@
 <script lang="ts">
 	import {
-		AcceptancePanel,
 		ChangesPanel,
 		ChatActivity,
 		ChatBanner,
@@ -17,6 +16,7 @@
 		ChatThreadMessage,
 		ChatTools,
 		DeletedThread,
+		PublishPanel,
 		Markdown,
 		DeleteThreadDialog,
 		statuses,
@@ -32,10 +32,8 @@
 	import { getLiveActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import {
-		acceptThreadIntent,
 		approveThreadPromotion,
 		shipThread,
-		startThread,
 		deleteThread,
 		discardThread,
 		dismissSuggestion,
@@ -71,11 +69,7 @@
 	const agent: Author = { name: 'ReGit', kind: 'agent' };
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
-	const tasks = {
-		conversation: 'Conversation',
-		attempt: 'Agent',
-		search: 'Thread search'
-	};
+	const tasks = { agent: 'Agent', search: 'Thread search' };
 
 	let { params } = $props();
 
@@ -122,7 +116,7 @@
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
 	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
 		const status = detail?.summary.status;
-		if (detail?.control?.promotions.some((promotion) => promotion.status === 'ready'))
+		if (detail?.promotions.some((promotion) => promotion.status === 'ready'))
 			return { status: 'ready', note: 'Exact candidate awaits owner approval' };
 		if (status === 'shipping')
 			return { status: 'shipping', note: 'Preparing candidate or publishing approved SHA' };
@@ -133,14 +127,6 @@
 		if (status === 'running') return { status: 'working', note: 'The agent is working' };
 		if (status === 'needs-you') return { status: 'needs-you' };
 		return {};
-	});
-	let thinking = $derived.by(() => {
-		const last = detail?.entries.at(-1);
-		return (
-			detail?.summary.status === 'draft' &&
-			last?.type === 'message' &&
-			last.author.kind === 'person'
-		);
 	});
 	let ref = $derived({ repo: params.repo, id: params.thread });
 	let intent = $derived(
@@ -321,14 +307,12 @@
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
 				{/each}
-				{#if summary.status !== 'discarded' && (intent || detail.control?.acceptedIntent || detail.control?.promotions.length)}
-					<AcceptancePanel
-						control={detail.control}
+				{#if summary.status !== 'discarded' && (summary.changes?.files || detail.promotions.length)}
+					<PublishPanel
+						promotions={detail.promotions}
 						{intent}
 						status={summary.status}
 						hasChanges={!!summary.changes?.files}
-						onaccept={() => acceptThreadIntent(ref)}
-						onstart={() => startThread(ref)}
 						onprepare={(commit) => shipThread({ ...ref, ...commit })}
 						onapprove={(promotion) => approveThreadPromotion({ ...ref, promotion })}
 					/>
@@ -348,8 +332,6 @@
 				{/if}
 				{#if activity?.status && !activity.startup}
 					<ChatActivity since={activity.status.since}>{activity.status.label}</ChatActivity>
-				{:else if !activity && thinking}
-					<ChatActivity>ReGit is thinking</ChatActivity>
 				{:else if !activity && summary.status === 'running'}
 					<ChatActivity>ReGit is working</ChatActivity>
 				{/if}
@@ -364,7 +346,7 @@
 					</ChatBanner>
 				{:else}
 					<ChatComposer
-						working={thinking || ['running', 'shipping'].includes(summary.status)}
+						working={summary.status === 'running'}
 						onstop={() => stopThread(ref)}
 						onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
 					/>

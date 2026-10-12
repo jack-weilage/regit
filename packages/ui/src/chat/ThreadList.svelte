@@ -14,7 +14,7 @@
 	const groups: { title: string; statuses: ThreadStatus[] }[] = [
 		{ title: 'Needs you', statuses: ['needs-you'] },
 		{ title: 'Running', statuses: ['running', 'shipping'] },
-		{ title: 'Recent', statuses: ['draft', 'shipped', 'discarded'] }
+		{ title: 'Recent', statuses: ['shipped', 'discarded'] }
 	];
 
 	const previewDelay = 400;

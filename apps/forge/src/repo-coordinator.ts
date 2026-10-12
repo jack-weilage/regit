@@ -1,7 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
-	describeTask,
 	assessRequest,
 	maxSimilarCandidates,
 	type Assessment,
@@ -35,20 +34,17 @@ import type {
 	UsageRow
 } from '@regit/core';
 import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
-import { promotionProblem } from '@regit/core';
 import { canAccessRepository } from '@regit/db';
 import { db } from './db.ts';
-import { Acceptance } from './acceptance.ts';
+import { Promotions } from './promotions.ts';
 import { Images } from './images.ts';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 
 export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string }; tools?: ToolCallRecord[] }
 	| { type: 'status'; status: AttemptStatus; error: string | null }
-	| { type: 'reply'; step: Step; tools?: ToolCallRecord[] }
 	| { type: 'activity'; activity: ThreadActivity }
 	| { type: 'startup'; stages: StartupStage[] }
-	| { type: 'conversation-failed'; error: string }
 	| { type: 'read'; entries: string[] }
 	| { type: 'changes'; summary: DiffSummary }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
@@ -141,7 +137,7 @@ function describeIntent({ headline, purpose, doneWhen }: Intent) {
 export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinatorApi {
 	#sql = this.ctx.storage.sql;
 	#activities = new Map<string, ThreadActivity>();
-	#acceptance = new Acceptance(this.#sql);
+	#promotions = new Promotions(this.#sql);
 	#images = new Images(this.#sql);
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -189,12 +185,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
-			CREATE TABLE IF NOT EXISTS run_dispatch (
-				id TEXT PRIMARY KEY,
-				proposal TEXT NOT NULL,
-				previous TEXT NOT NULL,
-				input TEXT NOT NULL
-			);
 		`);
 	}
 
@@ -220,7 +210,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 		this.#sql.exec(
-			`INSERT INTO threads (id, headline, status, mode, auto, machine, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?)`,
+			`INSERT INTO threads (id, headline, status, mode, auto, machine, updated_at) VALUES (?, ?, 'running', ?, ?, ?, ?)`,
 			id,
 			headlineFrom(text),
 			size,
@@ -242,78 +232,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text,
 			...(steering && { steering: { read: false } })
 		});
-		if (steering || ['draft', 'needs-you', 'shipping', 'shipped'].includes(summary.status)) {
-			await this.#converse(thread, author, text, entry);
-		}
-		if (
-			summary.status === 'needs-you' &&
-			this.#acceptance.run(thread)?.intent === this.#acceptance.intent(thread)?.id
-		)
-			this.#setStatus(thread, 'running');
-	}
-
-	async acceptIntent(thread: string, by: Author) {
-		this.#active(thread);
-		const intent = this.#latestIntent(thread);
-		if (!intent) throw new Error('There is no proposed intent');
-		const current = this.#acceptance.intent(thread);
-		if (current && JSON.stringify(current.intent) === JSON.stringify(intent)) return;
-		this.#acceptance.putIntent({
-			id: crypto.randomUUID(),
-			proposal: thread,
-			intent,
-			acceptedBy: by,
-			at: Date.now()
-		});
-		for (const p of this.#acceptance
-			.promotions()
-			.filter((p) => p.proposal === thread && ['queued', 'preparing', 'ready'].includes(p.status)))
-			this.#acceptance.putPromotion({
-				...p,
-				status: 'cancelled',
-				error: 'The accepted intent changed'
-			});
-		this.#add(thread, { type: 'event', text: `${by.name} accepted the intent` });
-	}
-
-	async start(thread: string, by: Author = { name: 'Repository member', kind: 'person' }) {
-		const summary = this.#active(thread);
-		if (!['draft', 'needs-you'].includes(summary.status))
-			throw new Error('Stop the current work before starting a new run');
-		await this.acceptIntent(thread, by);
-		if (!['draft', 'needs-you'].includes(this.#active(thread).status))
-			throw new Error('Another run has already started');
-		this.#cancelPromotions(thread);
-		const accepted = this.#acceptance.intent(thread)!;
-		const previous = this.#acceptance.run(thread)?.id ?? thread;
-		const run = {
-			id: crypto.randomUUID().replaceAll('-', ''),
-			proposal: thread,
-			intent: accepted.id,
-			mode: summary.mode,
-			machine: summary.machine,
-			status: 'queued',
-			createdAt: Date.now()
-		};
-		this.#acceptance.putRun(run);
-		this.#setStatus(thread, 'running');
-		this.#sql.exec(
-			'INSERT INTO run_dispatch (id, proposal, previous, input) VALUES (?, ?, ?, ?)',
-			run.id,
-			thread,
-			previous,
-			JSON.stringify({
-				proposal: thread,
-				intentVersion: accepted.id,
-				task: describeTask(accepted.intent, this.#conversation(thread)),
-				mode: summary.mode,
-				machine: summary.machine,
-				repo: this.#repo()
-			})
-		);
-		this.#add(thread, { type: 'event', text: `Started run ${run.id.slice(0, 8)}` });
-		await this.#schedulePurge();
-		await this.#dispatchRuns();
+		if (summary.status === 'discarded') return;
+		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
+		await this.#converse(thread, author, text, entry);
 	}
 
 	async discard(thread: string, by: Author) {
@@ -324,9 +245,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
-		if (summary.status === 'running') {
-			await this.#executor(thread).cancel();
-		}
+		await this.#agent(thread).cancel();
 	}
 
 	reopen(thread: string, by: Author) {
@@ -344,7 +263,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	// TODO: once threads ship, keep a tombstone (headline, author, commit) instead of purging shipped threads
 	async delete(thread: string, by: Author) {
-		const summary = this.#active(thread);
+		this.#active(thread);
 		this.#cancelPromotions(thread);
 		this.#sql.exec(
 			'UPDATE threads SET deleted_at = ?, deleted_by = ? WHERE id = ?',
@@ -354,15 +273,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		this.#touch(thread);
 		await this.#schedulePurge();
-		if (summary.status === 'running') {
-			await this.#executor(thread).cancel();
-		}
+		await this.#agent(thread).cancel();
 	}
 
 	async stop(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		this.#cancelPromotions(thread);
-		await this.#executor(thread).stop();
+		await this.#agent(thread).stop();
 		const pending = this.#sql
 			.exec<{ seq: number; body: string }>('SELECT seq, body FROM entries WHERE thread = ?', thread)
 			.toArray()
@@ -383,33 +300,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#touch(thread);
 	}
 
-	async #dispatchRuns() {
-		const dispatches = this.#sql
-			.exec<{ id: string; proposal: string; previous: string; input: string }>(
-				'SELECT * FROM run_dispatch'
-			)
-			.toArray();
-		for (const dispatch of dispatches) {
-			const runnable = () => {
-				const summary = this.#summary(dispatch.proposal);
-				return (
-					summary &&
-					!summary.deleted &&
-					summary.status === 'running' &&
-					this.#acceptance.run(dispatch.proposal)?.id === dispatch.id
-				);
-			};
-			if (runnable()) {
-				await this.env.ATTEMPTS.getByName(dispatch.previous).stop();
-				if (runnable())
-					await this.env.ATTEMPTS.getByName(dispatch.id).start(JSON.parse(dispatch.input));
-			}
-			this.#sql.exec('DELETE FROM run_dispatch WHERE id = ?', dispatch.id);
-		}
-	}
-
 	override async alarm() {
-		await this.#dispatchRuns();
 		await this.#advancePromotion();
 		const due = this.#sql
 			.exec<{ id: string }>(
@@ -418,10 +309,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			)
 			.toArray();
 		for (const { id } of due) {
-			// Acceptance records and referenced Git forks outlive the conversational view.
-			for (const run of this.#acceptance.control(id).runs)
-				await this.env.ATTEMPTS.getByName(run.id).destroy();
-			await this.env.ATTEMPTS.getByName(id).destroy();
+			// Promotion records and the forks they reference outlive the conversational view.
+			await this.#agent(id).destroy();
 			this.#images.purge(id);
 			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM usage WHERE thread = ?', id);
@@ -458,10 +347,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const recipient = this.#summary(to);
 		if (!recipient || recipient.deleted) throw new Error(`There is no thread ${to}`);
 		const steering = recipient.status === 'running';
-		if (!steering && recipient.status !== 'draft') {
-			throw new Error(
-				`Thread ${to} is ${recipient.status} and waiting for a person. Tell your person instead.`
-			);
+		if (['discarded', 'shipping'].includes(recipient.status)) {
+			throw new Error(`Thread ${to} is ${recipient.status}. Tell your person instead.`);
 		}
 		if (this.#threadMessagesSincePerson(to) >= maxThreadMessages) {
 			throw new Error(
@@ -574,7 +461,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				entries: [],
 				usage: this.#usage(id, summary.mode, []),
 				services: [],
-				activity: null
+				activity: null,
+				promotions: []
 			};
 		}
 		const rows = this.#sql
@@ -586,14 +474,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			usage: this.#usage(id, summary.mode),
 			services: this.#services(id),
 			activity: this.#activities.get(id) ?? null,
-			control: this.#acceptance.control(id)
+			promotions: this.#promotions.list(id)
 		};
 	}
 
 	async intentProposed(thread: string, intent: Intent) {
 		const summary = this.#summary(thread);
 		if (!summary || summary.deleted) return;
-		if (['discarded', 'shipping', 'shipped'].includes(summary.status)) return;
+		if (summary.status === 'discarded') return;
 		const id = this.#add(thread, { type: 'intent', intent });
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
@@ -602,7 +490,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const { similar, size } = assessment;
 		if (similar.length) this.#replace(thread, { ...this.#entry(thread, id)!, similar } as Entry);
 		const current = this.#summary(thread)!;
-		if (current.auto && current.status === 'draft' && current.mode !== size) {
+		if (current.auto && !current.changes?.files && current.mode !== size) {
 			this.#sql.exec('UPDATE threads SET mode = ? WHERE id = ?', size, thread);
 			this.#touch(thread);
 		}
@@ -679,7 +567,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 		this.#sql.exec(
 			`INSERT INTO threads (id, headline, status, mode, machine, parent, context, updated_at)
-			VALUES (?, ?, 'draft', ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, 'needs-you', ?, ?, ?, ?, ?)`,
 			id,
 			suggestion.intent.headline,
 			parent.mode,
@@ -704,48 +592,40 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async serviceAction(thread: string, action: 'start' | 'stop' | 'restart', name: string) {
 		this.#active(thread);
-		await this.#executor(thread).serviceAction(action, name);
+		await this.#agent(thread).serviceAction(action, name);
 	}
 
 	serviceLogs(thread: string, name: string) {
 		this.#active(thread);
-		return this.#executor(thread).serviceLogs(name) as Promise<string>;
+		return this.#agent(thread).serviceLogs(name) as Promise<string>;
 	}
 
 	changes(thread: string) {
 		this.#active(thread);
-		return this.#executor(thread).changes() as Promise<DiffFile[] | null>;
+		return this.#agent(thread).changes() as Promise<DiffFile[] | null>;
 	}
 
 	async ship(thread: string, { by, email, title, body }: ShipInput) {
 		const summary = this.#active(thread);
-		if (summary.status !== 'needs-you' || !summary.changes) {
+		if (summary.status !== 'needs-you' || !summary.changes?.files) {
 			throw new Error('This thread has nothing ready to ship');
 		}
 		await this.#owner(by);
-		const run = this.#acceptance.run(thread);
-		const revision = await this.#executor(thread).revision();
-		if (this.#active(thread).status !== 'needs-you')
-			throw new Error('The proposal is no longer ready');
-		if (!run || this.#acceptance.run(thread)?.id !== run.id || !revision)
-			throw new Error('There is no stable revision; start a new run');
-		const accepted = this.#acceptance.intent(thread);
-		if (!accepted || revision.intent !== accepted.id)
-			throw new Error('This revision implements an older intent');
 		if (
-			this.#acceptance
-				.promotions()
-				.some(
-					(p) => p.proposal === thread && !['failed', 'cancelled', 'shipped'].includes(p.status)
-				)
+			this.#promotions
+				.list(thread)
+				.some((p) => !['failed', 'cancelled', 'shipped'].includes(p.status))
 		)
-			throw new Error('This proposal already has a pending candidate');
-		this.#acceptance.putRevision(revision);
-		this.#acceptance.putPromotion({
+			throw new Error('This thread already has a pending candidate');
+		const source = await this.#agent(thread).revision();
+		if (!source) throw new Error('This thread has no changes to ship');
+		if (this.#active(thread).status !== 'needs-you')
+			throw new Error('The thread started working again');
+		this.#promotions.put({
 			id: crypto.randomUUID().replaceAll('-', ''),
 			proposal: thread,
-			revision: revision.id,
-			intent: accepted.id,
+			source,
+			intent: this.#latestIntent(thread) ?? null,
 			requestedBy: by,
 			approvedBy: null,
 			email,
@@ -768,19 +648,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async approvePromotion(thread: string, id: string, by: Author) {
 		await this.#owner(by);
 		this.#active(thread);
-		const control = this.#acceptance.control(thread);
-		const promotion = control.promotions.find((p) => p.id === id);
-		if (!promotion || promotion.status !== 'ready')
+		const promotion = this.#promotions.list(thread).find((p) => p.id === id);
+		if (!promotion || promotion.status !== 'ready' || !promotion.candidate)
 			throw new Error('This candidate is not awaiting approval');
-		const problem = promotionProblem(
-			promotion,
-			control.acceptedIntent,
-			control.revisions.find((r) => r.id === promotion.revision)
-		);
-		if (problem) throw new Error(problem);
-		if (this.#acceptance.promotions().some((p) => p.status === 'publishing'))
+		if (this.#promotions.list().some((p) => p.status === 'publishing'))
 			throw new Error('Another publication is being reconciled. Try again when it completes.');
-		this.#acceptance.putPromotion({ ...promotion, status: 'publishing', approvedBy: by });
+		this.#promotions.put({ ...promotion, status: 'publishing', approvedBy: by });
 		this.#setStatus(thread, 'shipping');
 		this.#add(thread, {
 			type: 'event',
@@ -794,18 +667,18 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			throw new Error('Repository owner permission is required');
 	}
 
-	#executor(thread: string) {
-		return this.env.ATTEMPTS.getByName(this.#acceptance.run(thread)?.id ?? thread);
+	#agent(thread: string) {
+		return this.env.ATTEMPTS.getByName(thread);
 	}
 
 	#cancelPromotions(thread: string) {
-		const pending = this.#acceptance.control(thread).promotions;
+		const pending = this.#promotions.list(thread);
 		if (pending.some((p) => p.status === 'publishing'))
 			throw new Error(
 				'Publication has been admitted; its outcome must be reconciled before cancellation'
 			);
 		for (const p of pending.filter((p) => ['queued', 'preparing', 'ready'].includes(p.status)))
-			this.#acceptance.putPromotion({
+			this.#promotions.put({
 				...p,
 				status: 'cancelled',
 				error: 'Cancelled before publication'
@@ -813,7 +686,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	async #advancePromotion() {
-		const all = this.#acceptance.promotions();
+		const all = this.#promotions.list();
 		const p =
 			all.find((p) => p.status === 'publishing') ??
 			all.find((p) => ['queued', 'preparing'].includes(p.status)) ??
@@ -821,9 +694,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (!p) return;
 		const repo = this.#repo();
 		const publisher = this.env.REPOSITORY_GIT.getByName(`promotion-${p.id}`);
-		const control = this.#acceptance.control(p.proposal);
-		const revision = control.revisions.find((r) => r.id === p.revision);
-		const current = () => this.#acceptance.promotions().find((item) => item.id === p.id)!;
+		const current = () => this.#promotions.list(p.proposal).find((item) => item.id === p.id)!;
 		try {
 			if (p.status === 'shipped') {
 				await publisher.notes(
@@ -832,20 +703,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 					JSON.stringify({
 						schema: 1,
 						promotion: p.id,
-						source: revision,
-						intent: this.#acceptance.acceptedIntent(p.intent),
+						source: p.source,
+						intent: p.intent,
 						authorizedBy: p.approvedBy
 					})
 				);
-				this.#acceptance.putPromotion({ ...p, notesPublished: true, error: null });
+				this.#promotions.put({ ...p, notesPublished: true, error: null });
 				return;
 			}
 			if (p.status === 'publishing') {
 				// Authorization was fixed at admission. A lost response retries the same ref update.
 				await publisher.promote(repo, p.candidate!);
-				this.#acceptance.putPromotion({ ...p, status: 'shipped', error: null });
+				await this.#agent(p.proposal).published({
+					sha: p.candidate!.sha,
+					branch: p.candidate!.branch,
+					from: p.source.sha
+				});
+				this.#promotions.put({ ...p, status: 'shipped', error: null });
 				this.#sql.exec(
-					'UPDATE threads SET shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
+					'UPDATE threads SET changes = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
 					p.candidate!.sha,
 					Date.now(),
 					p.approvedBy!.name,
@@ -858,12 +734,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				});
 				return;
 			}
-			if (!revision || !control.acceptedIntent || control.acceptedIntent.id !== p.intent)
-				throw new Error('The accepted intent or source revision changed');
-			this.#acceptance.putPromotion({ ...p, status: 'preparing' });
-			const candidate = await publisher.prepare(repo, revision, p);
+			this.#promotions.put({ ...p, status: 'preparing' });
+			const candidate = await publisher.prepare(repo, p.source, p);
 			if (current().status === 'cancelled') return;
-			this.#acceptance.putPromotion({ ...p, candidate, status: 'ready', error: null });
+			this.#promotions.put({ ...p, candidate, status: 'ready', error: null });
 			this.#setStatus(p.proposal, 'needs-you');
 			this.#add(p.proposal, {
 				type: 'event',
@@ -873,7 +747,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			if (current().status === 'cancelled') return;
 			const message = error instanceof Error ? error.message : String(error);
 			const uncertain = p.status === 'publishing' && !message.includes('Stale candidate:');
-			this.#acceptance.putPromotion({
+			this.#promotions.put({
 				...current(),
 				status: p.status === 'shipped' ? 'shipped' : uncertain ? 'publishing' : 'failed',
 				error: message
@@ -887,19 +761,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 	}
 
-	attemptUpdated(thread: string, update: AttemptUpdate, runId?: string) {
+	attemptUpdated(thread: string, update: AttemptUpdate) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
-		const run = this.#acceptance.run(thread);
-		const discussion = runId === `discussion-${thread}`;
-		if (discussion) {
-			if (!['reply', 'read', 'usage', 'activity', 'conversation-failed'].includes(update.type))
-				return;
-		} else if (run && (runId !== run.id || summary.status === 'shipped')) return;
-		if (!discussion && run && update.type === 'status')
-			this.#acceptance.putRun({ ...run, status: update.status });
-		if (!discussion && summary.status === 'shipping' && !['usage', 'read'].includes(update.type))
-			return;
 		if (update.type === 'changes') {
 			this.#sql.exec(
 				'UPDATE threads SET changes = ? WHERE id = ?',
@@ -935,15 +799,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#add(thread, { type: 'startup', stages: update.stages });
 			return;
 		}
-		if (update.type === 'conversation-failed') {
-			this.#setActivity(thread, null);
-			this.#add(thread, { type: 'event', text: `Couldn't reply: ${update.error}` });
-			return;
-		}
-		if (update.type === 'step' || update.type === 'reply') {
-			const task = update.type === 'reply' ? 'conversation' : 'attempt';
+		if (update.type === 'step') {
 			if (update.step.usage) {
-				this.#recordUsage(thread, task, modes[summary.mode].model, update.step.usage);
+				this.#recordUsage(thread, 'agent', modes[summary.mode].model, update.step.usage);
 				this.#touch(thread);
 			}
 			for (const turn of update.step.turns) {
@@ -954,7 +812,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			if (update.tools?.length) this.#add(thread, { type: 'tools', calls: update.tools });
 			const activity = this.#activities.get(thread);
 			if (activity) this.#setActivity(thread, { ...activity, text: '', calls: [] });
-			if (update.type === 'step' && update.step.checkpoint) {
+			if (update.step.checkpoint) {
 				this.#add(thread, {
 					type: 'event',
 					text: `Checkpoint ${update.step.checkpoint.slice(0, 7)}`
@@ -963,17 +821,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			return;
 		}
 
-		const outcomes: Partial<Record<AttemptStatus, [ThreadStatus, string]>> = {
-			finished: ['needs-you', 'The attempt finished'],
-			stopped: ['needs-you', 'The attempt stopped at its step limit'],
-			failed: ['needs-you', `The attempt failed: ${update.error}`],
-			cancelled: ['discarded', 'The attempt was cancelled']
-		};
-		const outcome = outcomes[update.status];
-		if (!outcome) return;
+		if (!['finished', 'stopped', 'failed'].includes(update.status)) return;
 		this.#setActivity(thread, null);
-		this.#add(thread, { type: 'event', text: outcome[1] });
-		this.#setStatus(thread, outcome[0]);
+		if (update.status === 'stopped')
+			this.#add(thread, { type: 'event', text: 'The agent stopped at its step limit' });
+		if (update.status === 'failed')
+			this.#add(thread, { type: 'event', text: `The agent failed: ${update.error}` });
+		if (this.#summary(thread)!.status === 'running') this.#setStatus(thread, 'needs-you');
 	}
 
 	override async fetch(request: Request) {
@@ -985,27 +839,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	async #converse(thread: string, author: Author, text: string, entry: string) {
-		await this.#dispatchRuns();
-		const { mode, machine, status } = this.#summary(thread)!;
-		const run = this.#acceptance.run(thread);
-		const intentVersion = this.#acceptance.intent(thread)?.id;
-		const discussion =
-			run && (['shipping', 'shipped'].includes(status) || run.intent !== intentVersion);
+		const { mode, machine } = this.#summary(thread)!;
 		const [row] = this.#sql
 			.exec<Pick<ThreadRow, 'context'>>('SELECT context FROM threads WHERE id = ?', thread)
 			.toArray();
-		const executor = discussion
-			? this.env.ATTEMPTS.getByName(`discussion-${thread}`)
-			: this.#executor(thread);
-		await executor.converse({
-			proposal: thread,
-			intentVersion,
+		await this.#agent(thread).converse({
 			repo: this.#repo(),
 			mode,
 			machine,
-			context: discussion
-				? describeTask(this.#acceptance.intent(thread)!.intent, this.#conversation(thread))
-				: (row?.context ?? undefined),
+			context: row?.context ?? undefined,
 			author: author.name,
 			text,
 			entry
@@ -1123,10 +965,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			row.cost = row.cost === null || price === null ? null : row.cost + price;
 			rows.set(key, row);
 		}
-		const latest =
-			calls.findLast((call) => call.task === 'attempt') ??
-			calls.findLast((call) => call.task === 'conversation') ??
-			calls.at(-1);
+		const latest = calls.findLast((call) => call.task === 'agent') ?? calls.at(-1);
 		const model = latest?.model ?? modes[mode].model;
 		return {
 			rows: [...rows.values()],
@@ -1201,29 +1040,21 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				'SELECT MIN(deleted_at) AS at FROM threads WHERE deleted_at IS NOT NULL'
 			)
 			.toArray();
-		const pending = this.#acceptance
-			.promotions()
+		const pending = this.#promotions
+			.list()
 			.some(
 				(p) =>
 					['queued', 'preparing', 'publishing'].includes(p.status) ||
 					(p.status === 'shipped' && !p.notesPublished)
 			);
-		if (pending || this.#sql.exec('SELECT 1 FROM run_dispatch LIMIT 1').toArray().length)
-			await this.ctx.storage.setAlarm(Date.now() + 1000);
+		if (pending) await this.ctx.storage.setAlarm(Date.now() + 1000);
 		else if (next?.at) await this.ctx.storage.setAlarm(next.at + threadPurgeDelayMs);
 		else await this.ctx.storage.deleteAlarm();
 	}
 
 	#latestIntent(thread: string) {
-		return this.thread(thread)
-			?.entries.filter((entry) => entry.type === 'intent')
-			.at(-1)?.intent;
-	}
-
-	#conversation(thread: string) {
-		return (this.thread(thread)?.entries ?? []).flatMap((entry) =>
-			entry.type === 'message' ? [{ author: entry.author.name, text: entry.text }] : []
-		);
+		const intent = this.#entries(thread).findLast((entry) => entry.type === 'intent');
+		return intent?.type === 'intent' ? intent.intent : undefined;
 	}
 }
 

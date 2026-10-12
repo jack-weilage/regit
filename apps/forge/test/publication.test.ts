@@ -1,9 +1,7 @@
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import type { ThreadDetail as CoreThreadDetail, ProposalControl } from '@regit/core';
+import type { ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
-
-type ThreadDetail = CoreThreadDetail & { control: ProposalControl };
 
 const { dir, worker, seed, commit, sh, idle, script } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
@@ -37,7 +35,7 @@ async function until(
 	return (await repo.thread(id)) as ThreadDetail;
 }
 
-async function finishedRun(name: string) {
+async function finishedThread(name: string) {
 	const work = await seed(name, { 'notes.md': 'Some notes\n' });
 	const canonical = join(dir, `${name}.git`);
 	const original = sh(canonical, 'rev-parse', 'main');
@@ -53,7 +51,7 @@ async function finishedRun(name: string) {
 		.run();
 	await idle();
 	await script([
-		say('Proposed.'),
+		tool('update_intent', intent),
 		tool('write_file', { path: 'notes.md', content: '# Notes\n' }),
 		say('Done.')
 	]);
@@ -66,18 +64,13 @@ async function finishedRun(name: string) {
 		machine: 'standard-1'
 	});
 	const id = opened.id;
-	await until(repo, id, (detail) =>
-		detail.entries.some((entry) => entry.type === 'message' && entry.author.kind === 'agent')
-	);
-	await repo.intentProposed(id, intent);
-	await repo.start(id, owner);
 	const detail = await until(repo, id, (detail) => detail.summary.status === 'needs-you');
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
 	return { env, repo, id, detail, work, canonical, original };
 }
 
 async function candidate(name: string) {
-	const run = await finishedRun(name);
+	const run = await finishedThread(name);
 	await run.repo.ship(run.id, {
 		by: owner,
 		email: 'sam@example.com',
@@ -87,15 +80,15 @@ async function candidate(name: string) {
 	const detail = await until(
 		run.repo,
 		run.id,
-		(detail) => detail.control.promotions.at(-1)?.status === 'ready'
+		(detail) => detail.promotions.at(-1)?.status === 'ready'
 	);
-	const promotion = detail.control.promotions.at(-1)!;
+	const promotion = detail.promotions.at(-1)!;
 	expect(sh(run.canonical, 'rev-parse', 'main')).toBe(run.original);
 	return { ...run, ready: detail, promotion };
 }
 
 test('only an owner can queue and approve the exact isolated candidate', async () => {
-	const { repo, id, detail, canonical, original } = await finishedRun('accept-exact');
+	const { repo, id, canonical, original } = await finishedThread('publish-exact');
 	const input = {
 		by: owner,
 		email: 'sam@example.com',
@@ -110,21 +103,15 @@ test('only an owner can queue and approve the exact isolated candidate', async (
 	]) {
 		await expect(repo.ship(id, { ...input, by })).rejects.toThrow();
 	}
-	expect((await repo.thread(id))!.control!.promotions).toEqual([]);
+	expect((await repo.thread(id))!.promotions).toEqual([]);
 	await repo.ship(id, input);
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
-	const ready = await until(
-		repo,
-		id,
-		(detail) => detail.control.promotions.at(-1)?.status === 'ready'
-	);
-	const promotion = ready.control.promotions.at(-1)!;
+	const ready = await until(repo, id, (detail) => detail.promotions.at(-1)?.status === 'ready');
+	const promotion = ready.promotions.at(-1)!;
 	const candidate = promotion.candidate!;
-	const revision = ready.control.revisions.find((revision) => revision.id === promotion.revision)!;
-	expect(revision).toMatchObject({
-		run: detail.control.runs[0]!.id,
-		intent: ready.control.acceptedIntent!.id
-	});
+	const revision = promotion.source;
+	expect(revision).toMatchObject({ proposal: id, repository: `publish-exact--${id}` });
+	expect(promotion.intent).toEqual(intent);
 	expect(candidate.expectedHead).toBe(original);
 	expect(candidate.repository).not.toBe(revision.repository);
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
@@ -145,9 +132,13 @@ test('only an owner can queue and approve the exact isolated candidate', async (
 	const shipped = await until(
 		repo,
 		id,
-		(detail) => detail.control.promotions.at(-1)?.notesPublished === true
+		(detail) => detail.promotions.at(-1)?.notesPublished === true
 	);
-	expect(shipped.summary.shipped).toMatchObject({ sha: candidate.sha, by: 'Sam' });
+	expect(shipped.summary).toMatchObject({
+		status: 'shipped',
+		changes: null,
+		shipped: { sha: candidate.sha, by: 'Sam' }
+	});
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(candidate.sha);
 	expect(sh(canonical, 'rev-list', '--count', 'main')).toBe('2');
 	const note = JSON.parse(sh(canonical, 'notes', '--ref=regit', 'show', candidate.sha));
@@ -155,13 +146,13 @@ test('only an owner can queue and approve the exact isolated candidate', async (
 		schema: 1,
 		promotion: promotion.id,
 		source: revision,
-		intent: ready.control.acceptedIntent,
+		intent,
 		authorizedBy: owner
 	});
 });
 
 test('discarding a thread with a pending candidate cancels it and reopens as needing you', async () => {
-	const { repo, id } = await finishedRun('discard-pending');
+	const { repo, id } = await finishedThread('discard-pending');
 	await repo.ship(id, {
 		by: owner,
 		email: 'sam@example.com',
@@ -172,25 +163,43 @@ test('discarding a thread with a pending candidate cancels it and reopens as nee
 	await repo.reopen(id, owner);
 	const detail = (await repo.thread(id)) as ThreadDetail;
 	expect(detail.summary.status).toBe('needs-you');
-	expect(detail.control.promotions.at(-1)!.status).toBe('cancelled');
+	expect(detail.promotions.at(-1)!.status).toBe('cancelled');
 });
 
-test('accepting changed intent invalidates the pending candidate and its approval', async () => {
-	const { repo, id, ready, promotion, canonical, original } = await candidate('accept-changed');
-	await repo.intentProposed(id, {
-		...intent,
-		headline: 'docs: add a footer',
-		doneWhen: ['notes.md ends with a footer']
-	});
-	await repo.acceptIntent(id, owner);
-	const changed = (await repo.thread(id)) as ThreadDetail;
-	expect(changed.control.acceptedIntent!.id).not.toBe(ready.control.acceptedIntent!.id);
-	expect(changed.control.promotions.at(-1)).toMatchObject({
-		id: promotion.id,
-		status: 'cancelled'
-	});
-	await expect(repo.approvePromotion(id, promotion.id, owner)).rejects.toThrow();
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
+test('work after a candidate is prepared lands on the published commit afterwards', async () => {
+	const { repo, id, promotion, canonical } = await candidate('publish-later');
+	await idle();
+	await script([
+		tool('write_file', { path: 'footer.md', content: 'A footer\n' }),
+		say('Added a footer.')
+	]);
+	await repo.reply(id, { author: owner, text: 'Add a footer too.' });
+	await until(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Added a footer.')
+	);
+	await repo.approvePromotion(id, promotion.id, owner);
+	await until(repo, id, (detail) => detail.summary.status === 'shipped');
+	const published = promotion.candidate!.sha;
+	expect(sh(canonical, 'rev-parse', 'main')).toBe(published);
+	expect(() => sh(canonical, 'show', 'main:footer.md')).toThrow();
+
+	await script([say('Rebased.')]);
+	await repo.reply(id, { author: owner, text: 'Carry on.' });
+	const rebased = await until(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Rebased.')
+	);
+	const fork = join(dir, `publish-later--${id}.git`);
+	expect(sh(fork, 'rev-parse', 'main^')).toBe(published);
+	expect(sh(fork, 'show', 'main:footer.md')).toBe('A footer');
+	expect(rebased.summary.changes).toEqual({ files: 1, additions: 1, deletions: 0 });
 });
 
 test('an external main advance makes an approved candidate stale without rebasing or pushing it', async () => {
@@ -200,12 +209,8 @@ test('an external main advance makes an approved candidate stale without rebasin
 	sh(work, 'push', '--quiet', canonical, 'main');
 	const external = sh(canonical, 'rev-parse', 'main');
 	await repo.approvePromotion(id, promotion.id, owner);
-	const failed = await until(
-		repo,
-		id,
-		(detail) => detail.control.promotions.at(-1)?.status === 'failed'
-	);
-	expect(failed.control.promotions.at(-1)).toMatchObject({
+	const failed = await until(repo, id, (detail) => detail.promotions.at(-1)?.status === 'failed');
+	expect(failed.promotions.at(-1)).toMatchObject({
 		candidate: pinned,
 		notesPublished: false,
 		error: expect.stringContaining('Stale candidate:')
@@ -214,38 +219,4 @@ test('an external main advance makes an approved candidate stale without rebasin
 	expect(sh(canonical, 'show', 'main:notes.md')).toBe('Some notes');
 	expect(sh(join(dir, `${pinned.repository}.git`), 'rev-parse', 'main')).toBe(pinned.sha);
 	expect(() => sh(canonical, 'notes', '--ref=regit', 'show', pinned.sha)).toThrow();
-});
-
-test('new runs are independent from proposals and ignore callbacks from older runs', async () => {
-	const { env, repo, id, detail, canonical, original } = await finishedRun('accept-runs');
-	const first = detail.control.runs[0]!;
-	expect(first.id).not.toBe(id);
-	const firstRevision = await env.ATTEMPTS.getByName(first.id).revision();
-	await idle();
-	await script([
-		tool('write_file', { path: 'notes.md', content: '# Another title\n' }),
-		say('Done again.')
-	]);
-	await repo.start(id, owner);
-	const second = await until(repo, id, (detail) => detail.summary.status === 'needs-you');
-	expect(second.control.runs).toHaveLength(2);
-	expect(second.control.runs[1]).toMatchObject({ proposal: id, intent: first.intent });
-	expect(second.control.runs[1]!.id).not.toBe(first.id);
-	expect(second.control.acceptedIntent).toEqual(detail.control.acceptedIntent);
-	expect(await env.ATTEMPTS.getByName(first.id).revision()).toMatchObject({
-		...firstRevision,
-		at: expect.any(Number)
-	});
-	await repo.attemptUpdated(
-		id,
-		{ type: 'status', status: 'failed', error: 'Old failure' },
-		first.id
-	);
-	await repo.attemptUpdated(id, {
-		type: 'status',
-		status: 'failed',
-		error: 'Missing run identity'
-	});
-	expect(await repo.thread(id)).toEqual(second);
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
 });

@@ -9,7 +9,6 @@ const targets: Record<string, string> = {
 	find_files: 'pattern',
 	search: 'pattern',
 	run: 'command',
-	propose_intent: 'headline',
 	update_intent: 'headline',
 	suggest_thread: 'headline',
 	message_thread: 'thread',

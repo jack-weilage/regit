@@ -236,7 +236,7 @@ printf browser-ok`
 		error: null,
 		toolchain: { restored: true }
 	});
-	expect(restored.steps[0]!.turns).toContainEqual({
+	expect(restored.steps.flatMap((step) => step.turns)).toContainEqual({
 		role: 'tool',
 		results: [
 			{ callId: 'restored', output: expect.stringMatching(/^exit code 0\n43\n.*browser-ok$/s) }

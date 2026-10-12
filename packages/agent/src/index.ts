@@ -1,7 +1,7 @@
 export { runAttempt } from './attempt.ts';
-export { codingInstructions, threadInstructions } from './instructions.ts';
+export { threadInstructions } from './instructions.ts';
 export { repositoryGuidance } from './guidance.ts';
-export { describeTask, intentTools, type Intent } from './intent.ts';
+export { intentTools, type Intent } from './intent.ts';
 export { parseDiff } from './diff.ts';
 export { suggestTools, type Suggestion } from './suggest.ts';
 export { threadTools } from './threads.ts';

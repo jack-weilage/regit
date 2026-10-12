@@ -11,7 +11,7 @@ describe('toolTarget', () => {
 		expect(toolTarget('read_file', '{"path":"src/a.ts"}')).toBe('src/a.ts');
 		expect(toolTarget('find_files', '{"pattern":"**/*.svelte"}')).toBe('**/*.svelte');
 		expect(toolTarget('run', '{"command":"bun run check"}')).toBe('bun run check');
-		expect(toolTarget('propose_intent', '{"headline":"fix: x"}')).toBe('fix: x');
+		expect(toolTarget('update_intent', '{"headline":"fix: x"}')).toBe('fix: x');
 		expect(toolTarget('run', 'not json')).toBe('');
 	});
 

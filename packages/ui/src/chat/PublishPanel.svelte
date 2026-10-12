@@ -1,47 +1,33 @@
 <script lang="ts">
 	import Button from '../Button.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
-	import Markdown from './Markdown.svelte';
 	import type { StatusIconState } from './status.ts';
-	import type { Intent, Promotion, ProposalControl, ThreadStatus } from '@regit/core';
+	import type { Intent, Promotion, ThreadStatus } from '@regit/core';
 
 	let {
-		control,
+		promotions,
 		intent,
 		status,
 		hasChanges,
-		onaccept,
-		onstart,
 		onprepare,
 		onapprove
 	}: {
-		control?: ProposalControl;
+		promotions: Promotion[];
 		intent?: Intent;
 		status: ThreadStatus;
 		hasChanges: boolean;
-		onaccept: () => Promise<unknown>;
-		onstart: () => Promise<unknown>;
 		onprepare: (commit: { title: string; body: string }) => Promise<unknown>;
 		onapprove: (promotion: string) => Promise<unknown>;
 	} = $props();
-	let needsRun = $derived(
-		!!control?.runs.length && control.runs.at(-1)?.intent !== control.acceptedIntent?.id
-	);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 	let preparing = $state(false);
 	let title = $state('');
 	let body = $state('');
-	let promotion = $derived(control?.promotions.at(-1));
+	let promotion = $derived(promotions.at(-1));
 	let pending = $derived(
-		control?.promotions.some((p) =>
-			['queued', 'preparing', 'ready', 'publishing'].includes(p.status)
-		) ?? false
+		promotions.some((p) => ['queued', 'preparing', 'ready', 'publishing'].includes(p.status))
 	);
-	let changed = $derived(
-		!!intent && JSON.stringify(intent) !== JSON.stringify(control?.acceptedIntent?.intent)
-	);
-	let canStart = $derived(!!intent && ['draft', 'needs-you'].includes(status));
 	const states: Record<Promotion['status'], { label: string; icon: StatusIconState }> = {
 		queued: { label: 'Candidate queued', icon: 'pending' },
 		preparing: { label: 'Preparing candidate', icon: 'running' },
@@ -64,35 +50,17 @@
 	}
 </script>
 
-<section class="acceptance" aria-label="Acceptance and publication" aria-busy={busy}>
+<section class="publish" aria-label="Publication" aria-busy={busy}>
 	<header>
 		<strong class="heading"
 			><StatusIcon state={promotion ? states[promotion.status].icon : 'pending'} />
-			{promotion
-				? states[promotion.status].label
-				: changed
-					? 'Intent awaiting acceptance'
-					: control?.acceptedIntent
-						? 'Intent accepted'
-						: 'Acceptance'}
+			{promotion ? states[promotion.status].label : 'Unpublished changes'}
 		</strong>
 		{#if promotion?.candidate}<span class="meta"
 				><code>{promotion.candidate.sha.slice(0, 12)}</code> → {promotion.candidate.branch}</span
 			>{/if}
 	</header>
-	{#if changed && intent}
-		<div class="proposed">
-			<p class="headline">{intent.headline}</p>
-			<p class="meta">
-				{control?.acceptedIntent
-					? 'Changed intent · accepting cancels pending candidates; retained revisions stay available.'
-					: 'No intent has been accepted yet.'}
-			</p>
-		</div>
-	{:else if !control?.acceptedIntent}
-		<p class="meta">No intent has been accepted yet.</p>
-	{/if}
-	{#if !promotion && control?.acceptedIntent}
+	{#if !pending && hasChanges}
 		<p class="meta">
 			Preparation builds one exact commit without publishing it. A repository owner approves
 			publication separately.
@@ -102,10 +70,6 @@
 		<p class="meta">Owner approval publishes this exact candidate.</p>
 	{/if}
 	{#if error || promotion?.error}<p class="error" role="alert">{error ?? promotion?.error}</p>{/if}
-
-	{#if needsRun}<p class="warning">
-			Intent changed. Start a new run before preparing a candidate.
-		</p>{/if}
 
 	{#if preparing}
 		<form
@@ -125,82 +89,53 @@
 					type="submit"
 					variant="primary"
 					size="sm"
-					disabled={busy || needsRun || pending || status !== 'needs-you'}>Prepare candidate</Button
+					disabled={busy || pending || status !== 'needs-you'}>Prepare candidate</Button
 				>
 			</div>
 		</form>
 	{/if}
 
-	{#if control}
+	{#if promotions.length}
 		<details class="provenance">
-			<summary>Provenance and history</summary>
+			<summary>Candidate history</summary>
 			<div class="details-body">
-				{#if control.acceptedIntent}
-					<strong>Accepted intent · {control.acceptedIntent.intent.headline}</strong>
-					<p>
-						<code>{control.acceptedIntent.id}</code> · accepted by {control.acceptedIntent
-							.acceptedBy.name}
-					</p>
-					<Markdown source={control.acceptedIntent.intent.purpose} />
-					<ul>
-						{#each control.acceptedIntent.intent.doneWhen as check, index (index)}<li>
-								{check}
-							</li>{/each}
-					</ul>
-				{/if}
-				{#if promotion}{@render provenance(promotion)}{/if}
-				<details>
-					<summary>Run history and retained revisions</summary>
+				{#each promotions.toReversed() as item (item.id)}
 					<div class="details-body">
-						{#each control.runs as run (run.id)}<p>
-								Run <code>{run.id}</code> · {run.status} · intent <code>{run.intent}</code>
-							</p>{/each}
-						{#each control.revisions as revision (revision.id)}<p>
-								Revision <code>{revision.id}</code> · run <code>{revision.run}</code><br />SHA
-								<code>{revision.sha}</code><br />Base <code>{revision.base}</code>
-							</p>{/each}
+						<strong>Candidate {item.id} · {item.status}</strong>
+						<dl>
+							<dt>Source</dt>
+							<dd><code>{item.source?.sha}</code></dd>
+							{#if item.candidate}
+								<dt>Exact SHA</dt>
+								<dd><code>{item.candidate.sha}</code></dd>
+								<dt>Expected base</dt>
+								<dd><code>{item.candidate.expectedHead}</code></dd>
+								<dt>Repository</dt>
+								<dd>{item.candidate.repository} · {item.candidate.branch}</dd>
+							{/if}
+						</dl>
+						{#if item.error && item !== promotion}<p class="error">{item.error}</p>{/if}
 					</div>
-				</details>
-				{#each control.promotions.slice(0, -1) as previous (previous.id)}
-					<details>
-						<summary>Candidate {previous.id} · {previous.status}</summary>
-						<div class="details-body">
-							{@render provenance(previous)}
-							{#if previous.error}<p class="error">{previous.error}</p>{/if}
-						</div>
-					</details>
 				{/each}
 			</div>
 		</details>
 	{/if}
 
-	{#if !preparing && (canStart || (promotion?.status === 'ready' && promotion.candidate))}
+	{#if !preparing && (promotion?.status === 'ready' || (status === 'needs-you' && hasChanges && !pending))}
 		<footer class="actions">
-			{#if canStart}
-				{#if changed}<Button size="sm" disabled={busy} onclick={() => act(onaccept)}
-						>Accept proposed intent</Button
-					>{/if}
-				<Button
-					size="sm"
-					variant={changed && promotion?.status !== 'ready' ? 'primary' : 'quiet'}
-					disabled={busy}
-					onclick={() => act(onstart)}
-					>{changed ? 'Accept intent and start new run' : 'Start new run'}</Button
-				>
-			{/if}
 			{#if promotion?.status === 'ready' && promotion.candidate}
 				<Button
 					size="sm"
 					variant="primary"
-					disabled={busy || needsRun}
+					disabled={busy}
 					onclick={() => act(() => onapprove(promotion!.id))}
 					>Approve and publish {promotion.candidate.sha.slice(0, 12)}</Button
 				>
-			{:else if status === 'needs-you' && hasChanges && !pending}
+			{:else}
 				<Button
 					size="sm"
 					variant="primary"
-					disabled={busy || needsRun}
+					disabled={busy}
 					onclick={() => {
 						title = intent?.headline ?? '';
 						body = intent?.purpose ?? '';
@@ -212,23 +147,8 @@
 	{/if}
 </section>
 
-{#snippet provenance(item: Promotion)}
-	<dl>
-		<dt>Candidate</dt>
-		<dd><code>{item.id}</code></dd>
-		{#if item.candidate}
-			<dt>Exact SHA</dt>
-			<dd><code>{item.candidate.sha}</code></dd>
-			<dt>Expected base</dt>
-			<dd><code>{item.candidate.expectedHead}</code></dd>
-			<dt>Repository</dt>
-			<dd>{item.candidate.repository} · {item.candidate.branch}</dd>
-		{/if}
-	</dl>
-{/snippet}
-
 <style>
-	.acceptance {
+	.publish {
 		display: grid;
 		gap: var(--space-4);
 		padding: var(--space-6);
@@ -257,17 +177,11 @@
 		color: var(--color-muted);
 		font-size: var(--text-meta);
 	}
-	.headline {
-		font-family: var(--font-mono);
-		font-weight: 500;
-	}
 	p,
-	ul,
 	dl,
 	dd {
 		margin: 0;
 	}
-	.proposed,
 	.details-body,
 	form {
 		display: grid;
@@ -283,12 +197,6 @@
 	}
 	summary:hover {
 		color: var(--color-fg);
-	}
-	.warning {
-		padding: var(--space-4) var(--space-5);
-		border: 1px solid color-mix(in oklab, var(--color-accent) 45%, var(--color-border));
-		border-radius: var(--radius);
-		background: color-mix(in oklab, var(--color-accent) 8%, transparent);
 	}
 	.error {
 		color: var(--color-danger-text);

@@ -15,7 +15,7 @@ export type Machine = keyof typeof machines;
 
 export const defaultMachine: Machine = 'standard-1';
 
-export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
+export type ThreadStatus = 'running' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
 export interface Author {
 	id?: string;
@@ -117,7 +117,7 @@ export interface ShipInput {
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface UsageRow {
-	task: 'conversation' | 'attempt' | 'search';
+	task: 'agent' | 'search';
 	model: string;
 	tokens: number;
 	cost: number | null;
@@ -144,7 +144,7 @@ export interface ThreadDetail {
 	usage: ThreadUsage;
 	services: ThreadService[];
 	activity: ThreadActivity | null;
-	control?: import('./acceptance.ts').ProposalControl;
+	promotions: import('./promotions.ts').Promotion[];
 }
 
 export type LiveMessage =
@@ -162,8 +162,6 @@ export interface RepoCoordinatorApi {
 		machine: Machine;
 	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
-	start(thread: string, by?: Author): Promise<void>;
-	acceptIntent(thread: string, by: Author): Promise<void>;
 	approvePromotion(thread: string, promotion: string, by: Author): Promise<void>;
 	discard(thread: string, by: Author): Promise<void>;
 	reopen(thread: string, by: Author): void;
