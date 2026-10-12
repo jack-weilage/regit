@@ -1,0 +1,32 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "regit",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-10",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": true },
+	"upload_source_maps": true,
+	// Packing and indexing git objects is CPU work; allow more than the default.
+	"limits": { "cpu_ms": 300000 },
+
+	// Bearer token for every route that creates repos, mints tokens or starts containers.
+	// Set it with `npx wrangler secret put REGIT_ADMIN_TOKEN`.
+	"secrets": { "required": ["REGIT_ADMIN_TOKEN"] },
+
+	// Every repository regit creates lives in this Artifacts namespace.
+	// Artifacts creates the namespace the first time a repo is created in it.
+	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
+
+	// Clef decision models (risk tier, note screen).
+	"ai": { "binding": "AI" },
+
+	// Verifier: one sandbox container per candidate change.
+	"containers": [{ "class_name": "Verifier", "scheduling_policy": "durable_object" }],
+
+	"durable_objects": {
+		"bindings": [{ "class_name": "Verifier", "name": "VERIFIER" }]
+	},
+	"exports": {
+		"Verifier": { "type": "durable-object", "storage": "sqlite" }
+	}
+}

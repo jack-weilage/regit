@@ -1,0 +1,16 @@
+{
+	// The Worker as the local test suite runs it: no Artifacts, AI or container
+	// bindings, because none of those can be simulated locally. The suite passes
+	// REGIT_FAKE_ARTIFACTS_URL so the Worker talks to the stand-in git server.
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "regit-test",
+	"main": "../src/index.ts",
+	"compatibility_date": "2026-10-10",
+	"compatibility_flags": ["nodejs_compat"],
+	"durable_objects": {
+		"bindings": [{ "class_name": "Verifier", "name": "VERIFIER" }]
+	},
+	"exports": {
+		"Verifier": { "type": "durable-object", "storage": "sqlite" }
+	}
+}

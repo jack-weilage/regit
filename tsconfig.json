@@ -1,0 +1,15 @@
+{
+	"compilerOptions": {
+		"target": "es2022",
+		"lib": ["es2023", "esnext.disposable"],
+		"module": "es2022",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"allowSyntheticDefaultImports": true,
+		"types": ["node"]
+	},
+	"include": ["src", "test", "worker-configuration.d.ts"]
+}
