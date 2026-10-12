@@ -79,7 +79,7 @@ export class RepositoryGit extends DurableObject<Env> {
 		});
 	}
 
-	async conflicts(repo: string, forks: { id: string; repository: string; branch: string }[]) {
+	async compare(repo: string, forks: { id: string; repository: string; branch: string }[]) {
 		return this.#serial(async () => {
 			using canonical = await this.env.ARTIFACTS.get(repo);
 			const canonicalInfo = await canonical.info();
@@ -96,7 +96,7 @@ export class RepositoryGit extends DurableObject<Env> {
 			const fetch = await this.#sandbox();
 			try {
 				await this.#allow(targets);
-				return await sandboxWorkspace(fetch).conflicts({
+				return await sandboxWorkspace(fetch).compare({
 					remote: canonicalInfo.remote,
 					forks: sources.map(({ fork, remote }) => ({ id: fork.id, remote, branch: fork.branch }))
 				});

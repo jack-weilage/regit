@@ -859,7 +859,7 @@ test('hands a conflicting candidate back to its agent to resolve, then prepares 
 	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
 });
 
-test('warns threads that conflict with a landing and merges main only when asked', async () => {
+test('records how far behind main threads are, warns on conflicts and merges only when asked', async () => {
 	const { env, repo, sam, id } = await startedThread('landing', [
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
@@ -901,16 +901,17 @@ test('warns threads that conflict with a landing and merges main only when asked
 	};
 	await repo.landed(landing);
 	const warned = (await repo.thread(id))!;
-	expect(warned.summary.conflicts).toEqual({
-		files: ['notes.md'],
+	expect(warned.summary.behind).toEqual({
+		commits: 1,
 		sha: main,
-		headline: 'Better notes'
+		headline: 'Better notes',
+		conflicts: ['notes.md']
 	});
 	expect(warned.entries.at(-1)).toMatchObject({
 		type: 'event',
 		text: 'Main moved: "Better notes" conflicts with this thread in notes.md'
 	});
-	expect((await repo.thread(clean))!.summary.conflicts).toBeNull();
+	expect((await repo.thread(clean))!.summary.behind).toMatchObject({ commits: 1, conflicts: [] });
 	await repo.landed(landing);
 	expect((await repo.thread(id))!.entries).toHaveLength(warned.entries.length);
 
@@ -935,7 +936,7 @@ test('warns threads that conflict with a landing and merges main only when asked
 	const merged = await untilThread(
 		repo,
 		id,
-		(detail) => detail.summary.status === 'needs-you' && detail.summary.conflicts === null
+		(detail) => detail.summary.status === 'needs-you' && detail.summary.behind === null
 	);
 	expect(merged.entries).toContainEqual(
 		expect.objectContaining({

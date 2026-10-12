@@ -366,7 +366,7 @@ describe('shipping', () => {
 		});
 	}
 
-	test('reports which forks conflict with main', async () => {
+	test('reports how far behind main each fork is and which conflict', async () => {
 		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
 		await git(root, ['push', remote, 'HEAD:refs/heads/conflicting']);
 		await git(root, ['reset', '--hard', base]);
@@ -376,7 +376,7 @@ describe('shipping', () => {
 		await landOnMain("export const greeting = 'hey';\n");
 
 		expect(
-			await workspace.conflicts({
+			await workspace.compare({
 				remote,
 				forks: [
 					{ id: 'a', remote, branch: 'conflicting' },
@@ -387,9 +387,8 @@ describe('shipping', () => {
 		).toEqual({
 			main: await git(remote, ['rev-parse', 'main']),
 			threads: [
-				{ id: 'a', files: ['greeting.ts'] },
-				{ id: 'b', files: [] },
-				{ id: 'c', files: null }
+				{ id: 'a', behind: 1, conflicts: ['greeting.ts'] },
+				{ id: 'b', behind: 1, conflicts: [] }
 			]
 		});
 	});

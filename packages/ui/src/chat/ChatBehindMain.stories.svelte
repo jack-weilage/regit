@@ -1,55 +1,61 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, waitFor } from 'storybook/test';
-	import ChatConflict from './ChatConflict.svelte';
+	import ChatBehindMain from './ChatBehindMain.svelte';
 	import ChatEvent from './ChatEvent.svelte';
 	import ChatGroup from './ChatGroup.svelte';
 	import ChatLog from './ChatLog.svelte';
 	import ChatMessage from './ChatMessage.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Chat/Conflict',
-		component: ChatConflict,
+		title: 'Chat/Behind main',
+		component: ChatBehindMain,
 		tags: ['!autodocs'],
 		args: {
+			commits: 3,
 			sha: '4b02e7a91c3d5f6e8a0b2c4d6e8f0a1b2c3d4e5f',
 			headline: 'perf(settings): page the member list',
-			files: ['src/settings/members.ts'],
 			onupdate: fn()
 		}
 	});
 </script>
 
 <Story
-	name="One file"
+	name="Behind"
 	play={async ({ args, canvas, userEvent }) => {
-		const conflict = canvas.getByRole('region', { name: 'Conflicts with main' });
-		await expect(conflict).toHaveTextContent('4b02e7a');
-		await expect(conflict).toHaveTextContent('perf(settings): page the member list');
-		await expect(conflict).toHaveTextContent('Same lines changed in 1 file');
-		await expect(conflict).toHaveTextContent('src/settings/members.ts');
+		const card = canvas.getByRole('region', { name: 'Main has 3 new commits' });
+		await expect(card).toHaveTextContent('4b02e7a');
+		await expect(card).toHaveTextContent('perf(settings): page the member list');
+		await expect(card).not.toHaveTextContent('Conflicts');
 		await userEvent.click(canvas.getByRole('button', { name: 'Bring up to date' }));
 		await expect(args.onupdate).toHaveBeenCalledOnce();
 	}}
 />
 
 <Story
-	name="Several files"
-	args={{
-		files: [
-			'src/settings/members.ts',
-			'src/settings/MembersList.svelte',
-			'src/lib/server/members.test.ts'
-		]
+	name="One commit"
+	args={{ commits: 1 }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('region', { name: 'Main has 1 new commit' })).toBeVisible();
 	}}
 />
 
 <Story
-	name="Many files"
+	name="Conflicts"
+	args={{ conflicts: ['src/settings/members.ts'] }}
+	play={async ({ canvas }) => {
+		const card = canvas.getByRole('region', { name: 'Main has 3 new commits' });
+		await expect(card).toHaveTextContent('Conflicts in 1 file');
+		await expect(card).toHaveTextContent('src/settings/members.ts');
+	}}
+/>
+
+<Story
+	name="Many conflicts"
 	args={{
 		headline:
 			'refactor(settings): move member loading, invitations and role editing into one paginated service',
-		files: [
+		conflicts: [
 			'src/settings/members.ts',
 			'src/settings/MembersList.svelte',
 			'src/settings/invitations/InviteDialog.svelte',
@@ -72,9 +78,9 @@
 />
 
 <Story
-	name="Five files"
+	name="Five conflicts"
 	args={{
-		files: [
+		conflicts: [
 			'src/settings/members.ts',
 			'src/settings/MembersList.svelte',
 			'src/settings/roles.ts',
@@ -104,11 +110,15 @@
 			<ChatGroup author={{ name: 'ReGit', kind: 'agent' }}>
 				<ChatMessage>Members now load as you scroll, and the checks pass.</ChatMessage>
 			</ChatGroup>
-			<ChatEvent>Checkpoint 4b02e7a</ChatEvent>
-			<ChatConflict
+			<ChatEvent
+				>Main moved: "perf(settings): page the member list" conflicts with this thread in
+				src/settings/members.ts</ChatEvent
+			>
+			<ChatBehindMain
+				commits={3}
 				sha="4b02e7a91c3d5f6e8a0b2c4d6e8f0a1b2c3d4e5f"
 				headline="perf(settings): page the member list"
-				files={['src/settings/members.ts']}
+				conflicts={['src/settings/members.ts']}
 				onupdate={fn()}
 			/>
 		</ChatLog>

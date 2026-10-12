@@ -1,8 +1,8 @@
 import type { ToolExecutor } from '../types.ts';
 import type {
 	CloneRequest,
-	ConflictsRequest,
-	ConflictsResponse,
+	CompareRequest,
+	CompareResponse,
 	CommitRequest,
 	CommitResponse,
 	DiffRequest,
@@ -82,8 +82,8 @@ export function sandboxWorkspace(fetch: Fetch) {
 				JSON.stringify(request)
 			);
 		},
-		conflicts(request: ConflictsRequest) {
-			return post<ConflictsResponse>(fetch, '/workspace/conflicts', JSON.stringify(request));
+		compare(request: CompareRequest) {
+			return post<CompareResponse>(fetch, '/workspace/compare', JSON.stringify(request));
 		},
 		async publishProvenance(request: PublishProvenanceRequest) {
 			await post(fetch, '/workspace/publish-provenance', JSON.stringify(request));

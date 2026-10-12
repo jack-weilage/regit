@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import type {
 	CloneRequest,
 	CommitRequest,
-	ConflictsRequest,
-	ConflictsResponse,
+	CompareRequest,
+	CompareResponse,
 	DiffRequest,
 	HeadBranchRequest,
 	HookRequest,
@@ -199,25 +199,27 @@ export async function publishProvenance(
 	await git(root, ['push', remote, `${ref}:${ref}`]);
 }
 
-export async function conflicts(
+export async function compare(
 	root: string,
-	{ remote, forks }: ConflictsRequest
-): Promise<ConflictsResponse> {
+	{ remote, forks }: CompareRequest
+): Promise<CompareResponse> {
 	safeRemote(remote);
 	if (!(await exists(join(root, '.git')))) await git(root, ['init', '--quiet']);
 	await git(root, ['fetch', '--no-tags', remote, 'HEAD']);
 	const main = await git(root, ['rev-parse', 'FETCH_HEAD']);
-	const threads: ConflictsResponse['threads'] = [];
+	const threads: CompareResponse['threads'] = [];
 	for (const fork of forks) {
 		safeRemote(fork.remote);
 		const fetched = await exec('git', ['fetch', '--no-tags', fork.remote, fork.branch], {
 			cwd: root
 		});
-		if (fetched.code !== 0) {
-			threads.push({ id: fork.id, files: null });
+		if (fetched.code !== 0) continue;
+		const head = await git(root, ['rev-parse', 'FETCH_HEAD']);
+		const behind = Number(await git(root, ['rev-list', '--count', `${head}..${main}`]));
+		if (!behind) {
+			threads.push({ id: fork.id, behind, conflicts: [] });
 			continue;
 		}
-		const head = await git(root, ['rev-parse', 'FETCH_HEAD']);
 		const merged = await exec(
 			'git',
 			['merge-tree', '--write-tree', '--name-only', '--no-messages', main, head],
@@ -226,7 +228,7 @@ export async function conflicts(
 		if (merged.code !== 0 && merged.code !== 1)
 			throw new Error(`git merge-tree failed: ${merged.output.trim()}`);
 		const files = merged.code === 1 ? merged.stdout.trim().split('\n').slice(1) : [];
-		threads.push({ id: fork.id, files: files.filter(Boolean) });
+		threads.push({ id: fork.id, behind, conflicts: files.filter(Boolean) });
 	}
 	return { main, threads };
 }

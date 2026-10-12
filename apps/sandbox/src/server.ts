@@ -4,7 +4,7 @@ import { isTool, ToolError, tools } from './tools.ts';
 import {
 	clone,
 	commit,
-	conflicts,
+	compare,
 	diff,
 	headBranch,
 	hook,
@@ -39,7 +39,7 @@ export function createSandbox(
 		'promote-candidate': (body) => promoteCandidate(root, body),
 		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
 		clone: (body) => services.pausedDuring(() => clone(root, body)),
-		conflicts: (body) => conflicts(root, body),
+		compare: (body) => compare(root, body),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),
 		diff: async (body) => ({ diff: await diff(root, body) }),

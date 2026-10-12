@@ -110,14 +110,14 @@ export interface PublishProvenanceRequest {
 	remote?: string;
 }
 
-export interface ConflictsRequest {
+export interface CompareRequest {
 	remote: string;
 	forks: { id: string; remote: string; branch: string }[];
 }
 
-export interface ConflictsResponse {
+export interface CompareResponse {
 	main: string;
-	threads: { id: string; files: string[] | null }[];
+	threads: { id: string; behind: number; conflicts: string[] }[];
 }
 
 export interface ServiceSpec {

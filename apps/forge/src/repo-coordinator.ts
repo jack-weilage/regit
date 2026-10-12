@@ -72,7 +72,7 @@ type ThreadRow = {
 	context: string | null;
 	services: string | null;
 	preview: string | null;
-	conflicts: string | null;
+	behind: string | null;
 	parent_headline?: string | null;
 };
 
@@ -167,7 +167,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				services TEXT,
 				preview TEXT,
 				auto INTEGER,
-				conflicts TEXT
+				behind TEXT
 			);
 			CREATE TABLE IF NOT EXISTS entries (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,9 +192,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				value TEXT NOT NULL
 			);
 		`);
-		// TODO: remove once every repository's coordinator has the conflicts column.
+		// TODO: remove once every repository's coordinator has the behind column.
 		try {
-			this.#sql.exec('ALTER TABLE threads ADD COLUMN conflicts TEXT');
+			this.#sql.exec('ALTER TABLE threads ADD COLUMN behind TEXT');
 		} catch {
 			/* Already added. */
 		}
@@ -713,33 +713,33 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return row && (JSON.parse(row.value) as { input: ShipInput; handBacks: number });
 	}
 
-	// Main moved: warn threads whose changes now conflict. Forks only take main when asked or handed back.
+	// Main moved: record how far behind each thread is and warn those that now conflict. Forks only take main when asked or handed back.
 	async landed({ after, headline }: Landing) {
 		if (this.#meta('main') === after) return;
-		const threads = this.threads().filter((thread) => thread.status !== 'discarded');
 		const forks = [];
-		for (const thread of threads) {
-			const fork = thread.changes?.files ? await this.#agent(thread.id).forkRef() : null;
+		for (const thread of this.threads()) {
+			if (thread.status === 'discarded') continue;
+			const fork = await this.#agent(thread.id).forkRef();
 			if (fork) forks.push({ id: thread.id, ...fork });
 		}
 		const repo = this.#repo();
 		const scan = forks.length
-			? await this.env.REPOSITORY_GIT.getByName(`scan-${repo}`).conflicts(repo, forks)
+			? await this.env.REPOSITORY_GIT.getByName(`scan-${repo}`).compare(repo, forks)
 			: { main: after, threads: [] };
 		if (this.#meta('main') === scan.main) return;
 		this.#setMeta('main', scan.main);
-		for (const { id, files } of scan.threads) {
-			if (!files || !this.#summary(id)) continue;
-			const was = this.#summary(id)!.conflicts;
+		for (const { id, behind, conflicts } of scan.threads) {
+			const was = this.#summary(id)?.behind;
+			if (was === undefined) continue;
 			this.#sql.exec(
-				'UPDATE threads SET conflicts = ? WHERE id = ?',
-				files.length ? JSON.stringify({ files, sha: scan.main, headline }) : null,
+				'UPDATE threads SET behind = ? WHERE id = ?',
+				behind ? JSON.stringify({ commits: behind, sha: scan.main, headline, conflicts }) : null,
 				id
 			);
-			if (files.length && JSON.stringify(was?.files) !== JSON.stringify(files))
+			if (conflicts.length && JSON.stringify(was?.conflicts) !== JSON.stringify(conflicts))
 				this.#add(id, {
 					type: 'event',
-					text: `Main moved: "${headline}" conflicts with this thread in ${files.join(', ')}`
+					text: `Main moved: "${headline}" conflicts with this thread in ${conflicts.join(', ')}`
 				});
 			this.#touch(id);
 		}
@@ -881,7 +881,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			return;
 		}
 		if (update.type === 'synced') {
-			this.#sql.exec('UPDATE threads SET conflicts = NULL WHERE id = ?', thread);
+			this.#sql.exec('UPDATE threads SET behind = NULL WHERE id = ?', thread);
 			this.#touch(thread);
 			return;
 		}
@@ -1221,8 +1221,6 @@ function toSummary(row: ThreadRow): ThreadSummary {
 			row.shipped_sha && row.shipped_at
 				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }
 				: null,
-		conflicts: row.conflicts
-			? (JSON.parse(row.conflicts) as { files: string[]; sha: string; headline: string })
-			: null
+		behind: row.behind ? (JSON.parse(row.behind) as ThreadSummary['behind']) : null
 	};
 }
