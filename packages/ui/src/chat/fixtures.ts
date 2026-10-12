@@ -33,6 +33,7 @@ export const readyPromotion: Promotion = {
 	},
 	error: null,
 	notesPublished: false,
+	handBacks: 0,
 	at: 3
 };
 

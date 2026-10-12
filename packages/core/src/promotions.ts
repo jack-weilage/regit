@@ -30,5 +30,6 @@ export interface Promotion {
 	candidate: Candidate | null;
 	error: string | null;
 	notesPublished: boolean;
+	handBacks: number;
 	at: number;
 }

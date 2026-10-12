@@ -21,6 +21,7 @@ import type {
 	Machine,
 	Mode,
 	ModeChoice,
+	Promotion,
 	RepoCoordinatorApi,
 	ShipInput,
 	StartupStage,
@@ -74,6 +75,7 @@ type ThreadRow = {
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
 const maxThreadMessages = 5;
+const maxHandBacks = 3;
 const similarTimeoutMs = 4000;
 const recentHistory = 12;
 const maxSearchHits = 30;
@@ -240,6 +242,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async discard(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		this.#cancelPromotions(thread);
+		this.#takeHandBack(thread);
 		if (summary.status === 'discarded') return;
 		const reopen = ['running', 'shipping'].includes(summary.status) ? 'needs-you' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
@@ -265,6 +268,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async delete(thread: string, by: Author) {
 		this.#active(thread);
 		this.#cancelPromotions(thread);
+		this.#takeHandBack(thread);
 		this.#sql.exec(
 			'UPDATE threads SET deleted_at = ?, deleted_by = ? WHERE id = ?',
 			Date.now(),
@@ -279,6 +283,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async stop(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		this.#cancelPromotions(thread);
+		this.#takeHandBack(thread);
 		await this.#agent(thread).stop();
 		const pending = this.#sql
 			.exec<{ seq: number; body: string }>('SELECT seq, body FROM entries WHERE thread = ?', thread)
@@ -617,6 +622,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				.some((p) => !['failed', 'cancelled', 'shipped'].includes(p.status))
 		)
 			throw new Error('This thread already has a pending candidate');
+		await this.#queuePromotion(thread, { by, email, title, body }, 0);
+	}
+
+	async #queuePromotion(thread: string, { by, email, title, body }: ShipInput, handBacks: number) {
 		const source = await this.#agent(thread).revision();
 		if (!source) throw new Error('This thread has no changes to ship');
 		if (this.#active(thread).status !== 'needs-you')
@@ -635,6 +644,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			candidate: null,
 			error: null,
 			notesPublished: false,
+			handBacks,
 			at: Date.now()
 		});
 		this.#setStatus(thread, 'shipping');
@@ -643,6 +653,43 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text: 'Preparing an isolated integration candidate. Exact approval is required before publication.'
 		});
 		await this.#schedulePurge();
+	}
+
+	// Main moved or conflicts: the thread's agent merges main, re-checks, and the candidate is prepared again.
+	async #handBack(p: Promotion, message: string) {
+		const reason = message.includes('Stale candidate:')
+			? 'Main moved before this candidate was published.'
+			: 'This candidate conflicts with main.';
+		this.#sql.exec(
+			'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+			`handback:${p.proposal}`,
+			JSON.stringify({
+				input: { by: p.requestedBy, email: p.email, title: p.title, body: p.body },
+				handBacks: p.handBacks + 1
+			})
+		);
+		const entry = this.#add(p.proposal, {
+			type: 'event',
+			text: `${reason} Handing it back to the agent to bring up to date.`
+		});
+		this.#setStatus(p.proposal, 'running');
+		await this.#converse(
+			p.proposal,
+			agent,
+			`${reason} Bring this thread up to date with main; the candidate is prepared again once you finish.`,
+			entry,
+			true
+		);
+	}
+
+	#takeHandBack(thread: string) {
+		const [row] = this.#sql
+			.exec<{ value: string }>(
+				'DELETE FROM meta WHERE key = ? RETURNING value',
+				`handback:${thread}`
+			)
+			.toArray();
+		return row && (JSON.parse(row.value) as { input: ShipInput; handBacks: number });
 	}
 
 	async approvePromotion(thread: string, id: string, by: Author) {
@@ -753,15 +800,22 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				error: message
 			});
 			if (!uncertain && p.status !== 'shipped') {
-				this.#setStatus(p.proposal, 'needs-you');
-				this.#add(p.proposal, { type: 'event', text: `Integration stopped: ${message}` });
+				const behind =
+					message.includes('Stale candidate:') || message.includes('Candidate rebase failed');
+				const summary = this.#summary(p.proposal);
+				if (behind && p.handBacks < maxHandBacks && summary && !summary.deleted) {
+					await this.#handBack(p, message);
+				} else {
+					this.#setStatus(p.proposal, 'needs-you');
+					this.#add(p.proposal, { type: 'event', text: `Integration stopped: ${message}` });
+				}
 			}
 		} finally {
 			if (this.#summary(p.proposal)) this.#touch(p.proposal);
 		}
 	}
 
-	attemptUpdated(thread: string, update: AttemptUpdate) {
+	async attemptUpdated(thread: string, update: AttemptUpdate) {
 		const summary = this.#summary(thread);
 		if (!summary) return;
 		if (update.type === 'changes') {
@@ -827,7 +881,17 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#add(thread, { type: 'event', text: 'The agent stopped at its step limit' });
 		if (update.status === 'failed')
 			this.#add(thread, { type: 'event', text: `The agent failed: ${update.error}` });
-		if (this.#summary(thread)!.status === 'running') this.#setStatus(thread, 'needs-you');
+		if (this.#summary(thread)!.status !== 'running') return;
+		this.#setStatus(thread, 'needs-you');
+		const handBack = this.#takeHandBack(thread);
+		if (update.status === 'finished' && handBack)
+			await this.#queuePromotion(thread, handBack.input, handBack.handBacks).catch(
+				(error: unknown) =>
+					this.#add(thread, {
+						type: 'event',
+						text: `Couldn't prepare the candidate again: ${error instanceof Error ? error.message : String(error)}`
+					})
+			);
 	}
 
 	override async fetch(request: Request) {
@@ -838,7 +902,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
-	async #converse(thread: string, author: Author, text: string, entry: string) {
+	async #converse(thread: string, author: Author, text: string, entry: string, sync = false) {
 		const { mode, machine } = this.#summary(thread)!;
 		const [row] = this.#sql
 			.exec<Pick<ThreadRow, 'context'>>('SELECT context FROM threads WHERE id = ?', thread)
@@ -850,7 +914,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			context: row?.context ?? undefined,
 			author: author.name,
 			text,
-			entry
+			entry,
+			sync
 		});
 	}
 

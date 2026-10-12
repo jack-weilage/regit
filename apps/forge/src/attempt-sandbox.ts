@@ -60,6 +60,7 @@ export interface ConverseInput {
 	author: string;
 	text: string;
 	entry: string;
+	sync?: boolean;
 }
 
 export type AttemptStatus =
@@ -170,8 +171,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		`);
 	}
 
-	async converse({ repo, mode, machine, context, author, text, entry }: ConverseInput) {
+	async converse({ repo, mode, machine, context, author, text, entry, sync }: ConverseInput) {
 		this.#setMeta('repo', repo);
+		if (sync) this.#setMeta('sync', '1');
 		if (machine) this.#setMeta('machine', machine);
 		if (!this.#agent()) {
 			this.#sql.exec(
@@ -367,6 +369,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
+			if (this.#meta('sync')) {
+				const text = await this.#sync(attempt, fetch, fork, token);
+				this.#saveStep({ turns: [{ role: 'user', text }] });
+			}
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = modes[attempt.mode];
 			const skills = await this.#skills(fetch, [
@@ -453,7 +459,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #settle(attempt: AgentRow) {
-		const queued = this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0;
+		const queued =
+			this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0 || !!this.#meta('sync');
 		if (!queued) return await this.#finish(attempt, 'finished');
 		this.#setStatus('running');
 		await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
@@ -493,19 +500,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 			branch: string;
 			from: string;
 		};
-		using canonical = await this.env.ARTIFACTS.get(attempt.repo);
-		const info = await canonical.info();
-		const { plaintext } = await canonical.createToken('read', 60 * 60);
-		await this.#allowGit(info, plaintext, false);
-		try {
-			await this.#git(fetch, `git fetch --no-tags ${info.remote} ${branch}`);
-		} finally {
-			await this.#allowGit(fork, token, false);
-		}
+		await this.#fetchMain(attempt, fetch, fork, token, branch);
 		// TODO: let the agent resolve conflicts when later work no longer applies on top of the published commit.
 		await this.#git(
 			fetch,
-			`git -c user.name='${author.name}' -c user.email=${author.email} rebase --onto ${sha} ${from} || (git rebase --abort; exit 1)`
+			`${gitAsReGit} rebase --onto ${sha} ${from} || (git rebase --abort; exit 1)`
 		);
 		await this.#push(fork, token, () =>
 			sandboxWorkspace(fetch).push({ ref: fork.branch, force: true })
@@ -515,14 +514,61 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'rebase'");
 	}
 
-	async #git(fetch: Fetch, command: string) {
+	// Merges main into the thread so its agent can bring a stale or conflicting candidate up to date.
+	async #sync(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+		this.#sql.exec("DELETE FROM meta WHERE key = 'sync'");
+		await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
+		const head = (await this.#git(fetch, 'git rev-parse FETCH_HEAD')).trim();
+		const landed = (
+			await this.#git(fetch, `git log --format='- %h %s' -20 ${attempt.base}..FETCH_HEAD`)
+		).trim();
+		const merged = await this.#shell(fetch, `${gitAsReGit} merge --no-edit FETCH_HEAD`);
+		const conflicts = merged.ok
+			? []
+			: (await this.#git(fetch, 'git diff --name-only --diff-filter=U'))
+					.split('\n')
+					.filter(Boolean);
+		if (!merged.ok && !conflicts.length) {
+			await this.#shell(fetch, 'git merge --abort');
+			throw new Error(`Merging main failed: ${merged.output}`);
+		}
+		attempt.base = head;
+		this.#sql.exec('UPDATE agent SET base = ?', head);
+		const what = landed ? `\n\nWhat landed on main:\n${landed}` : '';
+		if (merged.ok) {
+			await this.#push(fork, token, () => sandboxWorkspace(fetch).push({ ref: fork.branch }));
+			return `ReGit: main moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
+		}
+		return `ReGit: main moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
+	}
+
+	async #fetchMain(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string, ref: string) {
+		using canonical = await this.env.ARTIFACTS.get(attempt.repo);
+		const info = await canonical.info();
+		const { plaintext } = await canonical.createToken('read', 60 * 60);
+		await this.#allowGit(info, plaintext, false);
+		try {
+			await this.#git(fetch, `git fetch --no-tags ${info.remote} ${ref}`);
+		} finally {
+			await this.#allowGit(fork, token, false);
+		}
+	}
+
+	async #shell(fetch: Fetch, command: string) {
 		const output = await this.#tools(fetch).execute({
 			id: 'git',
 			name: 'run',
 			arguments: JSON.stringify({ command })
 		});
 		const text = typeof output === 'string' ? output : output.text;
-		if (!text.startsWith('exit code 0')) throw new Error(`${command} failed: ${text}`);
+		const [status = '', ...rest] = text.split('\n');
+		return { ok: status === 'exit code 0', output: rest.join('\n') };
+	}
+
+	async #git(fetch: Fetch, command: string) {
+		const { ok, output } = await this.#shell(fetch, command);
+		if (!ok) throw new Error(`${command} failed: ${output}`);
+		return output;
 	}
 
 	#serviceRequest(name: string) {
@@ -1047,6 +1093,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 }
 
 const publishIntervalMs = 250;
+const gitAsReGit = `git -c core.hooksPath=/dev/null -c user.name='${author.name}' -c user.email=${author.email}`;
 
 function idle(): ThreadActivity {
 	return { startup: null, status: null, text: '', calls: [] };

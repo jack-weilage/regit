@@ -366,6 +366,34 @@ describe('shipping', () => {
 		});
 	}
 
+	test('holds checkpoints while a merge from main still has conflict markers', async () => {
+		await checkpoint("export const greeting = 'hi';\n", 'Say hi');
+		await landOnMain("export const greeting = 'hey';\n");
+		const main = await git(remote, ['rev-parse', 'main']);
+		await git(root, ['fetch', remote, 'main']);
+		await expect(
+			git(root, [
+				'-c',
+				'user.name=ReGit',
+				'-c',
+				'user.email=agent@regit.dev',
+				'merge',
+				'FETCH_HEAD'
+			])
+		).rejects.toThrow(/CONFLICT/);
+
+		expect(await workspace.commit({ message: 'Too early', author })).toBeNull();
+		await call('write_file', {
+			path: 'greeting.ts',
+			content: "export const greeting = 'hi, hey';\n"
+		});
+		const sha = await workspace.commit({ message: 'Merge main', author });
+		expect((await git(root, ['rev-list', '--parents', '-1', sha!])).split(' ')).toContain(main);
+		expect(await git(root, ['show', `${sha}:greeting.ts`])).toBe(
+			"export const greeting = 'hi, hey';"
+		);
+	});
+
 	test('assembles the exact source tree, retains identities and retries a successful promotion', async () => {
 		await checkpoint("export const greeting = 'hi';\n", 'First');
 		await writeFile(join(root, 'source-only.txt'), 'source\n');

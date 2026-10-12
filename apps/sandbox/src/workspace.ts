@@ -1,4 +1,4 @@
-import { access, readdir, rm, stat } from 'node:fs/promises';
+import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
 	CloneRequest,
@@ -59,8 +59,19 @@ function exists(path: string) {
 }
 
 export async function commit(root: string, { message, author }: CommitRequest) {
+	const merging =
+		(await exec('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: root })).code === 0;
+	if (merging) {
+		const unmerged = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
+			.split('\n')
+			.filter(Boolean);
+		for (const file of unmerged) {
+			const content = await readFile(join(root, file), 'utf8').catch(() => '');
+			if (/^(<{7}|>{7})( |$)/m.test(content)) return null;
+		}
+	}
 	await git(root, ['add', '--all']);
-	if (!(await git(root, ['status', '--porcelain']))) return null;
+	if (!merging && !(await git(root, ['status', '--porcelain']))) return null;
 	await git(root, [
 		'-c',
 		`user.name=${author.name}`,

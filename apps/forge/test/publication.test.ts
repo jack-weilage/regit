@@ -3,7 +3,7 @@ import { expect, test } from 'vitest';
 import type { ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
-const { dir, worker, seed, commit, sh, idle, script } = await setup();
+const { dir, worker, seed, commit, sh, idle, script, modelRequests } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
 const intent = {
 	headline: 'docs: add a title',
@@ -202,21 +202,56 @@ test('work after a candidate is prepared lands on the published commit afterward
 	expect(rebased.summary.changes).toEqual({ files: 1, additions: 1, deletions: 0 });
 });
 
-test('an external main advance makes an approved candidate stale without rebasing or pushing it', async () => {
-	const { repo, id, promotion, canonical, work } = await candidate('accept-stale');
+test('hands a stale candidate back to its thread, which merges main and prepares it again', async () => {
+	const { repo, id, promotion, canonical, work } = await candidate('publish-stale');
 	const pinned = promotion.candidate!;
 	await commit(work, { 'external.md': 'External work\n' }, 'External advance');
 	sh(work, 'push', '--quiet', canonical, 'main');
 	const external = sh(canonical, 'rev-parse', 'main');
+	await idle();
+	await script([say('Merged main; the checks pass.')]);
 	await repo.approvePromotion(id, promotion.id, owner);
-	const failed = await until(repo, id, (detail) => detail.promotions.at(-1)?.status === 'failed');
-	expect(failed.promotions.at(-1)).toMatchObject({
+	const again = await until(
+		repo,
+		id,
+		(detail) => detail.promotions.length === 2 && detail.promotions[1]!.status === 'ready'
+	);
+
+	expect(again.promotions[0]).toMatchObject({
+		id: promotion.id,
+		status: 'failed',
 		candidate: pinned,
 		notesPublished: false,
 		error: expect.stringContaining('Stale candidate:')
 	});
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(external);
-	expect(sh(canonical, 'show', 'main:notes.md')).toBe('Some notes');
 	expect(sh(join(dir, `${pinned.repository}.git`), 'rev-parse', 'main')).toBe(pinned.sha);
 	expect(() => sh(canonical, 'notes', '--ref=regit', 'show', pinned.sha)).toThrow();
+	expect(again.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'event',
+			text: 'Main moved before this candidate was published. Handing it back to the agent to bring up to date.'
+		})
+	);
+	const handedBack = JSON.stringify((await modelRequests()).at(-1)!.query);
+	expect(handedBack).toContain('Main moved before this candidate was published.');
+	expect(handedBack).toContain('it merged into this thread cleanly');
+	expect(handedBack).toContain('External advance');
+	const fork = join(dir, `publish-stale--${id}.git`);
+	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(external);
+
+	const next = again.promotions[1]!;
+	expect(next).toMatchObject({
+		handBacks: 1,
+		title: intent.headline,
+		requestedBy: owner,
+		approvedBy: null
+	});
+	expect(next.candidate!.expectedHead).toBe(external);
+	await repo.approvePromotion(id, next.id, owner);
+	await until(repo, id, (detail) => detail.summary.status === 'shipped');
+	expect(sh(canonical, 'rev-parse', 'main')).toBe(next.candidate!.sha);
+	expect(sh(canonical, 'rev-parse', 'main^')).toBe(external);
+	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
+	expect(sh(canonical, 'show', 'main:external.md')).toBe('External work');
 });

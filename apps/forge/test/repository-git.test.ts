@@ -38,6 +38,7 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 		candidate: null,
 		error: null,
 		notesPublished: false,
+		handBacks: 0,
 		at: 1
 	};
 	const env = await harness.worker.getEnv();

@@ -822,7 +822,7 @@ test('ships finished work as one commit on main', async () => {
 	expect(sh(join(dir, `shipping--${id}.git`), 'rev-parse', 'main')).toBe(main);
 });
 
-test('rejects integration conflicts without rebasing the run or writing main', async () => {
+test('hands a conflicting candidate back to its agent to resolve, then prepares it again', async () => {
 	const { repo, sam, id } = await startedThread('conflicting', [
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
@@ -831,18 +831,31 @@ test('rejects integration conflicts without rebasing the run or writing main', a
 	const work = join(dir, 'conflicting-work');
 	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
 	sh(work, 'push', '--quiet', join(dir, 'conflicting.git'), 'main');
+	const main = sh(join(dir, 'conflicting.git'), 'rev-parse', 'main');
+	await idle();
+	await script([
+		writeNotes('# Notes\\n\\nSome better notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Resolved the conflict.' }]
+	]);
 
-	const ship = { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' };
-	const runFork = join(dir, `conflicting--${id}.git`);
-	const runHead = sh(runFork, 'rev-parse', 'main');
-	await repo.ship(id, ship);
+	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	const resolved = await untilThread(
 		repo,
 		id,
-		(detail) => detail.promotions.at(-1)?.status === 'failed'
+		(detail) => detail.promotions.length === 2 && detail.promotions[1]!.status === 'ready'
 	);
-	expect(resolved.promotions.at(-1)!.error).toMatch(/conflict/i);
-	expect(sh(runFork, 'rev-parse', 'main')).toBe(runHead);
+	expect(resolved.promotions[0]!).toMatchObject({ status: 'failed', candidate: null });
+	expect(resolved.promotions[0]!.error).toMatch(/Candidate rebase failed/);
+	const handedBack = JSON.stringify((await modelRequests()).at(-2)!.query);
+	expect(handedBack).toContain('This candidate conflicts with main.');
+	expect(handedBack).toContain('conflicts in notes.md');
+	const candidate = resolved.promotions[1]!.candidate!;
+	expect(candidate.expectedHead).toBe(main);
+	expect(sh(join(dir, `${candidate.repository}.git`), 'show', `${candidate.sha}:notes.md`)).toBe(
+		'# Notes\n\nSome better notes'
+	);
+	const runFork = join(dir, `conflicting--${id}.git`);
+	expect(sh(runFork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(main);
 	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
 });
 
