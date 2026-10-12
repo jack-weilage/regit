@@ -217,16 +217,6 @@
 			(entry): entry is Extract<Entry, { type: 'intent' }> => entry.type === 'intent'
 		)?.intent
 	);
-	let firstStartup = $derived(
-		detail?.entries.find(
-			(entry): entry is Extract<Entry, { type: 'startup' }> => entry.type === 'startup'
-		)
-	);
-	let startup = $derived(
-		firstStartup
-			? { stages: firstStartup.stages, finished: true }
-			: activity?.startup && { stages: activity.startup.stages, finished: false }
-	);
 
 	async function act(action: 'start' | 'stop' | 'restart', name: string) {
 		busy = name;
@@ -269,7 +259,6 @@
 
 	let blocks = $derived(
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
-			if (entry === firstStartup) return blocks;
 			const last = blocks.at(-1);
 			const batch = last?.type === 'group' ? last.messages.at(-1)?.calls : undefined;
 			if (entry.type === 'tools' && batch) {
@@ -319,9 +308,6 @@
 				/>
 			{/snippet}
 			<ChatLog label="Thread messages">
-				{#if startup}
-					<ChatStartup {...startup} />
-				{/if}
 				{#each blocks as block (block.id)}
 					{#if block.type === 'group'}
 						<ChatGroup
@@ -434,7 +420,7 @@
 						onunpin={(dependency) => unpinThreadDependency({ ...ref, dependency })}
 					/>
 				{/if}
-				{#if activity?.startup && firstStartup}
+				{#if activity?.startup}
 					<ChatStartup stages={activity.startup.stages} />
 				{/if}
 				{#if activity && (activity.text || activity.calls.length)}
