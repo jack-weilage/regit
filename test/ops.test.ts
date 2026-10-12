@@ -5,7 +5,9 @@ import {
 	NOTES_EVIDENCE,
 	NOTES_THREADS,
 	Workspace,
+	changesToFiles,
 	commitFiles,
+	diffCommits,
 	fetchRef,
 	land,
 	listRemoteRefs,
@@ -126,6 +128,79 @@ describe("commitFiles and pushRef", () => {
 		const pushed = await pushRef(ws, remote, unrelated, "refs/heads/main");
 		expect(pushed.ok).toBe(false);
 		expect(server.git(trunk.name, "rev-parse", "main").trim()).toBe(trunk.head);
+	});
+});
+
+describe("diffCommits and replaying a change", () => {
+	it("lists what changed between two commits, including files that became directories", async () => {
+		const ws = await Workspace.create();
+		const base = await commitFiles(ws, {
+			files: { "a.txt": "a\n", "dir/b.txt": "b\n", "dir/c.txt": "c\n", "thing": "a file\n", "pkg/x.txt": "x\n" },
+			message: "Base",
+		});
+		const next = await commitFiles(ws, {
+			parent: base,
+			files: {
+				"a.txt": "a changed\n",
+				"dir/b.txt": null,
+				"new/deep/d.txt": "d\n",
+				// A file becomes a directory, and a directory becomes a file.
+				thing: null,
+				"thing/inside.txt": "now a directory\n",
+				"pkg/x.txt": null,
+				pkg: "now a file\n",
+			},
+			message: "Next",
+		});
+
+		const changes = await diffCommits(ws, base, next);
+		expect(changes.map((change) => [change.path, change.oid === null ? "deleted" : "written"])).toEqual([
+			["a.txt", "written"],
+			["dir/b.txt", "deleted"],
+			["new/deep/d.txt", "written"],
+			["pkg", "written"],
+			["pkg/x.txt", "deleted"],
+			["thing", "deleted"],
+			["thing/inside.txt", "written"],
+		]);
+		expect(await diffCommits(ws, base, base)).toEqual([]);
+	});
+
+	it("replays a change onto a different commit and produces the tree stock git would", async () => {
+		const trunk = await seedTrunk();
+		const remote = { url: server.url(trunk.name) };
+		const ws = await Workspace.create();
+		await fetchRef(ws, remote, "refs/heads/main", { depth: 1 });
+
+		// Two changes made independently on the same base, touching different files.
+		const mine = await commitFiles(ws, {
+			parent: trunk.head,
+			files: { "src/math/add.ts": "// mine\n", "src/math/new.ts": "export {};\n", "src/text/upper.ts": null },
+			message: "Mine",
+		});
+		const theirs = await commitFiles(ws, { parent: trunk.head, files: { "README.md": "# theirs\n" }, message: "Theirs" });
+		await pushRef(ws, remote, theirs, "refs/heads/main");
+
+		const replayed = await commitFiles(ws, {
+			parent: theirs,
+			files: changesToFiles(await diffCommits(ws, trunk.head, mine)),
+			message: "Mine, replayed",
+			author: { name: "agent", email: "agent@example.com" },
+			committer: { name: "regit integrator", email: "integrator@regit.invalid" },
+		});
+		expect(await pushRef(ws, remote, replayed, "refs/heads/main")).toEqual({ ok: true });
+
+		// Stock git, cherry-picking the same change onto the same commit, gets the same tree.
+		await pushRef(ws, remote, mine, "refs/heads/mine");
+		const work = server.scratch();
+		await runGit(dirname(work), "clone", "--quiet", server.url(trunk.name), work);
+		await runGit(work, "checkout", "--quiet", theirs);
+		await runGit(work, "cherry-pick", "origin/mine");
+		expect((await runGit(work, "rev-parse", "HEAD^{tree}")).trim()).toBe(
+			server.git(trunk.name, "rev-parse", "main^{tree}").trim(),
+		);
+		expect(server.git(trunk.name, "log", "-1", "--format=%an|%cn", "main").trim()).toBe("agent|regit integrator");
+		server.git(trunk.name, "fsck", "--strict");
 	});
 });
 

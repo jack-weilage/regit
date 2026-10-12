@@ -8,9 +8,13 @@
 	"compatibility_date": "2026-10-10",
 	"compatibility_flags": ["nodejs_compat"],
 	"durable_objects": {
-		"bindings": [{ "class_name": "Verifier", "name": "VERIFIER" }]
+		"bindings": [
+			{ "class_name": "Integrator", "name": "INTEGRATOR" },
+			{ "class_name": "Verifier", "name": "VERIFIER" }
+		]
 	},
 	"exports": {
+		"Integrator": { "type": "durable-object", "storage": "sqlite" },
 		"Verifier": { "type": "durable-object", "storage": "sqlite" }
 	}
 }

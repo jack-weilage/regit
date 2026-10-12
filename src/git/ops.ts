@@ -204,20 +204,36 @@ export async function pushRef(
 	}
 }
 
-/** A file change: new contents, or null to delete the path. */
-export type FileChange = string | Uint8Array | null;
+/** An existing blob to place at a path, by object id. */
+export interface BlobRef {
+	oid: string;
+	/** Git file mode, for example "100644" or "100755". */
+	mode: string;
+}
+
+/** A file change: new contents, an existing blob, or null to delete the path. */
+export type FileChange = string | Uint8Array | BlobRef | null;
+
+type TreeEntry = { mode: string; path: string; oid: string; type: "blob" | "tree" | "commit" };
+
+function isBlobRef(change: FileChange): change is BlobRef {
+	return typeof change === "object" && change !== null && !(change instanceof Uint8Array);
+}
+
+async function readEntries(ws: Workspace, treeOid: string | undefined): Promise<Map<string, TreeEntry>> {
+	const entries = new Map<string, TreeEntry>();
+	if (!treeOid) return entries;
+	const { tree } = await git.readTree({ fs: ws.fs, dir: ws.dir, oid: treeOid, cache: ws.cache });
+	for (const entry of tree) entries.set(entry.path, entry as TreeEntry);
+	return entries;
+}
 
 async function editTree(
 	ws: Workspace,
 	treeOid: string | undefined,
 	changes: Map<string, FileChange>,
 ): Promise<string | undefined> {
-	type Entry = { mode: string; path: string; oid: string; type: "blob" | "tree" | "commit" };
-	const entries = new Map<string, Entry>();
-	if (treeOid) {
-		const { tree } = await git.readTree({ fs: ws.fs, dir: ws.dir, oid: treeOid, cache: ws.cache });
-		for (const entry of tree) entries.set(entry.path, entry as Entry);
-	}
+	const entries = await readEntries(ws, treeOid);
 
 	const leaves = new Map<string, FileChange>();
 	const subtrees = new Map<string, Map<string, FileChange>>();
@@ -233,24 +249,38 @@ async function editTree(
 		group.set(path.slice(slash + 1), change);
 	}
 
-	for (const [name, change] of leaves) {
+	const applyLeaf = async (name: string, change: FileChange) => {
 		if (change === null) {
 			entries.delete(name);
-			continue;
+			return;
+		}
+		if (isBlobRef(change)) {
+			entries.set(name, {
+				mode: change.mode,
+				path: name,
+				oid: change.oid,
+				type: change.mode === "160000" ? "commit" : "blob",
+			});
+			return;
 		}
 		const blob = typeof change === "string" ? new TextEncoder().encode(change) : change;
 		const oid = await git.writeBlob({ fs: ws.fs, dir: ws.dir, blob });
 		const existing = entries.get(name);
-		const mode = existing?.type === "blob" ? existing.mode : "100644";
-		entries.set(name, { mode, path: name, oid, type: "blob" });
-	}
-
-	for (const [name, group] of subtrees) {
+		entries.set(name, { mode: existing?.type === "blob" ? existing.mode : "100644", path: name, oid, type: "blob" });
+	};
+	const applySubtree = async (name: string, group: Map<string, FileChange>) => {
 		const existing = entries.get(name);
 		const childOid = await editTree(ws, existing?.type === "tree" ? existing.oid : undefined, group);
 		if (childOid) entries.set(name, { mode: "040000", path: name, oid: childOid, type: "tree" });
-		else entries.delete(name);
-	}
+		else if (existing?.type === "tree") entries.delete(name);
+	};
+
+	// A name can change between file and directory. A deleted file must go
+	// before the directory that replaces it is built, and a new file must be
+	// written after the directory it replaces is emptied.
+	for (const [name, change] of leaves) if (change === null) await applyLeaf(name, change);
+	for (const [name, group] of subtrees) await applySubtree(name, group);
+	for (const [name, change] of leaves) if (change !== null) await applyLeaf(name, change);
 
 	if (entries.size === 0) return undefined;
 	return git.writeTree({ fs: ws.fs, dir: ws.dir, tree: [...entries.values()] });
@@ -263,6 +293,8 @@ export interface CommitInput {
 	files: Record<string, FileChange>;
 	message: string;
 	author?: Identity;
+	/** Defaults to the author. */
+	committer?: Identity;
 	/** Unix seconds. Defaults to now. */
 	timestamp?: number;
 }
@@ -277,8 +309,9 @@ export async function commitFiles(ws: Workspace, input: CommitInput): Promise<st
 	const tree =
 		(await editTree(ws, baseTree, new Map(Object.entries(input.files)))) ??
 		(await git.writeTree({ fs: ws.fs, dir: ws.dir, tree: [] }));
-	const identity = input.author ?? REGIT_IDENTITY;
-	const stamp = { ...identity, timestamp: input.timestamp ?? Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+	const author = input.author ?? REGIT_IDENTITY;
+	const committer = input.committer ?? author;
+	const when = { timestamp: input.timestamp ?? Math.floor(Date.now() / 1000), timezoneOffset: 0 };
 	return git.writeCommit({
 		fs: ws.fs,
 		dir: ws.dir,
@@ -286,23 +319,178 @@ export async function commitFiles(ws: Workspace, input: CommitInput): Promise<st
 			message: input.message.endsWith("\n") ? input.message : `${input.message}\n`,
 			tree,
 			parent: input.parent ? [input.parent] : [],
-			author: stamp,
-			committer: stamp,
+			author: { ...author, ...when },
+			committer: { ...committer, ...when },
 		},
 	});
 }
 
-export interface LandInput {
-	trunk: Remote;
+/** One path that differs between two trees. `oid` is null when the path was removed. */
+export interface TreeChange {
+	path: string;
+	oid: string | null;
+	mode: string | null;
+}
+
+async function diffTreeOids(
+	ws: Workspace,
+	before: string | undefined,
+	after: string | undefined,
+	prefix: string,
+	out: TreeChange[],
+): Promise<void> {
+	if (before === after) return;
+	const [a, b] = await Promise.all([readEntries(ws, before), readEntries(ws, after)]);
+	for (const name of new Set([...a.keys(), ...b.keys()])) {
+		const left = a.get(name);
+		const right = b.get(name);
+		const path = prefix + name;
+		if (left && right && left.oid === right.oid && left.mode === right.mode) continue;
+		const leftTree = left?.type === "tree" ? left.oid : undefined;
+		const rightTree = right?.type === "tree" ? right.oid : undefined;
+		if (leftTree || rightTree) await diffTreeOids(ws, leftTree, rightTree, `${path}/`, out);
+		if (right && right.type !== "tree") out.push({ path, oid: right.oid, mode: right.mode });
+		// The path held a file and now holds a directory or nothing.
+		else if (left && left.type !== "tree") out.push({ path, oid: null, mode: null });
+	}
+}
+
+/**
+ * The files that differ between two commits, without reading any file
+ * contents. Both commits must be in the workspace.
+ */
+export async function diffCommits(ws: Workspace, before: string, after: string): Promise<TreeChange[]> {
+	const [a, b] = await Promise.all([
+		git.readCommit({ fs: ws.fs, dir: ws.dir, oid: before, cache: ws.cache }),
+		git.readCommit({ fs: ws.fs, dir: ws.dir, oid: after, cache: ws.cache }),
+	]);
+	const out: TreeChange[] = [];
+	await diffTreeOids(ws, a.commit.tree, b.commit.tree, "", out);
+	return out.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
+}
+
+/** Turn a tree diff into the file changes that reproduce it on another commit. */
+export function changesToFiles(changes: TreeChange[]): Record<string, FileChange> {
+	const files: Record<string, FileChange> = {};
+	for (const change of changes) {
+		files[change.path] = change.oid === null || change.mode === null ? null : { oid: change.oid, mode: change.mode };
+	}
+	return files;
+}
+
+/** Every file in a commit, as a map from path to blob id. */
+export async function listFiles(ws: Workspace, commit: string): Promise<Map<string, string>> {
+	const { commit: object } = await git.readCommit({ fs: ws.fs, dir: ws.dir, oid: commit, cache: ws.cache });
+	const files = new Map<string, string>();
+	const walk = async (treeOid: string, prefix: string): Promise<void> => {
+		for (const entry of (await readEntries(ws, treeOid)).values()) {
+			if (entry.type === "tree") await walk(entry.oid, `${prefix}${entry.path}/`);
+			else if (entry.type === "blob") files.set(prefix + entry.path, entry.oid);
+		}
+	};
+	await walk(object.tree, "");
+	return files;
+}
+
+/** Read a blob as text. */
+export async function readBlobText(ws: Workspace, oid: string): Promise<string> {
+	const { blob } = await git.readBlob({ fs: ws.fs, dir: ws.dir, oid, cache: ws.cache });
+	return new TextDecoder().decode(blob);
+}
+
+/** Read a commit's message, author and parents. */
+export async function readCommitInfo(
+	ws: Workspace,
+	oid: string,
+): Promise<{ message: string; parents: string[]; tree: string; author: Identity & { timestamp: number } }> {
+	const { commit } = await git.readCommit({ fs: ws.fs, dir: ws.dir, oid, cache: ws.cache });
+	return {
+		message: commit.message,
+		parents: commit.parent,
+		tree: commit.tree,
+		author: { name: commit.author.name, email: commit.author.email, timestamp: commit.author.timestamp },
+	};
+}
+
+export interface CandidateInput {
 	fork: Remote;
-	/** Trunk branch name, without `refs/heads/`. */
-	branch: string;
 	/** Ref in the fork holding the verified commit. */
 	candidateRef: string;
 	/** The commit the verifier tested. The fork ref must still point here. */
 	expectOid: string;
-	/** The trunk head the verifier rebased onto. Trunk must still point here. */
+	/** The trunk commit the verifier built it on. Must already be in the workspace. */
 	expectBase: string;
+}
+
+export type CandidateFetch =
+	| { ok: true; oid: string; changes: TreeChange[]; message: string; author: Identity }
+	| { ok: false; reason: "candidate-missing" | "candidate-changed" | "not-on-base"; detail: string };
+
+/**
+ * Fetch a verified commit from an agent's fork and check that it is what the
+ * verifier reported: the same commit, sitting directly on the expected base.
+ */
+export async function fetchCandidate(ws: Workspace, input: CandidateInput): Promise<CandidateFetch> {
+	// The candidate is one commit on top of the base, so depth 2 bounds the download.
+	const oid = await fetchRef(ws, input.fork, input.candidateRef, {
+		depth: 2,
+		have: input.expectBase,
+		remoteName: "fork",
+	});
+	if (oid === null) {
+		return { ok: false, reason: "candidate-missing", detail: `${input.candidateRef} not found in fork` };
+	}
+	if (oid !== input.expectOid) {
+		return {
+			ok: false,
+			reason: "candidate-changed",
+			detail: `${input.candidateRef} is at ${oid}, verifier reported ${input.expectOid}`,
+		};
+	}
+	const info = await readCommitInfo(ws, oid);
+	if (info.parents.length !== 1 || info.parents[0] !== input.expectBase) {
+		return {
+			ok: false,
+			reason: "not-on-base",
+			detail: `candidate parents are [${info.parents.join(", ")}], expected [${input.expectBase}]`,
+		};
+	}
+	return {
+		ok: true,
+		oid,
+		changes: await diffCommits(ws, input.expectBase, oid),
+		message: info.message,
+		author: { name: info.author.name, email: info.author.email },
+	};
+}
+
+/**
+ * Make sure a trunk commit is in the workspace, fetching recent history if it
+ * is not. Returns false when the commit is too old to find.
+ */
+export async function ensureTrunkCommit(
+	ws: Workspace,
+	trunk: Remote,
+	branch: string,
+	oid: string,
+	historyDepth = 50,
+): Promise<boolean> {
+	if (await ws.hasObject(oid)) return true;
+	await fetchRef(ws, trunk, `refs/heads/${branch}`, { depth: 1, remoteName: "trunk" });
+	if (await ws.hasObject(oid)) return true;
+	await fetchRef(ws, trunk, `refs/heads/${branch}`, { depth: historyDepth, remoteName: "trunk" });
+	return ws.hasObject(oid);
+}
+
+/** The commit a trunk branch points at, or null when the branch does not exist. */
+export async function trunkHead(trunk: Remote, branch: string): Promise<string | null> {
+	return (await listRemoteRefs(trunk)).get(`refs/heads/${branch}`) ?? null;
+}
+
+export interface LandInput extends CandidateInput {
+	trunk: Remote;
+	/** Trunk branch name, without `refs/heads/`. */
+	branch: string;
 }
 
 export type LandResult =
@@ -316,7 +504,7 @@ export type LandResult =
 	  };
 
 /**
- * Land a verified commit on trunk.
+ * Land a verified commit on trunk by fast-forward.
  *
  * The verifier (a sandbox that never sees a trunk token) leaves the verified
  * commit on a ref in the agent's fork. This fetches it, checks that it is the
@@ -324,9 +512,7 @@ export type LandResult =
  * head, then fast-forwards trunk to it.
  */
 export async function land(ws: Workspace, input: LandInput): Promise<LandResult> {
-	const trunkRef = `refs/heads/${input.branch}`;
-	const refs = await listRemoteRefs(input.trunk);
-	const head = refs.get(trunkRef) ?? null;
+	const head = await trunkHead(input.trunk, input.branch);
 	if (head !== input.expectBase) {
 		return {
 			landed: false,
@@ -335,44 +521,14 @@ export async function land(ws: Workspace, input: LandInput): Promise<LandResult>
 			detail: `trunk is at ${head ?? "(no commits)"}, candidate was verified against ${input.expectBase}`,
 		};
 	}
+	await ensureTrunkCommit(ws, input.trunk, input.branch, head);
 
-	if (!(await ws.hasObject(head))) {
-		await fetchRef(ws, input.trunk, trunkRef, { depth: 1, remoteName: "trunk" });
-	}
+	const candidate = await fetchCandidate(ws, input);
+	if (!candidate.ok) return { landed: false, reason: candidate.reason, head, detail: candidate.detail };
 
-	// The candidate is one commit on top of the base, so depth 2 bounds the download.
-	const candidate = await fetchRef(ws, input.fork, input.candidateRef, {
-		depth: 2,
-		have: head,
-		remoteName: "fork",
-	});
-	if (candidate === null) {
-		return { landed: false, reason: "candidate-missing", head, detail: `${input.candidateRef} not found in fork` };
-	}
-	if (candidate !== input.expectOid) {
-		return {
-			landed: false,
-			reason: "candidate-changed",
-			head,
-			detail: `${input.candidateRef} is at ${candidate}, verifier tested ${input.expectOid}`,
-		};
-	}
-
-	const { commit } = await git.readCommit({ fs: ws.fs, dir: ws.dir, oid: candidate, cache: ws.cache });
-	if (commit.parent.length !== 1 || commit.parent[0] !== head) {
-		return {
-			landed: false,
-			reason: "not-on-base",
-			head,
-			detail: `candidate parents are [${commit.parent.join(", ")}], expected [${head}]`,
-		};
-	}
-
-	const pushed = await pushRef(ws, input.trunk, candidate, trunkRef, { remoteName: "trunk" });
-	if (!pushed.ok) {
-		return { landed: false, reason: "push-rejected", head, detail: pushed.detail };
-	}
-	return { landed: true, head: candidate };
+	const pushed = await pushRef(ws, input.trunk, candidate.oid, `refs/heads/${input.branch}`, { remoteName: "trunk" });
+	if (!pushed.ok) return { landed: false, reason: "push-rejected", head, detail: pushed.detail };
+	return { landed: true, head: candidate.oid };
 }
 
 export interface NoteInput {

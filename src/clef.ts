@@ -131,6 +131,65 @@ export async function classifyRisk(ai: Ai, change: ChangeSummary): Promise<RiskD
 	return { tier, probabilities, truncated, scope, latencyMs };
 }
 
+/** Paths where a change gets the full suite whatever the decision model says. */
+const SENSITIVE_PATH = /(^|[/._-])(auth|authn|authz|security|crypto|secrets?|payments?|billing|migrations?)([/._-]|$)/i;
+
+export interface RiskAssessment {
+	tier: RiskTier | "unclassified";
+	/** What the integrator should run. */
+	scope: "targeted" | "full";
+	/** Why, in plain words. */
+	reason: string;
+	source: "rules" | "clef" | "none";
+	probabilities?: Record<RiskTier, number>;
+	latencyMs?: number;
+}
+
+/**
+ * Decide how much testing a change needs. Path rules run first and can only
+ * add scrutiny. The decision model is asked next, and anything short of a
+ * confident "routine" gets the full suite. If the model cannot be reached the
+ * change gets the full suite.
+ *
+ * @param ai the Workers AI binding, or undefined to use path rules alone
+ */
+export async function assessRisk(ai: Ai | undefined, change: ChangeSummary): Promise<RiskAssessment> {
+	const sensitive = change.files.find((file) => SENSITIVE_PATH.test(file.path));
+	if (sensitive) {
+		return { tier: "sensitive", scope: "full", reason: `${sensitive.path} is in a sensitive area`, source: "rules" };
+	}
+	if (!ai) {
+		return { tier: "unclassified", scope: "targeted", reason: "no decision model is configured", source: "none" };
+	}
+	try {
+		const decision = await classifyRisk(ai, change);
+		const probability = decision.probabilities[decision.tier].toFixed(2);
+		const reason = decision.truncated
+			? "the change is too large to summarise for the decision model"
+			: decision.scope === "targeted"
+				? `Clef: routine (${probability})`
+				: decision.tier === "routine"
+					? `Clef: routine, but only ${probability} sure`
+					: `Clef: ${decision.tier} (${probability})`;
+		return {
+			tier: decision.tier,
+			scope: decision.scope,
+			reason,
+			source: "clef",
+			probabilities: decision.probabilities,
+			latencyMs: decision.latencyMs,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			tier: "unclassified",
+			scope: "full",
+			reason: `the decision model could not be reached: ${message.slice(0, 200)}`,
+			source: "none",
+		};
+	}
+}
+
 /** What an agent submits to explain a change. Written to trunk as a note if it passes the screen. */
 export interface ThreadRecord {
 	agent: string;

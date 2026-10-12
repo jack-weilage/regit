@@ -406,10 +406,11 @@ const sandboxSpike: SpikeDefinition = {
 			verdict: ok ? "pass" : "fail",
 			summary: failed
 				? `Step "${failed.step}" exited with code ${failed.exitCode}.`
-				: `Sandbox ran ${result.steps.length} steps in ${totalMs} ms: ${result.steps.map((step) => `${step.step} ${step.ms} ms`).join(", ")}.`,
+				: `Sandbox started in ${result.bootMs} ms, then ${result.steps.map((step) => `${step.step} ${step.ms} ms`).join(", ")}. Total ${totalMs} ms.`,
 			details: {
 				trunkImported: trunk.imported,
 				totalMs,
+				bootMs: result.bootMs,
 				gitPreinstalled: result.gitPreinstalled,
 				steps: result.steps,
 			},
