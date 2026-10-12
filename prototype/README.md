@@ -64,3 +64,19 @@ The Lander processes a serial queue, which stands in for the lease, and is the o
 - **Partial policy parser.** It handles the YAML subset that the spec's policy file uses, not full YAML. Globs follow picomatch's `**`, `*` and `?` semantics only.
 - **Line spans are per landing.** They are not maintained across later rewrites. Blame resolves to whichever commit last touched the line.
 - **The demo runs in about 4 s** because the test suite is tiny. Real combined re-tests are where the throughput limit (about 27 landings per hour per serial lane at T ≈ 2 min, spec §7.3) comes from.
+
+## Benchmark
+
+`python3 prototype/bench.py` (about 4 min; `--n`, `--slow-n` and `--cas` change the sizes). For each N it seeds a fresh toy trunk in a temp dir, spawns N threads from the same base, and has each add its own `shop/feat_NNN.py` plus its own one-case test, so the changes are disjoint. It submits them all and then drains the Lander. In the "slow" rows the seed also carries a test that sleeps 0.5 s, so every suite run pays that cost. Times are per landing, measured by wrapping `Lander.land` and `EvidenceStore.test_commit` without changing them. "rebase+policy" is the fetches, checkout, rebase and policy evaluation. "squash+CAS+notes" covers line spans, the squash commit, the attempt-ref push, `update-ref`, the note, and the index write. "Total" includes cloning N forks and each thread's own-tree proof at submit. Landings/min is computed over the drain only.
+
+| suite | N | total s | drain s | landings/min | per landing s | rebase+policy s | combined test s (first->last) | squash+CAS+notes s | test runs | evidence reuses |
+|---|---|---|---|---|---|---|---|---|---|---|
+| fast | 10 | 7.4 | 4.4 | 135 | 0.44 | 0.13 | 0.13 (0.00->0.16) | 0.19 | 19 | 1 |
+| fast | 50 | 33.9 | 22.7 | 132 | 0.45 | 0.13 | 0.15 (0.00->0.17) | 0.17 | 99 | 1 |
+| fast | 100 | 81.1 | 57.1 | 105 | 0.57 | 0.17 | 0.21 (0.00->0.30) | 0.20 | 199 | 1 |
+| slow (+0.5 s) | 10 | 16.9 | 9.0 | 67 | 0.90 | 0.14 | 0.57 (0.00->0.64) | 0.19 | 19 | 1 |
+| slow (+0.5 s) | 50 | 83.6 | 47.2 | 64 | 0.94 | 0.12 | 0.65 (0.00->0.69) | 0.18 | 99 | 1 |
+
+On its own, the CAS step (200 landings on a bare repo, median) costs 5.4 ms for `git update-ref refs/heads/main <new> <old>` and 7.5 ms for `git notes add`. Together that is 13.2 ms, or about 4,500 landings/min if nothing else ran.
+
+These numbers come from one machine, on local disk, with one sequential Lander lane: no partitioning, no batching and no speculation. All 100 landings succeed. The only evidence reuse is the first landing, whose combined tree equals the thread's own tree. Every later landing sits on a moved main, so it needs a fresh combined run. The git bookkeeping, including CAS and notes, takes about 0.3 s per landing and stays flat. The ref swap itself is about 13 ms of that. What changes throughput is the combined re-test. It grows slowly with the suite as each landing adds a test (0.16 s to 0.30 s at N=100). Adding 0.5 s to the suite halves throughput, from about 132 to about 65 landings/min, and the test then takes about 70% of each landing. The model is landings/min ≈ 60 / (T_test + ~0.3 s). With a realistic T ≈ 2 min, that gives about 30 per hour per lane, which matches spec §7.3. So scaling the Lander depends on partitioned lanes, batching and test-impact analysis, not on faster git.
