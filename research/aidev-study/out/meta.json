@@ -1,0 +1,18 @@
+{
+ "N_pr": 71677,
+ "N_closed": 65745,
+ "N_open": 5932,
+ "created_min": "2024-12-24T00:23:09Z",
+ "created_max": "2025-10-24T23:59:31Z",
+ "top_users": [
+  "Copilot",
+  "tamnd"
+ ],
+ "top_user_counts": {
+  "Copilot": 19738,
+  "tamnd": 13194
+ },
+ "N_reviews": 83816,
+ "N_human_reviewed_PRs": 16731,
+ "analysis_sample_N": 39310
+}

@@ -1,0 +1,7 @@
+agent,codex_task,codex_share,cursor_agent,devin_session,jules_task,claude_session,amp_thread,copilot_session,has_link,N
+Claude_Code,43,0,19,0,0,0,0,1,63,18232
+Copilot,924,0,9,3,0,0,0,8,944,349695
+Cursor,106,0,170085,1,0,0,0,0,170192,212544
+Devin,0,0,0,42389,0,0,0,0,42389,43298
+Google_Jules,0,0,0,0,27708,0,0,0,27708,50490
+OpenAI_Codex,1970250,69,26,0,0,0,0,0,1970305,2069595

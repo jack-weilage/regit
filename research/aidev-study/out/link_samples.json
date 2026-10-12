@@ -1,0 +1,67 @@
+{
+ "codex_task": {
+  "n": 29708,
+  "examples": [
+   "- Not run (project has no automated tests)\n\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_68d96a5e87bc832293a68cf38db0f4ee",
+   "ng\n- cargo fmt\n- cargo clippy\n- cargo test\n\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_68f321210e048323a79eed9c2da21963",
+   "e$`\n- `go test ./tests/vm -run . -count=1`\n\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_685adab5ec048320be25efc18e29096b",
+   "ests=false test` *(fails: `mvn` not found)*\n\n------\nhttps://chatgpt.com/codex/tasks/task_b_684e3a065900832a89e1a073d59a6b3c",
+   " Errors` docs in state.rs)*\n- `cargo test`\n\n\n------\nhttps://chatgpt.com/codex/tasks/task_e_68ba9be8d2d4832ab04917b6eb08a705\n\n<!-- This is an auto-gen"
+  ]
+ },
+ "codex_share": {
+  "n": 23,
+  "examples": [
+   "_\uc774 PR\uc740 [ChatGPT Codex\ub85c \uc791\uc131](https://chatgpt.com/s/cd_6875af3206d88191964481ac5f8e6c76)\ud55c \uac83\uc744 \uc218\uc815\ud588\uc2b5\ub2c8\ub2e4_\r\n\r\n\uc601\ubb38 \uc8fc\uc11d\uacfc \ubc88\uc5ed\uc758 ",
+   "\n## Testing\r\n- python manage.py test -v3\r\n\r\n------\r\nhttps://chatgpt.com/s/cd_68e1727b970c819183e8e3d56914a251",
+   "ss and I added a new test for this case.\r\n\r\n------\r\nhttps://chatgpt.com/s/cd_686e819fb55c819190f6b5426d9d2212",
+   "d and am satisfied with the work. Source thread:\r\n\r\nhttps://chatgpt.com/s/cd_68604cc0945881919dafa5fb620b7720\r\n\r\nI have attempted this my",
+   "nt: proxy prevents installing markdown)*\r\n\r\n------\r\nhttps://chatgpt.com/s/cd_68f319603cbc8191805768d3b9ec837b"
+  ]
+ },
+ "cursor_agent": {
+  "n": 2298,
+  "examples": [
+   "ipWrapper` is initialized before use.\n\n---\n<a href=\"https://cursor.com/background-agent?bcId=bc-40396989-bda5-4922-9a95-e0d15acec3e2\">\n  <picture>\n    <s",
+   "ond, significantly lowering CPU load.\n\n---\n<a href=\"https://cursor.com/background-agent?bcId=bc-748a7a2d-f14a-4f68-99dd-a8dd764c1319\"><picture><source me",
+   "nce-docs-for-prior-sdk-versions-are-gone)\n\n<a href=\"https://cursor.com/background-agent?bcId=bc-848cfdee-9a57-44fb-9425-cb30875b8977\">\n  <picture>\n    <s",
+   "ed by local environment dependencies.\n\n---\n<a href=\"https://cursor.com/background-agent?bcId=bc-99446abd-074d-4779-82d8-54ccd39a9415\">\n  <picture>\n    <s",
+   "ving test efficiency and reliability.\n\n---\n<a href=\"https://cursor.com/background-agent?bcId=bc-f2b568a1-6852-4b0c-be24-205a7741f44d\"><picture><source me"
+  ]
+ },
+ "devin_session": {
+  "n": 6002,
+  "examples": [
+   " same form layout and structure\n\nLink to Devin run: https://app.devin.ai/sessions/464aa4a3aca54e91ba3ef79b249839f5\n\nRequested by: maya@elf.dev\n",
+   "by running the app locally\r\n\r\n## Link to Devin run\r\nhttps://app.devin.ai/sessions/15f079f584aa44ffaa01b27d380f7992\r\n\r\nRequested by: eunjae@cal.",
+   "suyoshi.hoshino@route06.co.jp\r\n- Link to Devin run: https://app.devin.ai/sessions/56199736c67c4bf0964060fd8bb65e3a",
+   "tting and no clippy warnings.\n\n## Link to Devin run\nhttps://app.devin.ai/sessions/55894ebeb8ab411e87e331df66aed18a\n\nRequested by: Ian Clarke\n",
+   "ed\n\n## Related\n- Fixes NV-6152\n- Link to Devin run: https://app.devin.ai/sessions/ebb56d482b194afaa625d1806784e77e\n- Requested by: Dima Grossma"
+  ]
+ },
+ "jules_task": {
+  "n": 211,
+  "examples": [
+   "tomatically by Jules for task [6936886342889071058](https://jules.google.com/task/6936886342889071058)*",
+   "tomatically by Jules for task [5594209540838804993](https://jules.google.com/task/5594209540838804993)*",
+   "tomatically by Jules for task [2654317184637777705](https://jules.google.com/task/2654317184637777705)*",
+   "tomatically by Jules for task [3770249541016267403](https://jules.google.com/task/3770249541016267403)*",
+   "omatically by Jules for task [18075266203534249222](https://jules.google.com/task/18075266203534249222)*"
+  ]
+ },
+ "claude_session": {
+  "n": 0,
+  "examples": []
+ },
+ "amp_thread": {
+  "n": 0,
+  "examples": []
+ },
+ "copilot_session": {
+  "n": 2,
+  "examples": [
+   "ions\n> \n> For example https://github.com/wled/WLED/pull/4984/agent-sessions/0f8b5177-2005-4dea-8d0a-bea8d5ccaba6 vs https://github.com/w",
+   " and [Copilot](https://github.com/elastic/kibana/pull/231728/agent-sessions/baf33b96-3925-43f4-85b4-c7713994328b). It adds a comprehensi"
+  ]
+ }
+}

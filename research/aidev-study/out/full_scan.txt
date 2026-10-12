@@ -1,0 +1,20 @@
+  m = sm.OLS(d.merged, X).fit(cov_type='cluster', cov_kwds={'groups': pd.factorize(d.repo_id.fillna(-1))[0]})
+  m = sm.OLS(d.merged, X).fit(cov_type='cluster', cov_kwds={'groups': pd.factorize(d.repo_id.fillna(-1))[0]})
+{'N': 2743854, 'N_closed': 2451452, 'created_min': '2024-12-24T00:23:09Z', 'created_max': '2025-10-24T23:59:55Z'}
+              codex_task  codex_share  cursor_agent  devin_session  jules_task  claude_session  amp_thread  copilot_session  has_link        N
+agent                                                                                                                                         
+Claude_Code           43            0            19              0           0               0           0                1        63    18232
+Copilot              924            0             9              3           0               0           0                8       944   349695
+Cursor               106            0        170085              1           0               0           0                0    170192   212544
+Devin                  0            0             0          42389           0               0           0                0     42389    43298
+Google_Jules           0            0             0              0       27708               0           0                0     27708    50490
+OpenAI_Codex     1970250           69            26              0           0               0           0                0   1970305  2069595
+          agent      window   n_link  n_nolink  merge_link  merge_nolink  raw_diff_pp  medTTM_h_link  medTTM_h_nolink        adj_diff_pp    within_repo_pp  within_repo_N  within_repo_repos
+0  OpenAI_Codex  all months  1830196     92958       0.934         0.884          5.0           0.01             0.01                NaN               NaN            NaN                NaN
+1  OpenAI_Codex  >= 2025-06  1827023     35603       0.935         0.860          7.5           0.01             0.02  +8.7 [+6.0,+11.4]  -1.1 [-3.8,+1.6]       395311.0             7439.0
+2        Cursor  all months   108049     35128       0.783         0.869         -8.7           0.14             0.01                NaN               NaN            NaN                NaN
+3        Cursor  >= 2025-07   108049     32336       0.783         0.872         -8.9           0.14             0.01   -6.3 [-8.6,-4.0]  -7.9 [-9.6,-6.2]        82450.0             4014.0
+4         Devin  all months    37734       843       0.697         0.727         -3.0           0.32             0.47                NaN               NaN            NaN                NaN
+5         Devin  >= 2024-12    37734       843       0.697         0.727         -3.0           0.32             0.47   -1.7 [-8.0,+4.7]  -1.0 [-5.7,+3.8]        11224.0              281.0
+6  Google_Jules  all months    23290     20310       0.899         0.875          2.4           0.02             0.03                NaN               NaN            NaN                NaN
+7  Google_Jules  >= 2025-09    23289      3958       0.899         0.893          0.5           0.02             0.03   -0.7 [-2.7,+1.2]  -1.0 [-2.9,+1.0]         5788.0              268.0

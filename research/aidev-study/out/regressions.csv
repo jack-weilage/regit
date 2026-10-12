@@ -1,0 +1,16 @@
+model,N,OR_link,CI95,p,repo_groups,LPM_link_pp,error,TTM_ratio_link
+"Logit pooled 4 agents (template eras), agent+month FE, stars, body len, owner; repo-clustered SE",39310,1.029,"[0.815,1.298]",0.8127,,,,
+  + human-review indicator,39310,1.426,"[1.098,1.853]",0.0079,,,,
+  restricted to PRs with non-author human review,4009,0.836,"[0.581,1.204]",0.3357,,,,
+Logit OpenAI_Codex only,30025,1.663,"[1.150,2.407]",0.0069,,,,
+Logit Cursor only,3090,0.461,"[0.319,0.665]",0.0,,,,
+Logit Devin only,6004,1.115,"[0.517,2.402]",0.7814,,,,
+Logit Google_Jules only,191,1.354,"[0.399,4.597]",0.6267,,,,
+"LPM repo x agent FE (+month, body len), pooled 4 agents, repos with both kinds",24975,,"[-20.0,-11.8]",0.0,379.0,-15.9,,
+"LPM repo FE, OpenAI_Codex",18859,,"[-19.8,-5.9]",0.0003,187.0,-12.9,,
+"LPM repo FE, Cursor",2170,,"[-30.3,-13.1]",0.0,134.0,-21.7,,
+"LPM repo FE, Devin",3928,,"[-11.4,+7.4]",0.6803,56.0,-2.0,,
+"LPM repo FE, Google_Jules",18,,,,,,too few,
+"LPM repo x agent FE, only human-reviewed PRs",2286,,"[-6.3,+0.9]",0.1358,112.0,-2.7,,
+"OLS log(time-to-merge), merged PRs, same controls + human review",31176,,"[0.126,0.249]",0.0,,,,0.177
+"OLS log(time-to-merge), merged + human-reviewed only",3491,,"[0.388,0.698]",0.0,,,,0.52

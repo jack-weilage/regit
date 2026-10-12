@@ -1,0 +1,33 @@
+within repo x agent, all merged: N=19072 groups=268 TTM ratio=0.497 [0.316,0.783] p=0.0026
+within repo x agent, merged + human-reviewed: N=1991 groups=105 TTM ratio=0.464 [0.345,0.625] p=0.0000
+within repo, OpenAI_Codex, all merged: N=16079 groups=144 TTM ratio=0.384 [0.187,0.789] p=0.0092
+within repo, Cursor, all merged: N=1200 groups=83 TTM ratio=0.907 [0.552,1.491] p=0.7005
+within repo, Devin, all merged: N=1778 groups=39 TTM ratio=0.354 [0.176,0.710] p=0.0034
+share merged within 5 min of creation (self-merge proxy) by agent x link:
+                    mean   size
+agent        link              
+Cursor       0.0   0.218    792
+             1.0   0.176    989
+Devin        0.0   0.029    104
+             1.0   0.101   3296
+Google_Jules 0.0   0.538     13
+             1.0   0.210    138
+OpenAI_Codex 0.0   0.236    942
+             1.0   0.691  24902
+share with human review by agent x link (closed):
+                    mean   size
+agent        link              
+Cursor       0.0   0.253   1127
+             1.0   0.130   1963
+Devin        0.0   0.548    168
+             1.0   0.370   5836
+Google_Jules 0.0   0.444     18
+             1.0   0.405    173
+OpenAI_Codex 0.0   0.276   1377
+             1.0   0.026  28648
+Codex no-link (>=2025-06) N 1377 has "## Summary" 0.328 has "## Testing" 0.084 empty 0.224
+Codex link: "## Summary" 0.993
+Cursor link vs nolink, mention "Cursor Agent"/"Background Agent": {0.0: 0.021, 1.0: 0.136}
+within repo x agent, all merged (+log n_commits): N=19072 groups=268 TTM ratio=1.073 [0.715,1.611] p=0.7344
+within repo x agent, merged + human-reviewed (+log n_commits): N=1991 groups=105 TTM ratio=0.855 [0.668,1.094] p=0.2127
+median commits per merged PR by agent x link: {('Cursor', 0.0): 3.0, ('Cursor', 1.0): 2.0000000000000004, ('Devin', 0.0): 3.0, ('Devin', 1.0): 2.0000000000000004, ('Google_Jules', 0.0): 1.0, ('Google_Jules', 1.0): 2.0000000000000004, ('OpenAI_Codex', 0.0): 2.0000000000000004, ('OpenAI_Codex', 1.0): 1.0}
