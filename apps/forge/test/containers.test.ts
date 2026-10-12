@@ -2,8 +2,9 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { setup } from './support.ts';
 
-const { dir, git, worker, script, modelRequests, sh, seed, commit, start, submitReview, settled } =
-	await setup({ containers: true });
+const { dir, git, worker, script, modelRequests, sh, seed, commit, start, settled } = await setup({
+	containers: true
+});
 
 test('caches setup, resumes restores, and refreshes when tools or source change', async () => {
 	const work = await seed('toolchain', {

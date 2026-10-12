@@ -39,7 +39,6 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 		body: '',
 		status: 'preparing',
 		candidate: null,
-		assessment: null,
 		error: null,
 		notesPublished: false,
 		at: 1

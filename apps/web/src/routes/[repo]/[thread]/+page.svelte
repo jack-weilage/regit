@@ -13,7 +13,6 @@
 		ChatLog,
 		ChatMention,
 		ChatMessage,
-		ChatReview,
 		ChatStartup,
 		ChatThreadMessage,
 		ChatTools,
@@ -26,17 +25,10 @@
 		type SidebarTab,
 		ThreadView,
 		Button,
-		type CheckState,
 		type IntentStatus,
 		type ThreadAction
 	} from '@regit/ui';
-	import {
-		maxReviewRounds,
-		threadPurgeDelayMs,
-		type Author,
-		type Entry,
-		type ToolCallRecord
-	} from '@regit/core';
+	import { threadPurgeDelayMs, type Author, type Entry, type ToolCallRecord } from '@regit/core';
 	import { getLiveActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import {
@@ -84,7 +76,6 @@
 	const tasks = {
 		conversation: 'Conversation',
 		attempt: 'Agent',
-		review: 'Review',
 		search: 'Thread search'
 	};
 
@@ -131,73 +122,20 @@
 	let threads = $derived(await getThreads(params.repo));
 
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
-	let latestReview = $derived(
-		detail?.entries.findLast(
-			(entry): entry is Extract<Entry, { type: 'review' }> => entry.type === 'review'
-		)
-	);
-	let progress = $derived.by(
-		(): { status?: IntentStatus; checks?: CheckState[]; note?: string } => {
-			const status = detail?.summary.status;
-			const intent = detail?.entries.findLast((entry) => entry.type === 'intent');
-			const review = latestReview;
-			const count = intent?.type === 'intent' ? intent.intent.doneWhen.length : 0;
-			const checks = review?.checks;
-			if (detail?.control?.promotions.some((promotion) => promotion.status === 'ready'))
-				return { status: 'ready', note: 'Exact candidate awaits owner approval' };
-			if (status === 'shipping')
-				return {
-					status: 'shipping',
-					checks,
-					note: 'Preparing candidate or publishing approved SHA'
-				};
-			if (status === 'shipped') {
-				const sha = detail!.summary.shipped?.sha.slice(0, 7);
-				return { status: 'shipped', checks, note: sha ? `Shipped in ${sha}` : 'Shipped' };
-			}
-			if (status === 'reviewing') {
-				return {
-					status: 'reviewing',
-					checks: Array(count).fill('checking'),
-					note: 'Reviewing against the intent'
-				};
-			}
-			if (status === 'running') {
-				const resumed = detail!.entries
-					.slice(review ? detail!.entries.indexOf(review) : 0)
-					.some((entry) => entry.type === 'message' && entry.author.kind === 'person');
-				if (!review || review.verdict !== 'fail' || resumed) {
-					return { status: 'working', note: 'The agent is working' };
-				}
-				const gaps = review.checks.filter((check) => check !== 'met').length;
-				return {
-					status: 'working',
-					checks: review.checks,
-					note: `Round ${review.round + 1} of ${maxReviewRounds} · fixing ${gaps} ${gaps === 1 ? 'gap' : 'gaps'}`
-				};
-			}
-			if (status !== 'needs-you') return {};
-			if (!review) return { status: 'needs-you' };
-			if (review.verdict === 'pass') {
-				return {
-					status: 'ready',
-					checks: review.checks,
-					note: 'Model reviewed · ready to prepare candidate'
-				};
-			}
-			const unchecked = review.checks.filter((check) => check === 'unverified').length;
-			return {
-				status: 'needs-you',
-				checks: review.checks,
-				note:
-					review.verdict === 'needs-human' && unchecked
-						? `${unchecked} ${unchecked === 1 ? "item couldn't" : "items couldn't"} be checked`
-						: review.verdict === 'needs-human'
-							? 'The reviewer needs you to decide'
-							: `Still has gaps after ${maxReviewRounds} rounds`
-			};
+	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
+		const status = detail?.summary.status;
+		if (detail?.control?.promotions.some((promotion) => promotion.status === 'ready'))
+			return { status: 'ready', note: 'Exact candidate awaits owner approval' };
+		if (status === 'shipping')
+			return { status: 'shipping', note: 'Preparing candidate or publishing approved SHA' };
+		if (status === 'shipped') {
+			const sha = detail!.summary.shipped?.sha.slice(0, 7);
+			return { status: 'shipped', note: sha ? `Shipped in ${sha}` : 'Shipped' };
 		}
-	);
+		if (status === 'running') return { status: 'working', note: 'The agent is working' };
+		if (status === 'needs-you') return { status: 'needs-you' };
+		return {};
+	});
 	let thinking = $derived.by(() => {
 		const last = detail?.entries.at(-1);
 		return (
@@ -364,18 +302,6 @@
 								ondismiss={() => dismissSuggestion({ ...ref, entry: block.id })}
 							/>
 						{/if}
-					{:else if block.type === 'review'}
-						<ChatReview
-							verdict={block.verdict === 'pass'
-								? 'passed'
-								: block.verdict === 'fail' && block.round < maxReviewRounds
-									? 'sent-back'
-									: 'needs-you'}
-							round={block.round}
-							doneWhen={detail.entries.findLast((entry) => entry.type === 'intent')?.intent
-								.doneWhen ?? []}
-							checks={block.checks}
-						/>
 					{:else if block.type === 'startup'}
 						<ChatStartup stages={block.stages} finished />
 					{:else if block.type === 'thread-message'}
@@ -393,7 +319,7 @@
 						>
 							<ChatMessage><Markdown source={block.text} /></ChatMessage>
 						</ChatThreadMessage>
-					{:else}
+					{:else if block.type === 'event'}
 						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 					{/if}
 				{/each}
@@ -434,8 +360,6 @@
 					<ChatActivity>ReGit is thinking</ChatActivity>
 				{:else if !activity && summary.status === 'running'}
 					<ChatActivity>ReGit is working</ChatActivity>
-				{:else if summary.status === 'reviewing'}
-					<ChatActivity>ReGit is reviewing the work</ChatActivity>
 				{/if}
 			</ChatLog>
 			{#snippet bottom()}
@@ -448,7 +372,7 @@
 					</ChatBanner>
 				{:else}
 					<ChatComposer
-						working={thinking || ['running', 'reviewing', 'shipping'].includes(summary.status)}
+						working={thinking || ['running', 'shipping'].includes(summary.status)}
 						onstop={() => stopThread(ref)}
 						onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
 					/>

@@ -120,7 +120,7 @@
 		status: 'shipping',
 		control: {
 			...acceptance,
-			promotions: [{ ...readyPromotion, status: 'queued', candidate: null, assessment: null }]
+			promotions: [{ ...readyPromotion, status: 'queued', candidate: null }]
 		}
 	}}
 />
@@ -130,22 +130,8 @@
 		status: 'shipping',
 		control: {
 			...acceptance,
-			promotions: [{ ...readyPromotion, status: 'preparing', candidate: null, assessment: null }]
+			promotions: [{ ...readyPromotion, status: 'preparing', candidate: null }]
 		}
-	}}
-/>
-<Story
-	name="Assessing"
-	args={{
-		status: 'shipping',
-		control: {
-			...acceptance,
-			promotions: [{ ...readyPromotion, status: 'reviewing', assessment: null }]
-		}
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByText('Assessing candidate')).toBeVisible();
-		await expect(canvas.queryByRole('button')).toBeNull();
 	}}
 />
 <Story
@@ -173,38 +159,8 @@
 	args={{
 		control: {
 			...acceptance,
-			promotions: [{ ...readyPromotion, status: 'cancelled', candidate: null, assessment: null }]
+			promotions: [{ ...readyPromotion, status: 'cancelled', candidate: null }]
 		}
-	}}
-/>
-<Story
-	name="Failed assessment"
-	args={{
-		control: {
-			...acceptance,
-			promotions: [
-				{
-					...readyPromotion,
-					assessment: {
-						...readyPromotion.assessment!,
-						verdict: 'fail',
-						checks: [
-							readyPromotion.assessment!.checks[0]!,
-							{
-								state: 'unmet',
-								evidence: 'Scrolling replaces the first page instead of appending members.'
-							}
-						]
-					}
-				}
-			]
-		}
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('img', { name: 'unmet' })).toBeVisible();
-		await expect(canvas.getByRole('note')).toHaveTextContent(
-			'fail; approval overrides that verdict'
-		);
 	}}
 />
 <Story
@@ -221,8 +177,7 @@
 					candidate: {
 						...readyPromotion.candidate!,
 						sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-					},
-					assessment: null
+					}
 				},
 				readyPromotion
 			]
@@ -328,37 +283,6 @@
 />
 
 <Story
-	name="Needs human"
-	args={{
-		control: {
-			...acceptance,
-			promotions: [
-				{
-					...readyPromotion,
-					assessment: {
-						...readyPromotion.assessment!,
-						verdict: 'needs-human',
-						checks: [
-							readyPromotion.assessment!.checks[0]!,
-							{
-								state: 'unverified',
-								evidence: 'Pagination could not be checked against a production-sized organization.'
-							}
-						],
-						findings: ['Confirm performance with a production-sized organization.']
-					}
-				}
-			]
-		}
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('note')).toHaveTextContent(
-			'needs-human; approval overrides that verdict'
-		);
-	}}
-/>
-
-<Story
 	name="Publishing"
 	args={{
 		status: 'shipping',
@@ -436,8 +360,7 @@
 			>
 			<ChatIntent {...acceptance.acceptedIntent!.intent} status="working" note="Accepted intent" />
 			<ChatGroup author={{ name: 'ReGit', kind: 'agent' }}
-				><ChatMessage
-					>The candidate is prepared and assessed. Review it before publishing.</ChatMessage
+				><ChatMessage>The candidate is prepared. Review it before publishing.</ChatMessage
 				></ChatGroup
 			>
 			<AcceptancePanel

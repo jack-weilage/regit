@@ -1,12 +1,10 @@
 <script module lang="ts">
 	import type { StatusIconState } from './status.ts';
 
-	export type IntentStatus =
-		'working' | 'reviewing' | 'needs-you' | 'ready' | 'shipping' | 'shipped';
+	export type IntentStatus = 'working' | 'needs-you' | 'ready' | 'shipping' | 'shipped';
 
 	const icons: Record<IntentStatus, StatusIconState> = {
 		working: 'running',
-		reviewing: 'reviewing',
 		'needs-you': 'attention',
 		ready: 'passed',
 		shipping: 'shipping',
@@ -21,7 +19,7 @@
 	import type { Attachment } from 'svelte/attachments';
 	import Button from '../Button.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
-	import ChatChecks, { type CheckState } from './ChatChecks.svelte';
+	import ChatChecks from './ChatChecks.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
 	import { statuses } from './status.ts';
@@ -32,7 +30,6 @@
 		purpose: string;
 		doneWhen: string[];
 		status?: IntentStatus;
-		checks?: CheckState[];
 		note?: string;
 		changes?: { files: number; additions: number; deletions: number };
 		sticky?: boolean;
@@ -50,7 +47,6 @@
 		purpose,
 		doneWhen,
 		status,
-		checks = [],
 		note,
 		changes,
 		sticky = false,
@@ -63,8 +59,7 @@
 		onmessage
 	}: Props = $props();
 
-	const messageable = (status: ThreadStatus) =>
-		['draft', 'running', 'reviewing', 'shipping'].includes(status);
+	const messageable = (status: ThreadStatus) => ['draft', 'running', 'shipping'].includes(status);
 
 	let same = $derived(similar.find((thread) => thread.relation === 'same'));
 	let overlaps = $derived(similar.filter((thread) => thread.relation === 'overlap'));
@@ -76,7 +71,6 @@
 	let bodyHeight = $state(0);
 
 	let minimized = $derived(stuck && !open);
-	let met = $derived(checks.filter((check) => check === 'met').length);
 
 	const watch: Attachment<HTMLElement> = (marker) => {
 		const observer = new IntersectionObserver(
@@ -114,7 +108,7 @@
 	<p class="purpose">{purpose}</p>
 	<div class="section">
 		<p class="heading">Done when</p>
-		<ChatChecks checks={doneWhen} states={checks} />
+		<ChatChecks checks={doneWhen} />
 	</div>
 {/snippet}
 
@@ -156,14 +150,6 @@
 		{#snippet title()}
 			{#if status}<StatusIcon state={icons[status]} />{/if}
 			<span class="headline">{headline}</span>
-			{#if minimized && checks.length}
-				<span class="progress">
-					<span class="segments" aria-hidden="true">
-						{#each checks as check, index (index)}<span class={['segment', check]}></span>{/each}
-					</span>
-					<span class="count">{met}/{checks.length}</span>
-				</span>
-			{/if}
 			{#if stuck}
 				<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"
 					><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg
@@ -343,48 +329,8 @@
 		}
 	}
 
-	.progress,
 	.chevron {
 		align-self: center;
-	}
-
-	.progress {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-4);
-	}
-
-	.segments {
-		display: flex;
-		gap: 3px;
-	}
-
-	.segment {
-		inline-size: 1rem;
-		block-size: 4px;
-		border-radius: 2px;
-		background: var(--color-border);
-
-		&.met {
-			background: var(--color-accent);
-		}
-
-		&.unmet {
-			background: var(--color-danger-text);
-		}
-
-		&.unverified {
-			background: color-mix(in oklab, var(--color-accent) 45%, var(--color-border));
-		}
-	}
-
-	.count {
-		color: var(--color-muted);
-		font-size: var(--text-meta);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.chevron {
 		flex: none;
 		inline-size: 1em;
 		block-size: 1em;

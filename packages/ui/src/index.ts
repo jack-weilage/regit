@@ -21,8 +21,6 @@ export { default as ChatFooter, type Usage } from './chat/ChatFooter.svelte';
 export { default as ChatGroup } from './chat/ChatGroup.svelte';
 export { default as ChatHeader } from './chat/ChatHeader.svelte';
 export { default as ChatIntent, type IntentStatus } from './chat/ChatIntent.svelte';
-export { default as ChatReview, type ReviewVerdict } from './chat/ChatReview.svelte';
-export type { CheckState } from './chat/ChatChecks.svelte';
 export { default as ChatLog } from './chat/ChatLog.svelte';
 export { default as ChatMention } from './chat/ChatMention.svelte';
 export { default as ChatMessage } from './chat/ChatMessage.svelte';

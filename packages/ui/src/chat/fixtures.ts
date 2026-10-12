@@ -52,7 +52,6 @@ export const acceptance: ProposalControl = {
 			at: 3
 		}
 	],
-	assessments: [],
 	promotions: []
 };
 
@@ -72,19 +71,6 @@ export const readyPromotion: Promotion = {
 		branch: 'main',
 		sha: 'a1b2c3d4e5f678901234567890abcdef1234567890',
 		expectedHead: '9876543210abcdef9876543210abcdef98765432'
-	},
-	assessment: {
-		id: 'assessment-1',
-		revision: 'a1b2c3d4e5f678901234567890abcdef1234567890',
-		intent: 'intent-1',
-		producer: 'verify-promotion-1',
-		verdict: 'pass',
-		checks: [
-			{ state: 'met', evidence: 'Settings renders while the member request is pending.' },
-			{ state: 'met', evidence: 'Scrolling fetches the next page without replacing existing rows.' }
-		],
-		findings: [],
-		at: 4
 	},
 	error: null,
 	notesPublished: false,

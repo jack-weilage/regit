@@ -20,11 +20,11 @@ Deployment migration is still required: remove the existing `git.regit.dev/*` ro
 
 ## Acceptance and publication
 
-The repository Durable Object owns accepted intent versions, run identities, captured revisions, candidate assessments and publication records. A thread is the conversational view; a run is a separate executor with its own fork. Agents can propose changes to intent, but only a person accepts a new version. Run dispatch is persisted and retried with the same input.
+The repository Durable Object owns accepted intent versions, run identities, captured revisions and publication records. A thread is the conversational view; a run is a separate executor with its own fork. Agents can propose changes to intent, but only a person accepts a new version. Run dispatch is persisted and retried with the same input.
 
-Preparing a candidate does not publish it. A separate Git-only publisher constructs a single commit against an exact canonical head, then an independent read-only verifier assesses that commit. The assessment is model judgment, not trusted executable proof. A repository owner explicitly approves the exact candidate, including any override of an adverse assessment. Publication uses a conditional ref update; a stale base requires preparing and approving a new candidate. Coding and verifier containers never receive canonical write authority.
+Preparing a candidate does not publish it. A separate Git-only publisher constructs a single commit against an exact canonical head, and a repository owner explicitly approves that exact candidate. Publication uses a conditional ref update; a stale base requires preparing and approving a new candidate. Coding containers never receive canonical write authority.
 
-After publication, `refs/notes/regit` records the source revision, accepted intent, assessment and authorizing principal. Notes publication retries independently of the code update. Operational state remains in SQLite; Git notes are exported provenance, not the mutable coordination database.
+After publication, `refs/notes/regit` records the source revision, accepted intent and authorizing principal. Notes publication retries independently of the code update. Operational state remains in SQLite; Git notes are exported provenance, not the mutable coordination database.
 
 Proposals can pin exact revisions of other proposals in the same repository. Runs wait until every prerequisite revision has published; their bases and publication candidates must contain those published commits. Changing pins versions the accepted intent and requires a new run. Accepted upstream intent changes stale dependent pins; pins never advance automatically, and cycles are rejected. Dependency pins are included in the accepted intent exported to Git notes.
 

@@ -7,12 +7,9 @@ import { containerRun } from './container-run.ts';
 import {
 	defaultMachine,
 	machines,
-	maxReviewRounds,
 	summarize,
 	type DiffFile,
 	type Revision,
-	type Candidate,
-	type Assessment,
 	type Machine,
 	type StartupStage,
 	type ThreadActivity
@@ -37,9 +34,6 @@ import {
 	openaiModel,
 	parseDiff,
 	readOnlyTools,
-	reviewers,
-	reviewFeedback,
-	reviewIntent,
 	runAgent,
 	runAttempt,
 	sandboxTools,
@@ -53,7 +47,6 @@ import {
 	type Fetch,
 	type ServiceInfo,
 	type Skill,
-	type Intent,
 	type Mode,
 	type Step,
 	type ToolExecutor,
@@ -70,7 +63,6 @@ export interface AttemptInput {
 	mode: Mode;
 	machine?: Machine;
 	repo: string;
-	intent?: Intent;
 }
 
 export interface ConverseInput {
@@ -86,14 +78,7 @@ export interface ConverseInput {
 }
 
 export type AttemptStatus =
-	| 'queued'
-	| 'running'
-	| 'reviewing'
-	| 'interrupted'
-	| 'finished'
-	| 'stopped'
-	| 'failed'
-	| 'cancelled';
+	'queued' | 'running' | 'interrupted' | 'finished' | 'stopped' | 'failed' | 'cancelled';
 
 export interface AttemptSnapshot {
 	status: AttemptStatus;
@@ -126,7 +111,6 @@ type AttemptRow = {
 	error: string | null;
 	toolchain: string | null;
 	restored: number | null;
-	intent: string | null;
 	base: string | null;
 };
 
@@ -160,8 +144,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 	#activity: ThreadActivity = idle();
 	#published = 0;
 	#publishing?: ReturnType<typeof setTimeout>;
-	#verifying = false;
-	#assessment?: Promise<Assessment>;
 	#capturing = false;
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -182,16 +164,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				error TEXT,
 				toolchain TEXT,
 				restored INTEGER,
-				intent TEXT,
 				base TEXT
-			);
-			CREATE TABLE IF NOT EXISTS reviews (
-				round INTEGER PRIMARY KEY,
-				verdict TEXT NOT NULL,
-				checks TEXT NOT NULL,
-				findings TEXT NOT NULL,
-				head TEXT,
-				intent TEXT
 			);
 			CREATE TABLE IF NOT EXISTS conversation (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -230,8 +203,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		proposal,
 		intentVersion
 	}: ConverseInput) {
-		if (this.#capturing || this.#meta('verifierInput'))
-			throw new Error('This run cannot accept messages now');
+		if (this.#capturing) throw new Error('This run cannot accept messages now');
 		if (
 			this.#attempt() &&
 			((proposal && proposal !== this.#proposal()) ||
@@ -253,10 +225,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		const attempt = this.#attempt();
-		if (attempt && !isActive(attempt.status)) {
-			this.#setMeta('cycle', String(this.#reviewCount()));
-			this.#setStatus('queued');
-		}
+		if (attempt && !isActive(attempt.status)) this.#setStatus('queued');
 		const current = this.#attempt();
 		if (!current || current.status === 'queued' || !isActive(current.status)) {
 			await this.ctx.storage.setAlarm(Date.now());
@@ -266,20 +235,19 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async start(input: AttemptInput) {
 		const serialized = JSON.stringify(input);
 		if (this.#meta('startInput') === serialized) return;
-		if (this.#meta('startInput') || this.#attempt() || this.#meta('verifierInput'))
+		if (this.#meta('startInput') || this.#attempt())
 			throw new Error('This run has already started');
-		const { task, mode, machine, repo, intent, proposal, intentVersion } = input;
+		const { task, mode, machine, repo, proposal, intentVersion } = input;
 		this.#setMeta('startInput', serialized);
 		if (proposal) this.#setMeta('proposal', proposal);
 		if (intentVersion) this.#setMeta('intentVersion', intentVersion);
 		this.#setMeta('repo', repo);
 		if (machine) this.#setMeta('machine', machine);
 		this.#sql.exec(
-			`INSERT INTO attempt (id, task, mode, repo, status, intent) VALUES (1, ?, ?, ?, 'queued', ?)`,
+			`INSERT INTO attempt (id, task, mode, repo, status) VALUES (1, ?, ?, ?, 'queued')`,
 			task,
 			mode,
-			repo,
-			intent ? JSON.stringify(intent) : null
+			repo
 		);
 		await this.ctx.storage.setAlarm(Date.now());
 	}
@@ -311,115 +279,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		} finally {
 			this.#capturing = false;
 		}
-	}
-
-	async assessCandidate(input: {
-		repo: string;
-		proposal: string;
-		intentVersion: string;
-		intent: Intent;
-		candidate: Candidate;
-		mode: Mode;
-		machine: Machine;
-	}): Promise<Assessment> {
-		const key = JSON.stringify(input);
-		if (this.#attempt() || this.#meta('repo'))
-			throw new Error('Assessment requires an independent verifier');
-		const previous = this.#meta('verifierInput');
-		if (previous && previous !== key)
-			throw new Error('This verifier belongs to a different candidate or intent');
-		const completed = this.#meta('assessment');
-		if (completed) return JSON.parse(completed) as Assessment;
-		if (this.#assessment) return this.#assessment;
-		this.#setMeta('verifierInput', key);
-		this.#setMeta('machine', input.machine);
-		this.#verifying = true;
-		this.#assessment = this.#assess(input);
-		try {
-			return await this.#assessment;
-		} finally {
-			this.#assessment = undefined;
-			this.#verifying = false;
-		}
-	}
-
-	async #assess(input: {
-		repo: string;
-		proposal: string;
-		intentVersion: string;
-		intent: Intent;
-		candidate: Candidate;
-		mode: Mode;
-		machine: Machine;
-	}): Promise<Assessment> {
-		const { candidate } = input;
-		if (![candidate.sha, candidate.expectedHead].every((sha) => /^[0-9a-f]{40}$/.test(sha))) {
-			throw new Error('Invalid candidate commit');
-		}
-		if (this.ctx.container?.running) await this.ctx.container.destroy();
-		using repository = await this.env.ARTIFACTS.get(candidate.repository);
-		const info = await repository.info();
-		const { plaintext: token } = await repository.createToken('read', 60 * 60);
-		const fetch = await this.#sandbox(
-			{ repo: input.repo, remote: info.remote, branch: candidate.branch },
-			token
-		);
-		const workspace = sandboxWorkspace(fetch);
-		for (const service of await workspace.services()) await workspace.stopService(service.name);
-		await workspace.clone({ remote: info.remote, branch: candidate.branch });
-		const tools = this.#imageTools(sandboxTools(fetch, readOnlyTools), input.repo, input.proposal);
-		const command = (command: string) =>
-			tools.execute({ id: 'verify', name: 'run', arguments: JSON.stringify({ command }) });
-		const pinned = await command(
-			`git checkout --detach ${candidate.sha} && git reset --hard ${candidate.sha} && git clean -fdx`
-		);
-		if (typeof pinned !== 'string' || !pinned.startsWith('exit code 0\n'))
-			throw new Error('Could not pin the candidate workspace');
-		if ((await this.#head(fetch)) !== candidate.sha)
-			throw new Error('Candidate HEAD does not match');
-		await workspace.toolchain();
-		await workspace.hook('setup');
-		await workspace.hook('resume');
-		const guidance = await repositoryGuidance(tools);
-		const skills = await this.#skills(fetch, [verificationSkill, servicesSkill, toolchainsSkill]);
-		const { model, effort } = reviewers[input.mode];
-		const { review } = await reviewIntent({
-			model: openaiModel({
-				resolveImage: (url) => this.#resolveImage(input.repo, url),
-				gateway: { run: (request) => this.env.MODELS.run(request) },
-				model,
-				effort,
-				sessionId: `${this.ctx.id.name}/assessment`,
-				metadata: { thread: input.proposal, mode: input.mode, task: 'review' }
-			}),
-			tools: guidance.tools,
-			guidance: guidance.instructions,
-			skills,
-			intent: input.intent,
-			base: candidate.expectedHead,
-			summary:
-				'Assess this exact integration candidate. Do not repair it. Your review is model judgment, not trusted execution proof or authorization.'
-		});
-		const clean = await command(
-			'status=$(git status --porcelain --untracked-files=all) && test -z "$status" && echo REGIT_CLEAN'
-		);
-		if (
-			(await this.#head(fetch)) !== candidate.sha ||
-			typeof clean !== 'string' ||
-			!clean.split('\n').includes('REGIT_CLEAN')
-		) {
-			throw new Error('The reviewer mutated the candidate workspace');
-		}
-		const assessment: Assessment = {
-			id: crypto.randomUUID(),
-			revision: candidate.sha,
-			intent: input.intentVersion,
-			producer: this.ctx.id.name!,
-			...review,
-			at: Date.now()
-		};
-		this.#setMeta('assessment', JSON.stringify(assessment));
-		return assessment;
 	}
 
 	snapshot(): AttemptSnapshot | null {
@@ -636,12 +495,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #runAttempt(attempt: AttemptRow) {
-		const resumingReview = attempt.status === 'reviewing';
-		if (!resumingReview) this.#setStatus('running');
+		this.#setStatus('running');
 
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
-		if (!resumingReview) this.#think('Starting');
+		this.#think('Starting');
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
@@ -661,7 +519,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 				}
 				this.#sql.exec('UPDATE attempt SET base = ?', attempt.base);
 			}
-			if (resumingReview) return await this.#review(attempt, fetch);
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
@@ -744,12 +601,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			if (this.#attempt()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
-			if (next.value === 'finished' && attempt.intent) await this.#review(attempt, fetch);
+			if (next.value === 'finished') await this.#settle(attempt);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
 			this.#clearActivity();
 			const status = this.#attempt()?.status;
-			if (status !== 'running' && status !== 'reviewing') return;
+			if (status !== 'running') return;
 			// TODO: retry transient model and sandbox failures instead of failing the attempt
 			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
 		} finally {
@@ -757,74 +614,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 
-	async #review(attempt: AttemptRow, fetch: Fetch) {
-		const head = await this.#head(fetch);
-		const [last] = this.#sql
-			.exec<{ head: string | null; intent: string | null }>(
-				'SELECT head, intent FROM reviews ORDER BY round DESC LIMIT 1'
-			)
-			.toArray();
-		if (last && head && last.head === head && last.intent === attempt.intent) {
-			return await this.#settle(attempt, null);
-		}
-
-		this.#setStatus('reviewing');
-		await this.#report(attempt.repo, { type: 'status', status: 'reviewing', error: null });
-
-		const intent = JSON.parse(attempt.intent!) as Intent;
-		const total = this.#reviewCount() + 1;
-		const round = total - Number(this.#meta('cycle') ?? 0);
-		const { model, effort } = reviewers[attempt.mode];
-		const thread = this.ctx.id.name ?? this.ctx.id.toString();
-		const guidance = await repositoryGuidance(this.#tools(fetch, readOnlyTools));
-		const skills = await this.#skills(fetch, [verificationSkill, servicesSkill, toolchainsSkill]);
-		const { review, usage } = await reviewIntent({
-			model: openaiModel({
-				resolveImage: (url) => this.#resolveImage(attempt.repo, url),
-				gateway: { run: (request) => this.env.MODELS.run(request) },
-				model,
-				effort,
-				sessionId: `${thread}/review`,
-				metadata: { thread, mode: attempt.mode, task: 'review' }
-			}),
-			tools: guidance.tools,
-			guidance: guidance.instructions,
-			skills,
-			intent,
-			base: attempt.base,
-			summary: this.#summary(),
-			signal: this.#controller?.signal
-		});
-		this.#sql.exec(
-			'INSERT INTO reviews (round, verdict, checks, findings, head, intent) VALUES (?, ?, ?, ?, ?, ?)',
-			total,
-			review.verdict,
-			JSON.stringify(review.checks),
-			JSON.stringify(review.findings),
-			head,
-			attempt.intent
-		);
-		await this.#report(attempt.repo, {
-			type: 'review',
-			round,
-			verdict: review.verdict,
-			checks: review.checks.map((check) => check.state),
-			model,
-			usage
-		});
-
-		const sendBack = review.verdict === 'fail' && round < maxReviewRounds;
-		await this.#settle(attempt, sendBack ? reviewFeedback(intent, review) : null);
-	}
-
-	async #settle(attempt: AttemptRow, feedback: string | null) {
+	async #settle(attempt: AttemptRow) {
 		const queued = this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0;
-		if (!feedback && !queued) return await this.#finish(attempt, 'finished');
-		if (feedback) {
-			this.#saveStep({ turns: [{ role: 'user', text: feedback }] });
-		} else {
-			this.#setMeta('cycle', String(this.#reviewCount()));
-		}
+		if (!queued) return await this.#finish(attempt, 'finished');
 		this.#setStatus('running');
 		await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
 		await this.ctx.storage.setAlarm(Date.now());
@@ -1004,7 +796,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	#publish(now = false) {
-		if (this.#verifying || this.#meta('verifierInput')) return;
 		const wait = this.#published + publishIntervalMs - Date.now();
 		if (!now && wait > 0) {
 			this.#publishing ??= setTimeout(() => this.#publish(true), wait);
@@ -1076,26 +867,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #head(fetch: Fetch) {
-		const tools = this.#verifying ? sandboxTools(fetch, readOnlyTools) : this.#tools(fetch);
-		const output = await tools.execute({
+		const output = await this.#tools(fetch).execute({
 			id: 'base',
 			name: 'run',
 			arguments: JSON.stringify({ command: 'git rev-parse HEAD' })
 		});
 		return (typeof output === 'string' ? output : output.text).split('\n')[1]?.trim() || null;
-	}
-
-	#summary() {
-		const steps = this.#sql
-			.exec<{ turns: string }>('SELECT turns FROM steps ORDER BY seq DESC')
-			.toArray();
-		for (const row of steps) {
-			const reply = (JSON.parse(row.turns) as Turn[]).findLast(
-				(turn) => turn.role === 'assistant' && turn.text.trim()
-			);
-			if (reply?.role === 'assistant') return reply.text.trim();
-		}
-		return '';
 	}
 
 	async #finish(attempt: AttemptRow, status: AttemptStatus, error: string | null = null) {
@@ -1105,7 +882,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #report(repo: string, update: AttemptUpdate) {
-		if (this.#verifying || this.#meta('verifierInput')) return;
 		try {
 			await this.env.REPOS.getByName(repo).attemptUpdated(
 				this.#proposal(),
@@ -1123,10 +899,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	#proposal() {
 		return this.#meta('proposal') ?? this.ctx.id.name!;
-	}
-
-	#reviewCount() {
-		return this.#sql.exec('SELECT round FROM reviews').toArray().length;
 	}
 
 	#meta(key: string) {
@@ -1270,9 +1042,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 		const image = container.images.sandbox!;
 		const forRepo = eq(toolchainSnapshots.repo, target.repo);
-		const [cached] = this.#verifying
-			? []
-			: await db.select().from(toolchainSnapshots).where(forRepo);
+		const [cached] = await db.select().from(toolchainSnapshots).where(forRepo);
 		const disk = machines[this.#machine()].diskGb * 1e9;
 		const fits = (cached?.size ?? 0) + snapshotHeadroomBytes <= disk;
 		let restored = cached?.image === image && fits ? cached : null;
@@ -1294,7 +1064,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 
 		const { preserved } = await this.#cloneWorkspace(target, fetch, !!restored);
-		if (this.#verifying) return fetch;
 		const tools = await this.#stage(
 			'Install toolchains',
 			() => workspace.toolchain(),
@@ -1390,12 +1159,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#activity.startup = { cold: false, stages: [] };
 			try {
 				await this.#cloneWorkspace(target, fetch);
-				if (!this.#verifying) {
-					await this.#stage('Install toolchains', () => sandboxWorkspace(fetch).toolchain());
-					await this.#hooks(fetch);
-					await this.#restoreServices(fetch);
-					this.#setMeta('workspace', target.remote);
-				}
+				await this.#stage('Install toolchains', () => sandboxWorkspace(fetch).toolchain());
+				await this.#hooks(fetch);
+				await this.#restoreServices(fetch);
+				this.#setMeta('workspace', target.remote);
 			} finally {
 				await this.#startupDone();
 			}
@@ -1450,7 +1217,7 @@ function plain(response: Response) {
 }
 
 function isActive(status: AttemptStatus) {
-	return ['queued', 'running', 'reviewing'].includes(status);
+	return ['queued', 'running'].includes(status);
 }
 
 async function waitUntilHealthy(fetch: Fetch) {

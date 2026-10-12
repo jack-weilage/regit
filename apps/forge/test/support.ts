@@ -107,24 +107,6 @@ export async function setup({ containers = false } = {}) {
 		return worker.getEnv().then((env) => env.ATTEMPTS.getByName(thread).start(input));
 	}
 
-	function submitReview(verdict: string, states: string[]) {
-		return [
-			{
-				type: 'response.output_item.done',
-				item: {
-					type: 'function_call',
-					call_id: 'review',
-					name: 'submit_review',
-					arguments: JSON.stringify({
-						checks: states.map((state) => ({ state, evidence: 'Checked notes.md' })),
-						findings: verdict === 'fail' ? ['The title is missing.'] : [],
-						verdict
-					})
-				}
-			}
-		];
-	}
-
 	async function settled(thread: string, timeoutMs = 120_000) {
 		const env = await worker.getEnv();
 		let snapshot = null;
@@ -161,7 +143,6 @@ export async function setup({ containers = false } = {}) {
 		seed,
 		commit,
 		start,
-		submitReview,
 		settled
 	};
 }

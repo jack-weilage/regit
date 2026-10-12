@@ -5,7 +5,7 @@ import { setup } from './support.ts';
 
 type ThreadDetail = CoreThreadDetail & { control: ProposalControl };
 
-const { dir, worker, seed, commit, sh, idle, script, submitReview, modelRequests } = await setup();
+const { dir, worker, seed, commit, sh, idle, script } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
 const intent = {
 	headline: 'docs: add a title',
@@ -55,8 +55,7 @@ async function finishedRun(name: string) {
 	await script([
 		say('Proposed.'),
 		tool('write_file', { path: 'notes.md', content: '# Notes\n' }),
-		say('Done.'),
-		submitReview('pass', ['met'])
+		say('Done.')
 	]);
 	const repo = env.REPOS.getByName(name);
 	const opened = await repo.openThread({
@@ -79,8 +78,6 @@ async function finishedRun(name: string) {
 
 async function candidate(name: string) {
 	const run = await finishedRun(name);
-	await idle();
-	await script([submitReview('pass', ['met'])]);
 	await run.repo.ship(run.id, {
 		by: owner,
 		email: 'sam@example.com',
@@ -97,36 +94,7 @@ async function candidate(name: string) {
 	return { ...run, ready: detail, promotion };
 }
 
-test('verification prepares the pinned candidate rather than the branch tip', async () => {
-	const name = 'candidate-hooks';
-	const work = await seed(name, {
-		'notes.md': '# Notes\n',
-		'.agents/setup': 'echo candidate-setup > .git/prepared\n',
-		'.agents/resume':
-			'test "$(cat .git/prepared)" = candidate-setup\necho resumed >> .git/prepared\n'
-	});
-	const sha = sh(work, 'rev-parse', 'HEAD');
-	await commit(work, { '.agents/setup': 'echo wrong-tip >&2\nexit 9\n' }, 'Advance tip');
-	sh(work, 'push', join(dir, `${name}.git`), 'main');
-	await idle();
-	await script([tool('run', { command: 'cat .git/prepared' }), submitReview('pass', ['met'])]);
-	const env = await worker.getEnv();
-	const result = await env.ATTEMPTS.getByName('verify-hooks').assessCandidate({
-		repo: name,
-		proposal: 'hooks',
-		intentVersion: 'hooks-v1',
-		intent,
-		candidate: { repository: name, branch: 'main', sha, expectedHead: sha },
-		mode: 'small',
-		machine: 'standard-1'
-	});
-	expect(result).toMatchObject({ revision: sha, verdict: 'pass' });
-	expect(JSON.stringify((await modelRequests()).at(-1)!.query)).toContain(
-		'exit code 0\\ncandidate-setup\\nresumed'
-	);
-});
-
-test('only an owner can queue and approve the exact isolated, assessed candidate', async () => {
+test('only an owner can queue and approve the exact isolated candidate', async () => {
 	const { repo, id, detail, canonical, original } = await finishedRun('accept-exact');
 	const input = {
 		by: owner,
@@ -143,8 +111,6 @@ test('only an owner can queue and approve the exact isolated, assessed candidate
 		await expect(repo.ship(id, { ...input, by })).rejects.toThrow();
 	}
 	expect((await repo.thread(id))!.control!.promotions).toEqual([]);
-	await idle();
-	await script([submitReview('pass', ['met'])]);
 	await repo.ship(id, input);
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
 	const ready = await until(
@@ -158,12 +124,6 @@ test('only an owner can queue and approve the exact isolated, assessed candidate
 	expect(revision).toMatchObject({
 		run: detail.control.runs[0]!.id,
 		intent: ready.control.acceptedIntent!.id
-	});
-	expect(promotion.assessment).toMatchObject({
-		revision: candidate.sha,
-		intent: promotion.intent,
-		producer: `verify-${promotion.id}`,
-		verdict: 'pass'
 	});
 	expect(candidate.expectedHead).toBe(original);
 	expect(candidate.repository).not.toBe(revision.repository);
@@ -196,13 +156,8 @@ test('only an owner can queue and approve the exact isolated, assessed candidate
 		promotion: promotion.id,
 		source: revision,
 		intent: ready.control.acceptedIntent,
-		assessment: promotion.assessment,
 		authorizedBy: owner
 	});
-	const reviewRequests = (await modelRequests()).filter(
-		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'review'
-	);
-	expect(reviewRequests).toHaveLength(1);
 });
 
 test('accepting changed intent invalidates the pending candidate and its approval', async () => {
@@ -302,11 +257,7 @@ test('dependencies wait for exact publication and changed intent invalidates pin
 		{ pin, status: 'ready', published, reason: expect.any(String) }
 	]);
 	await idle();
-	await script([
-		tool('write_file', { path: 'footer.md', content: 'A footer\n' }),
-		say('Done.'),
-		submitReview('pass', ['met'])
-	]);
+	await script([tool('write_file', { path: 'footer.md', content: 'A footer\n' }), say('Done.')]);
 	await repo.start(downstream, owner);
 	const finished = await until(repo, downstream, (detail) => detail.summary.status === 'needs-you');
 	const run = finished.control.runs.at(-1)!;
@@ -320,8 +271,6 @@ test('dependencies wait for exact publication and changed intent invalidates pin
 	const transitive = await draft('Follow the footer.');
 	await repo.pinDependency(transitive, downstream, owner);
 	expect((await repo.thread(transitive))!.control!.dependencies![0]!.status).toBe('waiting');
-	await idle();
-	await script([submitReview('pass', ['met'])]);
 	await repo.ship(downstream, {
 		by: owner,
 		email: 'sam@example.com',
@@ -360,8 +309,7 @@ test('new runs are independent from proposals and ignore callbacks from older ru
 	await idle();
 	await script([
 		tool('write_file', { path: 'notes.md', content: '# Another title\n' }),
-		say('Done again.'),
-		submitReview('pass', ['met'])
+		say('Done again.')
 	]);
 	await repo.start(id, owner);
 	const second = await until(repo, id, (detail) => detail.summary.status === 'needs-you');

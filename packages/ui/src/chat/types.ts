@@ -18,8 +18,7 @@ export interface Mentionable {
 	deleted?: boolean;
 }
 
-export type ThreadStatus =
-	'draft' | 'running' | 'reviewing' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
+export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
 export interface SimilarThread extends Mentionable {
 	kind: 'thread';

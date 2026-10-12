@@ -99,7 +99,6 @@
 	args={{
 		...progress,
 		status: 'working',
-		checks: ['pending', 'pending', 'pending'],
 		note: 'The agent is working'
 	}}
 	play={async ({ canvas }) => {
@@ -108,35 +107,10 @@
 />
 
 <Story
-	name="Reviewing"
-	args={{
-		...progress,
-		status: 'reviewing',
-		checks: ['met', 'checking', 'pending'],
-		note: 'Reviewing against the intent'
-	}}
-/>
-
-<Story
-	name="Sent back"
-	args={{
-		...progress,
-		status: 'working',
-		checks: ['met', 'unmet', 'met'],
-		note: 'Round 2 of 3 · fixing 1 gap'
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByText('Members load as you scroll')).toHaveTextContent('Not met');
-	}}
-/>
-
-<Story
 	name="Needs you"
 	args={{
 		...progress,
-		status: 'needs-you',
-		checks: ['met', 'met', 'unverified'],
-		note: "1 item couldn't be checked"
+		status: 'needs-you'
 	}}
 />
 
@@ -145,8 +119,7 @@
 	args={{
 		...progress,
 		status: 'ready',
-		checks: ['met', 'met', 'met'],
-		note: 'Model reviewed · ready to prepare candidate',
+		note: 'Exact candidate awaits owner approval',
 		changes: { files: 4, additions: 23, deletions: 8 },
 		onchanges: fn()
 	}}
@@ -161,7 +134,6 @@
 	args={{
 		...progress,
 		status: 'shipping',
-		checks: ['met', 'met', 'met'],
 		note: 'Preparing candidate or publishing approved SHA',
 		changes: { files: 4, additions: 23, deletions: 8 }
 	}}
@@ -172,7 +144,6 @@
 	args={{
 		...progress,
 		status: 'shipped',
-		checks: ['met', 'met', 'met'],
 		note: 'Shipped to main in a1b2c3d',
 		changes: { files: 4, additions: 23, deletions: 8 }
 	}}
@@ -202,13 +173,7 @@
 			<ChatGroup author={{ name: 'Sam Rivera', kind: 'person' }}>
 				<ChatMessage>The settings page takes forever to load for big orgs.</ChatMessage>
 			</ChatGroup>
-			<ChatIntent
-				{...progress}
-				sticky
-				status="working"
-				checks={['met', 'unmet', 'met']}
-				note="Round 2 of 3 · fixing 1 gap"
-			/>
+			<ChatIntent {...progress} sticky status="working" note="The agent is working" />
 			{#each Array.from({ length: 12 }, (_, index) => index) as index (index)}
 				<ChatGroup author={{ name: 'ReGit', kind: 'agent' }}>
 					<ChatMessage

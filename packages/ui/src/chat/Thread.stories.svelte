@@ -99,7 +99,6 @@
 		acceptedIntent: null,
 		runs: [],
 		revisions: [],
-		assessments: [],
 		promotions: []
 	});
 	let intent = $derived(entries.findLast((entry) => entry.type === 'intent')!.intent);
@@ -199,9 +198,7 @@
 							? 'Shipped in a1b2c3d'
 							: control.promotions.length
 								? 'Exact candidate awaits owner approval'
-								: started
-									? 'Model reviewed · ready to prepare candidate'
-									: undefined}
+								: undefined}
 					/>
 				{:else if block.type === 'handoff'}
 					{#if block.outcome === 'dismissed'}

@@ -15,14 +15,7 @@ export type Machine = keyof typeof machines;
 
 export const defaultMachine: Machine = 'standard-1';
 
-export type ThreadStatus =
-	'draft' | 'running' | 'reviewing' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
-
-export type ReviewVerdict = 'pass' | 'fail' | 'needs-human';
-
-export type CheckVerdict = 'met' | 'unmet' | 'unverified';
-
-export const maxReviewRounds = 3;
+export type ThreadStatus = 'draft' | 'running' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
 export interface Author {
 	id?: string;
@@ -68,14 +61,6 @@ export interface ThreadActivity {
 }
 
 export type Entry =
-	| {
-			type: 'review';
-			id: string;
-			at: number;
-			round: number;
-			verdict: ReviewVerdict;
-			checks: CheckVerdict[];
-	  }
 	| {
 			type: 'message';
 			id: string;
@@ -132,7 +117,7 @@ export interface ShipInput {
 export const threadPurgeDelayMs = 7 * 24 * 60 * 60 * 1000;
 
 export interface UsageRow {
-	task: 'conversation' | 'attempt' | 'review' | 'search';
+	task: 'conversation' | 'attempt' | 'search';
 	model: string;
 	tokens: number;
 	cost: number | null;

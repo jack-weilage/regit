@@ -28,8 +28,7 @@ export {
 export { askThreads, askThreadsTools } from './search.ts';
 export { combineTools } from './tools.ts';
 export { runAgent, type AgentOutcome } from './loop.ts';
-export { modes, reviewers, searcher, type Mode } from './modes.ts';
-export { reviewFeedback, reviewIntent, type CheckVerdict, type Review } from './review.ts';
+export { modes, searcher, type Mode } from './modes.ts';
 export { cost, models } from './pricing.ts';
 export type * from './types.ts';
 export * from './openai/index.ts';

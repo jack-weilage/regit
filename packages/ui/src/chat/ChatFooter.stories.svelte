@@ -21,7 +21,7 @@
 			usage: [
 				{ task: 'Coding', model: 'kimi-k2.7-code', tokens: 980_000, cost: 0.71 },
 				{ task: 'Search', model: 'qwen3-embedding', tokens: 160_000, cost: 0.02 },
-				{ task: 'Review', model: 'clef', tokens: 60_000, cost: 0.11 }
+				{ task: 'Conversation', model: 'clef', tokens: 60_000, cost: 0.11 }
 			]
 		}
 	});

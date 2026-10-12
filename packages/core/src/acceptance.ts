@@ -1,4 +1,4 @@
-import type { Author, Intent, Mode, Machine, ReviewVerdict, CheckVerdict } from './threads.ts';
+import type { Author, Intent, Mode, Machine } from './threads.ts';
 
 export interface DependencyPin {
 	proposal: string;
@@ -45,17 +45,6 @@ export interface Revision {
 	at: number;
 }
 
-export interface Assessment {
-	id: string;
-	revision: string;
-	intent: string;
-	producer: string;
-	verdict: ReviewVerdict;
-	checks: { state: CheckVerdict; evidence: string }[];
-	findings: string[];
-	at: number;
-}
-
 export interface Candidate {
 	repository: string;
 	branch: string;
@@ -73,17 +62,8 @@ export interface Promotion {
 	email: string;
 	title: string;
 	body: string;
-	status:
-		| 'queued'
-		| 'preparing'
-		| 'reviewing'
-		| 'ready'
-		| 'publishing'
-		| 'shipped'
-		| 'failed'
-		| 'cancelled';
+	status: 'queued' | 'preparing' | 'ready' | 'publishing' | 'shipped' | 'failed' | 'cancelled';
 	candidate: Candidate | null;
-	assessment: Assessment | null;
 	error: string | null;
 	notesPublished: boolean;
 	at: number;
@@ -94,11 +74,9 @@ export interface ProposalControl {
 	dependencies?: DependencyState[];
 	runs: RunRecord[];
 	revisions: Revision[];
-	assessments: Assessment[];
 	promotions: Promotion[];
 }
 
-// Assessment is model judgment, not a trusted executable check or authorization.
 export function promotionProblem(
 	promotion: Promotion,
 	accepted: AcceptedIntent | null,
@@ -108,9 +86,5 @@ export function promotionProblem(
 	if (!revision || revision.intent !== accepted.id)
 		return 'The revision does not implement the accepted intent';
 	if (!promotion.candidate) return 'No integration candidate exists';
-	if (!promotion.assessment || promotion.assessment.revision !== promotion.candidate.sha)
-		return 'The exact integration candidate has not been assessed';
-	if (promotion.assessment.intent !== accepted.id)
-		return 'The assessment covers a different intent';
 	return null;
 }

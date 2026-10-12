@@ -19,8 +19,7 @@ const sourceSpecs: ToolSpec[] = [
 	},
 	{
 		name: 'read_thread',
-		description:
-			"Read a thread's intent, latest review, changed files, recent activity and recent messages.",
+		description: "Read a thread's intent, changed files, recent activity and recent messages.",
 		parameters: { type: 'object', properties: { id }, required: ['id'] }
 	},
 	{

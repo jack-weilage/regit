@@ -33,5 +33,5 @@
 </Story>
 
 <Story name="Without a timer" asChild>
-	<ChatActivity>ReGit is reviewing the work</ChatActivity>
+	<ChatActivity>ReGit is thinking</ChatActivity>
 </Story>

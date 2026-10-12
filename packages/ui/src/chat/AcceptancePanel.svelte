@@ -3,7 +3,7 @@
 	import StatusIcon from '../StatusIcon.svelte';
 	import Markdown from './Markdown.svelte';
 	import type { StatusIconState } from './status.ts';
-	import type { Assessment, Intent, Promotion, ProposalControl, ThreadStatus } from '@regit/core';
+	import type { Intent, Promotion, ProposalControl, ThreadStatus } from '@regit/core';
 
 	let {
 		control,
@@ -43,7 +43,7 @@
 	let promotion = $derived(control?.promotions.at(-1));
 	let pending = $derived(
 		control?.promotions.some((p) =>
-			['queued', 'preparing', 'reviewing', 'ready', 'publishing'].includes(p.status)
+			['queued', 'preparing', 'ready', 'publishing'].includes(p.status)
 		) ?? false
 	);
 	let changed = $derived(
@@ -53,7 +53,6 @@
 	const states: Record<Promotion['status'], { label: string; icon: StatusIconState }> = {
 		queued: { label: 'Candidate queued', icon: 'pending' },
 		preparing: { label: 'Preparing candidate', icon: 'running' },
-		reviewing: { label: 'Assessing candidate', icon: 'reviewing' },
 		ready: { label: 'Awaiting owner approval', icon: 'attention' },
 		publishing: { label: 'Publishing approved candidate', icon: 'shipping' },
 		shipped: { label: 'Published', icon: 'passed' },
@@ -101,19 +100,14 @@
 	{:else if !control?.acceptedIntent}
 		<p class="meta">No intent has been accepted yet.</p>
 	{/if}
-	{#if promotion?.assessment}
-		{@render assessment(promotion.assessment)}
-	{:else if !promotion && control?.acceptedIntent}
+	{#if !promotion && control?.acceptedIntent}
 		<p class="meta">
-			Preparation assesses an exact commit without publishing it. A repository owner approves
+			Preparation builds one exact commit without publishing it. A repository owner approves
 			publication separately.
 		</p>
 	{/if}
 	{#if promotion?.status === 'ready'}
-		<p class="meta">
-			Owner approval publishes this exact candidate. Model judgment is not trusted executable proof
-			or authorization.
-		</p>
+		<p class="meta">Owner approval publishes this exact candidate.</p>
 	{/if}
 	{#if error || promotion?.error}<p class="error" role="alert">{error ?? promotion?.error}</p>{/if}
 
@@ -233,19 +227,10 @@
 						<summary>Candidate {previous.id} · {previous.status}</summary>
 						<div class="details-body">
 							{@render provenance(previous)}
-							{#if previous.assessment}{@render assessment(previous.assessment)}{/if}
 							{#if previous.error}<p class="error">{previous.error}</p>{/if}
 						</div>
 					</details>
 				{/each}
-				{#if control.assessments.length}
-					<details>
-						<summary>Revision model assessments</summary>
-						<div class="details-body">
-							{#each control.assessments as item (item.id)}{@render assessment(item)}{/each}
-						</div>
-					</details>
-				{/if}
 			</div>
 		</details>
 	{/if}
@@ -300,42 +285,7 @@
 			<dt>Repository</dt>
 			<dd>{item.candidate.repository} · {item.candidate.branch}</dd>
 		{/if}
-		{#if item.assessment}
-			<dt>Assessed by</dt>
-			<dd>{item.assessment.producer}</dd>
-			<dt>Assessed revision</dt>
-			<dd><code>{item.assessment.revision}</code></dd>
-			<dt>Intent</dt>
-			<dd><code>{item.assessment.intent}</code></dd>
-		{/if}
 	</dl>
-{/snippet}
-
-{#snippet assessment(item: Assessment)}
-	<div class="assessment">
-		<p class="meta">Model assessment · <strong>{item.verdict}</strong></p>
-		<ul class="checks">
-			{#each item.checks as check, index (index)}
-				<li>
-					<span class="mark" role="img" aria-label={check.state}
-						><StatusIcon
-							state={check.state === 'met'
-								? 'passed'
-								: check.state === 'unmet'
-									? 'failed'
-									: 'attention'}
-						/></span
-					><Markdown source={check.evidence} />
-				</li>
-			{/each}
-		</ul>
-		{#if item.findings.length}<ul class="findings">
-				{#each item.findings as finding, index (index)}<li><Markdown source={finding} /></li>{/each}
-			</ul>{/if}
-		{#if item.verdict !== 'pass'}<p class="warning" role="note">
-				Warning: this assessment reports {item.verdict}; approval overrides that verdict.
-			</p>{/if}
-	</div>
 {/snippet}
 
 <style>
@@ -363,10 +313,6 @@
 		font-weight: 600;
 	}
 	.heading :global(svg),
-	.mark :global(svg) {
-		--icon-size: 1em;
-		translate: 0 calc((1em - 1cap) / 2);
-	}
 	.meta,
 	.provenance {
 		color: var(--color-muted);
@@ -383,7 +329,6 @@
 		margin: 0;
 	}
 	.proposed,
-	.assessment,
 	.dependencies,
 	.details-body,
 	form {
@@ -400,30 +345,6 @@
 	}
 	summary:hover {
 		color: var(--color-fg);
-	}
-	.checks {
-		display: grid;
-		gap: var(--space-2);
-		list-style: none;
-		padding: 0;
-	}
-	.checks li {
-		display: flex;
-		align-items: baseline;
-		gap: var(--space-4);
-		padding: var(--space-4) var(--space-5);
-		border-radius: var(--radius);
-		background: var(--color-surface);
-	}
-	.mark {
-		flex: none;
-		color: var(--color-accent);
-	}
-	.mark[aria-label='unmet'] {
-		color: var(--color-danger-text);
-	}
-	.findings {
-		padding-inline-start: var(--space-7);
 	}
 	.warning {
 		padding: var(--space-4) var(--space-5);

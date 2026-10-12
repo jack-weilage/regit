@@ -1,6 +1,5 @@
 import type {
 	AcceptedIntent,
-	Assessment,
 	DependencyState,
 	Promotion,
 	ProposalControl,
@@ -15,7 +14,6 @@ export class Acceptance {
 			CREATE TABLE IF NOT EXISTS accepted_intents (id TEXT PRIMARY KEY, proposal TEXT NOT NULL, body TEXT NOT NULL);
 			CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, proposal TEXT NOT NULL, body TEXT NOT NULL);
 			CREATE TABLE IF NOT EXISTS revisions (id TEXT PRIMARY KEY, proposal TEXT NOT NULL, body TEXT NOT NULL);
-			CREATE TABLE IF NOT EXISTS assessments (id TEXT PRIMARY KEY, proposal TEXT NOT NULL, body TEXT NOT NULL);
 			CREATE TABLE IF NOT EXISTS promotions (id TEXT PRIMARY KEY, proposal TEXT NOT NULL, body TEXT NOT NULL);
 		`);
 	}
@@ -40,9 +38,6 @@ export class Acceptance {
 	}
 	putRevision(value: Revision) {
 		this.insert('revisions', value);
-	}
-	putAssessment(proposal: string, value: Assessment) {
-		this.insert('assessments', { ...value, proposal });
 	}
 	putRun(value: RunRecord) {
 		this.save('runs', value);
@@ -93,7 +88,6 @@ export class Acceptance {
 			dependencies: this.dependencies(proposal),
 			runs: this.list<RunRecord>('runs', proposal),
 			revisions: this.list<Revision>('revisions', proposal),
-			assessments: this.list<Assessment>('assessments', proposal),
 			promotions: this.list<Promotion>('promotions', proposal)
 		};
 	}

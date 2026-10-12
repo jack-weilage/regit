@@ -15,8 +15,6 @@ import {
 } from '@regit/agent';
 import type {
 	Author,
-	CheckVerdict,
-	ReviewVerdict,
 	Entry,
 	DiffFile,
 	DiffSummary,
@@ -37,7 +35,7 @@ import type {
 	UsageRow
 } from '@regit/core';
 import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
-import { promotionProblem, type Promotion, type DependencyPin } from '@regit/core';
+import { promotionProblem, type DependencyPin } from '@regit/core';
 import { canAccessRepository } from '@regit/db';
 import { db } from './db.ts';
 import { Acceptance } from './acceptance.ts';
@@ -54,15 +52,7 @@ export type AttemptUpdate =
 	| { type: 'read'; entries: string[] }
 	| { type: 'changes'; summary: DiffSummary }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
-	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
-	| {
-			type: 'review';
-			round: number;
-			verdict: ReviewVerdict;
-			checks: CheckVerdict[];
-			model: string;
-			usage: Usage[];
-	  };
+	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] };
 
 type ThreadRow = {
 	id: string;
@@ -114,9 +104,6 @@ function historyLines(entries: Entry[]) {
 			if (entry.type === 'event') return [`· ${entry.text}`];
 			if (entry.type === 'intent')
 				return [`Intent: ${entry.intent.headline} — ${entry.intent.purpose}`];
-			if (entry.type === 'review') {
-				return [`Review round ${entry.round}: ${entry.verdict} (${entry.checks.join(', ')})`];
-			}
 			if (entry.type === 'suggestion') return [`Suggested a thread: ${entry.intent.headline}`];
 			if (entry.type === 'tools') {
 				const calls = entry.calls.map((call) =>
@@ -248,7 +235,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
-		const steering = ['running', 'reviewing', 'shipping'].includes(summary.status);
+		const steering = ['running', 'shipping'].includes(summary.status);
 		const entry = this.#add(thread, {
 			type: 'message',
 			author,
@@ -282,10 +269,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		});
 		for (const p of this.#acceptance
 			.promotions()
-			.filter(
-				(p) =>
-					p.proposal === thread && ['queued', 'preparing', 'reviewing', 'ready'].includes(p.status)
-			))
+			.filter((p) => p.proposal === thread && ['queued', 'preparing', 'ready'].includes(p.status)))
 			this.#acceptance.putPromotion({
 				...p,
 				status: 'cancelled',
@@ -387,7 +371,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	#invalidateDependencies(upstream: string) {
 		for (const p of this.#acceptance.promotions()) {
-			if (!['queued', 'preparing', 'reviewing', 'ready'].includes(p.status)) continue;
+			if (!['queued', 'preparing', 'ready'].includes(p.status)) continue;
 			if (!this.#acceptance.dependencies(p.proposal).some((d) => d.status !== 'ready')) continue;
 			this.#acceptance.putPromotion({
 				...p,
@@ -435,8 +419,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				task: describeTask(accepted.intent, this.#conversation(thread)),
 				mode: summary.mode,
 				machine: summary.machine,
-				repo: this.#repo(),
-				intent: accepted.intent
+				repo: this.#repo()
 			})
 		);
 		this.#add(thread, { type: 'event', text: `Started run ${run.id.slice(0, 8)}` });
@@ -448,12 +431,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#active(thread);
 		this.#cancelPromotions(thread);
 		if (summary.status === 'discarded') return;
-		const reopen =
-			summary.status === 'running' || summary.status === 'reviewing' ? 'needs-you' : summary.status;
+		const reopen = summary.status === 'running' ? 'needs-you' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
-		if (summary.status === 'running' || summary.status === 'reviewing') {
+		if (summary.status === 'running') {
 			await this.#executor(thread).cancel();
 		}
 	}
@@ -483,7 +465,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		this.#touch(thread);
 		await this.#schedulePurge();
-		if (summary.status === 'running' || summary.status === 'reviewing') {
+		if (summary.status === 'running') {
 			await this.#executor(thread).cancel();
 		}
 	}
@@ -501,7 +483,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			});
 		for (const row of pending) this.#markRead(thread, `e${row.seq}`);
 		this.#add(thread, { type: 'event', text: `Stopped by ${by.name}` });
-		if (['running', 'reviewing', 'shipping'].includes(summary.status)) {
+		if (['running', 'shipping'].includes(summary.status)) {
 			this.#setStatus(thread, 'needs-you');
 		}
 	}
@@ -586,7 +568,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const sender = this.#active(from);
 		const recipient = this.#summary(to);
 		if (!recipient || recipient.deleted) throw new Error(`There is no thread ${to}`);
-		const steering = ['running', 'reviewing', 'shipping'].includes(recipient.status);
+		const steering = ['running', 'shipping'].includes(recipient.status);
 		if (!steering && recipient.status !== 'draft') {
 			throw new Error(
 				`Thread ${to} is ${recipient.status} and waiting for a person. Tell your person instead.`
@@ -628,19 +610,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const entries = this.#entries(id);
 		const history = historyLines(entries);
 		const intent = entries.findLast((entry) => entry.type === 'intent');
-		const review = entries.findLast((entry) => entry.type === 'review');
 		const files = await this.changes(id).catch(() => null);
 		const running = this.#services(id).filter((service) => service.status === 'running');
 		const lines = [`${id} · ${summary.status} · ${summary.headline || 'New thread'}`];
 		if (intent?.type === 'intent') {
 			lines.push(`Intent: ${intent.intent.purpose}`, 'Done when:');
-			intent.intent.doneWhen.forEach((check, index) => {
-				const state = review?.type === 'review' ? review.checks[index] : undefined;
-				lines.push(`- ${check}${state ? ` [${state}]` : ''}`);
-			});
+			for (const check of intent.intent.doneWhen) lines.push(`- ${check}`);
 		}
-		if (review?.type === 'review')
-			lines.push(`Latest review: round ${review.round}, ${review.verdict}`);
 		if (summary.shipped) {
 			lines.push(`Shipped in ${summary.shipped.sha.slice(0, 7)} by ${summary.shipped.by}`);
 		}
@@ -889,7 +865,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			body,
 			status: 'queued',
 			candidate: null,
-			assessment: null,
 			error: null,
 			notesPublished: false,
 			at: Date.now()
@@ -942,9 +917,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			throw new Error(
 				'Publication has been admitted; its outcome must be reconciled before cancellation'
 			);
-		for (const p of pending.filter((p) =>
-			['queued', 'preparing', 'reviewing', 'ready'].includes(p.status)
-		))
+		for (const p of pending.filter((p) => ['queued', 'preparing', 'ready'].includes(p.status)))
 			this.#acceptance.putPromotion({
 				...p,
 				status: 'cancelled',
@@ -956,7 +929,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const all = this.#acceptance.promotions();
 		const p =
 			all.find((p) => p.status === 'publishing') ??
-			all.find((p) => ['queued', 'preparing', 'reviewing'].includes(p.status)) ??
+			all.find((p) => ['queued', 'preparing'].includes(p.status)) ??
 			all.find((p) => p.status === 'shipped' && !p.notesPublished);
 		if (!p) return;
 		const repo = this.#repo();
@@ -974,7 +947,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 						promotion: p.id,
 						source: revision,
 						intent: this.#acceptance.acceptedIntent(p.intent),
-						assessment: p.assessment,
 						authorizedBy: p.approvedBy
 					})
 				);
@@ -1003,30 +975,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			if (!revision || !control.acceptedIntent || control.acceptedIntent.id !== p.intent)
 				throw new Error('The accepted intent or source revision changed');
 			const requiredCommits = this.#requireDependencies(p.proposal);
-			if (!p.candidate) {
-				this.#acceptance.putPromotion({ ...p, status: 'preparing' });
-				const candidate = await publisher.prepare(repo, revision, p, requiredCommits);
-				if (current().status === 'cancelled') return;
-				this.#acceptance.putPromotion({ ...p, candidate, status: 'reviewing' });
-				return;
-			}
-			const summary = this.#active(p.proposal);
-			const assessment = await this.env.ATTEMPTS.getByName(`verify-${p.id}`).assessCandidate({
-				repo,
-				proposal: p.proposal,
-				intentVersion: p.intent,
-				intent: control.acceptedIntent.intent,
-				candidate: p.candidate,
-				mode: summary.mode,
-				machine: summary.machine
-			});
+			this.#acceptance.putPromotion({ ...p, status: 'preparing' });
+			const candidate = await publisher.prepare(repo, revision, p, requiredCommits);
 			if (current().status === 'cancelled') return;
-			this.#acceptance.putAssessment(p.proposal, assessment);
-			this.#acceptance.putPromotion({ ...p, status: 'ready', assessment, error: null });
+			this.#acceptance.putPromotion({ ...p, candidate, status: 'ready', error: null });
 			this.#setStatus(p.proposal, 'needs-you');
 			this.#add(p.proposal, {
 				type: 'event',
-				text: `Candidate ${p.candidate.sha.slice(0, 7)} assessed: ${assessment.verdict}. Review the evidence and approve this exact candidate.`
+				text: `Candidate ${candidate.sha.slice(0, 7)} is ready for approval`
 			});
 		} catch (error) {
 			if (current().status === 'cancelled') return;
@@ -1081,12 +1037,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#touch(thread);
 			return;
 		}
-		if (update.type === 'review') {
-			for (const usage of update.usage) this.#recordUsage(thread, 'review', update.model, usage);
-			const { round, verdict, checks } = update;
-			this.#add(thread, { type: 'review', round, verdict, checks });
-			return;
-		}
 		if (update.type === 'read') {
 			for (const id of update.entries) this.#markRead(thread, id);
 			return;
@@ -1133,12 +1083,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			failed: ['needs-you', `The attempt failed: ${update.error}`],
 			cancelled: ['discarded', 'The attempt was cancelled']
 		};
-		if (update.status === 'reviewing' || update.status === 'running') {
-			if (['running', 'reviewing'].includes(summary.status)) {
-				this.#setStatus(thread, update.status);
-			}
-			return;
-		}
 		const outcome = outcomes[update.status];
 		if (!outcome) return;
 		this.#setActivity(thread, null);
@@ -1374,7 +1318,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.promotions()
 			.some(
 				(p) =>
-					['queued', 'preparing', 'reviewing', 'publishing'].includes(p.status) ||
+					['queued', 'preparing', 'publishing'].includes(p.status) ||
 					(p.status === 'shipped' && !p.notesPublished)
 			);
 		if (pending || this.#sql.exec('SELECT 1 FROM run_dispatch LIMIT 1').toArray().length)
