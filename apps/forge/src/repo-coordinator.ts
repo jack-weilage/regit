@@ -235,14 +235,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
-		const steering = ['running', 'shipping'].includes(summary.status);
+		const steering = summary.status === 'running';
 		const entry = this.#add(thread, {
 			type: 'message',
 			author,
 			text,
 			...(steering && { steering: { read: false } })
 		});
-		if (steering || ['draft', 'needs-you', 'shipped'].includes(summary.status)) {
+		if (steering || ['draft', 'needs-you', 'shipping', 'shipped'].includes(summary.status)) {
 			await this.#converse(thread, author, text, entry);
 		}
 		if (
@@ -431,7 +431,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#active(thread);
 		this.#cancelPromotions(thread);
 		if (summary.status === 'discarded') return;
-		const reopen = summary.status === 'running' ? 'needs-you' : summary.status;
+		const reopen = ['running', 'shipping'].includes(summary.status) ? 'needs-you' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
@@ -568,7 +568,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const sender = this.#active(from);
 		const recipient = this.#summary(to);
 		if (!recipient || recipient.deleted) throw new Error(`There is no thread ${to}`);
-		const steering = ['running', 'shipping'].includes(recipient.status);
+		const steering = recipient.status === 'running';
 		if (!steering && recipient.status !== 'draft') {
 			throw new Error(
 				`Thread ${to} is ${recipient.status} and waiting for a person. Tell your person instead.`
@@ -1013,7 +1013,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		} else if (run && (runId !== run.id || summary.status === 'shipped')) return;
 		if (!discussion && run && update.type === 'status')
 			this.#acceptance.putRun({ ...run, status: update.status });
-		if (summary.status === 'shipping' && !['usage', 'read'].includes(update.type)) return;
+		if (!discussion && summary.status === 'shipping' && !['usage', 'read'].includes(update.type))
+			return;
 		if (update.type === 'changes') {
 			this.#sql.exec(
 				'UPDATE threads SET changes = ? WHERE id = ?',
@@ -1103,7 +1104,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const { mode, machine, status } = this.#summary(thread)!;
 		const run = this.#acceptance.run(thread);
 		const intentVersion = this.#acceptance.intent(thread)?.id;
-		const discussion = run && (status === 'shipped' || run.intent !== intentVersion);
+		const discussion =
+			run && (['shipping', 'shipped'].includes(status) || run.intent !== intentVersion);
 		const [row] = this.#sql
 			.exec<Pick<ThreadRow, 'context'>>('SELECT context FROM threads WHERE id = ?', thread)
 			.toArray();

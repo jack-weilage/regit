@@ -160,6 +160,21 @@ test('only an owner can queue and approve the exact isolated candidate', async (
 	});
 });
 
+test('discarding a thread with a pending candidate cancels it and reopens as needing you', async () => {
+	const { repo, id } = await finishedRun('discard-pending');
+	await repo.ship(id, {
+		by: owner,
+		email: 'sam@example.com',
+		title: intent.headline,
+		body: intent.purpose
+	});
+	await repo.discard(id, owner);
+	await repo.reopen(id, owner);
+	const detail = (await repo.thread(id)) as ThreadDetail;
+	expect(detail.summary.status).toBe('needs-you');
+	expect(detail.control.promotions.at(-1)!.status).toBe('cancelled');
+});
+
 test('accepting changed intent invalidates the pending candidate and its approval', async () => {
 	const { repo, id, ready, promotion, canonical, original } = await candidate('accept-changed');
 	await repo.intentProposed(id, {
