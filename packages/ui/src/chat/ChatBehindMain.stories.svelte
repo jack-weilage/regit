@@ -110,10 +110,7 @@
 			<ChatGroup author={{ name: 'ReGit', kind: 'agent' }}>
 				<ChatMessage>Members now load as you scroll, and the checks pass.</ChatMessage>
 			</ChatGroup>
-			<ChatEvent
-				>Main moved: "perf(settings): page the member list" conflicts with this thread in
-				src/settings/members.ts</ChatEvent
-			>
+			<ChatEvent>Conflicts with main in src/settings/members.ts</ChatEvent>
 			<ChatBehindMain
 				commits={3}
 				sha="4b02e7a91c3d5f6e8a0b2c4d6e8f0a1b2c3d4e5f"

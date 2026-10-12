@@ -51,7 +51,7 @@ export type AttemptUpdate =
 	| { type: 'changes'; summary: DiffSummary }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
-	| { type: 'synced' };
+	| { type: 'behind'; behind: ThreadSummary['behind'] };
 
 type ThreadRow = {
 	id: string;
@@ -728,21 +728,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			: { main: after, threads: [] };
 		if (this.#meta('main') === scan.main) return;
 		this.#setMeta('main', scan.main);
-		for (const { id, behind, conflicts } of scan.threads) {
-			const was = this.#summary(id)?.behind;
-			if (was === undefined) continue;
-			this.#sql.exec(
-				'UPDATE threads SET behind = ? WHERE id = ?',
-				behind ? JSON.stringify({ commits: behind, sha: scan.main, headline, conflicts }) : null,
-				id
-			);
-			if (conflicts.length && JSON.stringify(was?.conflicts) !== JSON.stringify(conflicts))
-				this.#add(id, {
-					type: 'event',
-					text: `Main moved: "${headline}" conflicts with this thread in ${conflicts.join(', ')}`
-				});
-			this.#touch(id);
-		}
+		for (const { id, behind, conflicts } of scan.threads)
+			this.#setBehind(id, behind ? { commits: behind, sha: scan.main, headline, conflicts } : null);
+	}
+
+	#setBehind(thread: string, behind: ThreadSummary['behind']) {
+		const was = this.#summary(thread);
+		if (!was) return;
+		this.#sql.exec(
+			'UPDATE threads SET behind = ? WHERE id = ?',
+			behind && JSON.stringify(behind),
+			thread
+		);
+		const conflicts = behind?.conflicts ?? [];
+		if (conflicts.length && JSON.stringify(was.behind?.conflicts) !== JSON.stringify(conflicts))
+			this.#add(thread, {
+				type: 'event',
+				text: `Conflicts with main in ${conflicts.join(', ')}`
+			});
+		this.#touch(thread);
 	}
 
 	async approvePromotion(thread: string, id: string, by: Author) {
@@ -880,9 +884,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#touch(thread);
 			return;
 		}
-		if (update.type === 'synced') {
-			this.#sql.exec('UPDATE threads SET behind = NULL WHERE id = ?', thread);
-			this.#touch(thread);
+		if (update.type === 'behind') {
+			this.#setBehind(thread, update.behind);
 			return;
 		}
 		if (update.type === 'usage') {

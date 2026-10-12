@@ -417,7 +417,10 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 		'Checkpoint sha',
 		'ReGit: Added the title.'
 	]);
-	expect(live.filter((message) => message.type === 'entry')).toHaveLength(detail!.entries.length);
+	const liveEntries = live.flatMap((message) =>
+		message.type === 'entry' ? [message.entry.id] : []
+	);
+	expect(new Set(liveEntries).size).toBe(detail!.entries.length);
 	const activity = live.flatMap((message) =>
 		message.type === 'activity' && message.thread === opened.id ? [message.activity] : []
 	);
@@ -909,7 +912,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	});
 	expect(warned.entries.at(-1)).toMatchObject({
 		type: 'event',
-		text: 'Main moved: "Better notes" conflicts with this thread in notes.md'
+		text: 'Conflicts with main in notes.md'
 	});
 	expect((await repo.thread(clean))!.summary.behind).toMatchObject({ commits: 1, conflicts: [] });
 	await repo.landed(landing);
@@ -950,6 +953,24 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(main);
 	expect(sh(fork, 'show', 'main:notes.md')).toBe('# Notes\n\nSome better notes');
 	expect(sh(join(dir, `landing--${clean}.git`), 'rev-list', 'main')).not.toContain(main);
+
+	await idle();
+	await script([
+		writeNotes('# Other notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Rewrote the notes.' }]
+	]);
+	await repo.reply(clean, { author: sam, text: 'Rewrite the notes too.' });
+	const conflicting = await untilThread(
+		repo,
+		clean,
+		(detail) => detail.summary.behind?.conflicts.length === 1
+	);
+	expect(conflicting.summary.behind).toEqual({
+		commits: 1,
+		sha: main,
+		headline: 'Better notes',
+		conflicts: ['notes.md']
+	});
 	expect((await env.ATTEMPTS.getByName(clean).snapshot())!.status).toBe('finished');
 });
 

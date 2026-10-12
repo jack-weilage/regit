@@ -376,13 +376,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 			const pending = await this.#drain(attempt.repo);
 			if (pending.length) this.#saveStep({ turns: pending });
-			const checkedMain = !!this.#meta('sync');
-			if (checkedMain) {
+			if (this.#meta('sync')) {
 				const text = await this.#sync(attempt, fetch, fork, token);
 				if (text) this.#saveStep({ turns: [{ role: 'user', text }] });
 				else if (!pending.length) {
 					this.#clearActivity();
-					await this.#report(attempt.repo, { type: 'synced' });
+					await this.#reportBehind(attempt, fetch, fork, token);
 					return await this.#finish(attempt, 'finished');
 				}
 			}
@@ -458,8 +457,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			if (this.#agent()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
-			if (checkedMain && !(await this.#shell(fetch, 'git rev-parse -q --verify MERGE_HEAD')).ok)
-				await this.#report(attempt.repo, { type: 'synced' });
+			await this.#reportBehind(attempt, fetch, fork, token);
 			if (next.value === 'finished') await this.#settle(attempt);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
@@ -556,6 +554,32 @@ export class AttemptSandbox extends DurableObject<Env> {
 			return `ReGit: main moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
 		}
 		return `ReGit: main moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
+	}
+
+	async #reportBehind(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+		try {
+			await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
+			const commits = Number(await this.#git(fetch, 'git rev-list --count HEAD..FETCH_HEAD'));
+			let behind = null;
+			if (commits) {
+				const [sha = '', ...subject] = (
+					await this.#git(fetch, 'git log -1 --format="%H %s" FETCH_HEAD')
+				)
+					.trim()
+					.split(' ');
+				const merged = await this.#shell(
+					fetch,
+					'git merge-tree --write-tree --name-only --no-messages HEAD FETCH_HEAD'
+				);
+				const conflicts = merged.ok
+					? []
+					: merged.output.trim().split('\n').slice(1).filter(Boolean);
+				behind = { commits, sha, headline: subject.join(' '), conflicts };
+			}
+			await this.#report(attempt.repo, { type: 'behind', behind });
+		} catch (error) {
+			console.warn('Could not compare the thread with main', error);
+		}
 	}
 
 	async #fetchMain(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string, ref: string) {
