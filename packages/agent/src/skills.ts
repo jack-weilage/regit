@@ -140,7 +140,8 @@ Toolchains come from mise. The versions the repository declares (mise.toml, .too
 
 - If a command is missing, install it globally with \`mise use -g <tool>@<version>\`, for example \`mise use -g node@lts\` or \`mise use -g python@3.13\`.
 - Never edit the repository's version files to work around a missing tool; that changes the project for everyone.
-- \`mise ls --current\` shows what is installed and active.`
+- \`mise ls --current\` shows what is installed and active.
+- Docker is installed and its daemon starts on first use. Containers can't reach the internet through Docker's bridge network, so give \`docker run\` \`--network=host\` when they need it; builds already use the host network.`
 };
 
 export function mergeSkills(builtIn: Skill[], repo: Skill[]) {
