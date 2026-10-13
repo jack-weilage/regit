@@ -7,7 +7,7 @@ FROM debian:trixie-slim
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates git ripgrep sudo debianutils \
-		docker.io docker-buildx \
+		docker.io docker-cli docker-buildx fuse-overlayfs \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY --from=jdxcode/mise:2026.10.0 /usr/local/bin/mise /usr/local/bin/mise

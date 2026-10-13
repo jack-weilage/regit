@@ -2,6 +2,7 @@ import { command, getRequestEvent, query } from '$app/server';
 import { error } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import {
+	defaultDeployMachine,
 	deploySecretName,
 	machines,
 	maxDeploySecretBytes,
@@ -50,8 +51,22 @@ export const getThread = query(thread, async ({ repo, id }) =>
 
 export const getMain = query(name, async (repo) => (await coordinator(repo)).main());
 
-export const getDeploySecrets = query(name, async (repo) =>
-	(await coordinator(repo, 'owner')).deploySecrets(author())
+export const getDeploySettings = query(name, async (repo) => {
+	const secrets = await (await coordinator(repo, 'owner')).deploySecrets(author());
+	const [row] = await db()
+		.select({ machine: repos.deployMachine })
+		.from(repos)
+		.where(eq(repos.name, repo));
+	return { secrets, machine: (row?.machine ?? defaultDeployMachine) as Machine };
+});
+
+export const setDeployMachine = command(
+	v.object({ repo: name, machine: v.picklist(Object.keys(machines) as Machine[]) }),
+	async ({ repo, machine }) => {
+		await coordinator(repo, 'owner');
+		await db().update(repos).set({ deployMachine: machine }).where(eq(repos.name, repo));
+		getDeploySettings(repo).refresh();
+	}
 );
 
 export const setDeploySecret = command(
@@ -62,7 +77,7 @@ export const setDeploySecret = command(
 	}),
 	async ({ repo, name, value }) => {
 		await (await coordinator(repo, 'owner')).setDeploySecret(name, value, author());
-		getDeploySecrets(repo).refresh();
+		getDeploySettings(repo).refresh();
 	}
 );
 
@@ -70,7 +85,7 @@ export const deleteDeploySecret = command(
 	v.object({ repo: name, name: v.pipe(v.string(), v.regex(deploySecretName)) }),
 	async ({ repo, name }) => {
 		await (await coordinator(repo, 'owner')).deleteDeploySecret(name, author());
-		getDeploySecrets(repo).refresh();
+		getDeploySettings(repo).refresh();
 	}
 );
 

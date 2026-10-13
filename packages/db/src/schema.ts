@@ -4,7 +4,9 @@ export const repos = sqliteTable('repos', {
 	name: text().primaryKey(),
 	source: text(),
 	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
-	machine: text().notNull().default('standard-1')
+	machine: text().notNull().default('standard-1'),
+	// Where main's deploy checks and deploys run; separate from threads' machine because deploys build images.
+	deployMachine: text('deploy_machine').notNull().default('standard-3')
 });
 
 export const repoMembers = sqliteTable(

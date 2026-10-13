@@ -2,7 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, waitFor } from 'storybook/test';
 	import type { DeploySecret } from '@regit/core';
-	import DeploySecretsDialog from './DeploySecretsDialog.svelte';
+	import DeployDialog from './DeployDialog.svelte';
 
 	const now = Date.UTC(2026, 9, 13, 18);
 	const day = 24 * 60 * 60 * 1000;
@@ -13,13 +13,15 @@
 	];
 
 	const { Story } = defineMeta({
-		title: 'Deploy secrets dialog',
-		component: DeploySecretsDialog,
+		title: 'Deploy dialog',
+		component: DeployDialog,
 		tags: ['!autodocs'],
 		args: {
 			open: true,
 			repo: 'regit',
+			machine: 'standard-3',
 			now,
+			onmachine: fn(),
 			onsave: fn(async () => {}),
 			onremove: fn()
 		}
@@ -31,6 +33,10 @@
 	args={{ secrets }}
 	play={async ({ args, canvas, userEvent }) => {
 		await waitFor(() => expect(canvas.getByText('CLOUDFLARE_API_TOKEN')).toBeVisible());
+		const machine = canvas.getByRole('combobox', { name: /Machine for deploy checks/ });
+		await expect(machine).toHaveValue('standard-3');
+		await userEvent.selectOptions(machine, 'standard-4');
+		await expect(args.onmachine).toHaveBeenCalledWith('standard-4');
 		await expect(canvas.getByText('set by Lin 1 hour ago')).toBeVisible();
 		await userEvent.click(canvas.getByRole('button', { name: 'Remove CLOUDFLARE_ACCOUNT_ID' }));
 		await expect(args.onremove).toHaveBeenCalledWith('CLOUDFLARE_ACCOUNT_ID');

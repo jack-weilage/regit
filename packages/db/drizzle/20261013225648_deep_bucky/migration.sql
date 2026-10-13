@@ -1,0 +1,1 @@
+ALTER TABLE `repos` ADD `deploy_machine` text DEFAULT 'standard-3' NOT NULL;
