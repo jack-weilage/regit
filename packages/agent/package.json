@@ -7,12 +7,11 @@
 	},
 	"scripts": {
 		"check": "tsc",
-		"test": "vitest run"
+		"test": "bun test"
 	},
 	"devDependencies": {
-		"@types/node": "catalog:",
-		"typescript": "catalog:",
-		"vitest": "^5.0.3"
+		"@types/bun": "latest",
+		"typescript": "catalog:"
 	},
 	"dependencies": {
 		"@regit/core": "workspace:*",

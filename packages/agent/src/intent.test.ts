@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { intentTools, type Intent } from './intent.ts';
 import { fakeTools } from './testing.ts';
 import { combineTools } from './tools.ts';

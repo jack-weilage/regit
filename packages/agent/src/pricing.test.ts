@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { cost } from './pricing.ts';
 
 test('prices uncached, cached, cache-write and output tokens separately', () => {

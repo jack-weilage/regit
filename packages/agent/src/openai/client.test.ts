@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'bun:test';
 import type { ModelEvent, ModelRequest } from '../types.ts';
 import { ModelError, openaiModel } from './client.ts';
 import { completed, eventStream, fakeGateway } from './testing.ts';

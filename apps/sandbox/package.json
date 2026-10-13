@@ -6,12 +6,11 @@
 		"dev": "SANDBOX_ROOT=.workspace bun --watch src/main.ts",
 		"image": "docker build --platform linux/amd64 -t regit-sandbox .",
 		"check": "tsc",
-		"test": "vitest run"
+		"test": "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun test --parallel"
 	},
 	"devDependencies": {
 		"@regit/agent": "workspace:*",
 		"@types/bun": "latest",
-		"typescript": "catalog:",
-		"vitest": "^5.0.3"
+		"typescript": "catalog:"
 	}
 }

@@ -12,7 +12,7 @@ test('caches setup, reuses restored checkouts, and refreshes when tools change o
 		'.agents/setup': 'echo setup >> .git/setup-runs\n',
 		'.agents/resume': 'test -s .git/setup-runs\ntest ! -e .git/resume-ran\ntouch .git/resume-ran\n'
 	});
-	await script([
+	await script('toolchain', [
 		[
 			{
 				type: 'response.output_item.done',
@@ -67,7 +67,7 @@ test('caches setup, reuses restored checkouts, and refreshes when tools change o
 		status: 'finished',
 		toolchain: { restored: true }
 	});
-	const hookResults = JSON.stringify(await modelRequests());
+	const hookResults = JSON.stringify(await modelRequests('toolchain'));
 	expect(hookResults.match(/exit code 0\\nsetup(?!\\nsetup)/g)).toHaveLength(2);
 	expect(await recorded()).toEqual(first);
 
@@ -121,7 +121,7 @@ test('caches setup, reuses restored checkouts, and refreshes when tools change o
 
 test('records the stages of a cold start in the thread', async () => {
 	await seed('cold', { 'README.md': '# Cold\n', '.agents/setup': 'echo dependencies-ready\n' });
-	await script([[{ type: 'response.output_text.delta', delta: 'Hello.' }]]);
+	await script('cold', [[{ type: 'response.output_text.delta', delta: 'Hello.' }]]);
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('cold');
 	const { id } = await repo.openThread({
@@ -181,7 +181,7 @@ test('runs native commands with the workspace environment, bounded output and pr
 				'sleep 2; test ! -e foreground-survived && test ! -e background-survived && printf stopped'
 		}
 	];
-	await script([
+	await script('native-run', [
 		calls.map((args, index) => ({
 			type: 'response.output_item.done',
 			item: {
@@ -216,7 +216,7 @@ test('runs native commands with the workspace environment, bounded output and pr
 		'exit code 0\nstopped'
 	]);
 
-	await script([
+	await script('native-run', [
 		[
 			{
 				type: 'response.output_item.done',
@@ -259,7 +259,7 @@ printf browser-ok`
 
 test('stopping a native command kills its children without destroying the workspace', async () => {
 	await seed('native-stop', { 'README.md': '# Native stop\n' });
-	await script([
+	await script('native-stop', [
 		[
 			{
 				type: 'response.output_item.done',
@@ -276,13 +276,15 @@ test('stopping a native command kills its children without destroying the worksp
 		]
 	]);
 	await start('native-stop-thread', { task: 'Run a build', mode: 'small', repo: 'native-stop' });
-	await expect.poll(async () => (await modelRequests()).length, { timeout: 120_000 }).toBe(1);
+	await expect
+		.poll(async () => (await modelRequests('native-stop')).length, { timeout: 120_000 })
+		.toBe(1);
 	await new Promise((resolve) => setTimeout(resolve, 500));
 	const env = await worker.getEnv();
 	const attempt = env.ATTEMPTS.getByName('native-stop-thread');
 	await attempt.stop();
 	expect(await attempt.snapshot()).toMatchObject({ status: 'interrupted' });
-	await script([
+	await script('native-stop', [
 		[
 			{
 				type: 'response.output_item.done',
@@ -315,7 +317,7 @@ test('stopping a native command kills its children without destroying the worksp
 
 test('tells the agent when its sandbox was rebuilt between turns', async () => {
 	await seed('rebuilt', { 'README.md': '# Rebuilt\n', '.gitignore': 'built/\n' });
-	await script([
+	await script('rebuilt', [
 		[
 			{
 				type: 'response.output_item.done',
@@ -332,12 +334,14 @@ test('tells the agent when its sandbox was rebuilt between turns', async () => {
 		]
 	]);
 	await start('rebuilt-thread', { task: 'Build it', mode: 'small', repo: 'rebuilt' });
-	await expect.poll(async () => (await modelRequests()).length, { timeout: 300_000 }).toBe(1);
+	await expect
+		.poll(async () => (await modelRequests('rebuilt')).length, { timeout: 300_000 })
+		.toBe(1);
 	await new Promise((resolve) => setTimeout(resolve, 1000));
 	const env = await worker.getEnv();
 	const attempt = env.ATTEMPTS.getByName('rebuilt-thread');
 	await attempt.cancel();
-	await script([
+	await script('rebuilt', [
 		[
 			{
 				type: 'response.output_item.done',

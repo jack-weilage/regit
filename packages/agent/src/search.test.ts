@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { askThreads, askThreadsTools, type ThreadSource } from './search.ts';
 import { scriptedModel } from './testing.ts';
 

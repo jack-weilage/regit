@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { trustInterception } from './trust.ts';
 
 test('installs the interception CA once it exists and reinstalls it when it changes', async () => {

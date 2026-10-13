@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { services as cli } from './cli.ts';
 import { git } from './exec.ts';
 import { createSandbox } from './server.ts';
@@ -158,10 +158,13 @@ require('http').createServer((q, s) => s.end('${message}')).listen(process.env.P
 	expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toBe('from base');
 
 	expect((await clone(fork)).status).toBe(200);
-	await vi.waitFor(
-		async () =>
-			expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toBe('from fork'),
-		{ timeout: 10_000, interval: 200 }
-	);
+	let served = '';
+	for (let i = 0; i < 50 && served !== 'from fork'; i++) {
+		await Bun.sleep(200);
+		served = await fetch(`http://sandbox/preview/${port}/`)
+			.then((response) => response.text())
+			.catch(() => '');
+	}
+	expect(served).toBe('from fork');
 	await Promise.all([base, fork].map((dir) => rm(dir, { recursive: true, force: true })));
 });

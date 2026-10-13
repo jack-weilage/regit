@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { threadTools } from './threads.ts';
 
 test('lists the other threads and messages one of them', async () => {

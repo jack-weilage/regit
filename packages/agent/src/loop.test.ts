@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'bun:test';
 import { runAgent, type AgentOutcome } from './loop.ts';
 import { fakeTools, scriptedModel } from './testing.ts';
 import type { AgentEvent } from './types.ts';

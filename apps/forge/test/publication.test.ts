@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
-const { dir, worker, seed, commit, sh, idle, script } = await setup();
+const { dir, worker, seed, commit, sh, script } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
 const intent = {
 	headline: 'docs: add a title',
@@ -50,8 +50,7 @@ async function finishedThread(name: string) {
 	await env.DB.prepare('INSERT INTO repo_members (repo, principal_id, role) VALUES (?, ?, ?)')
 		.bind(name, 'editor', 'editor')
 		.run();
-	await idle();
-	await script([
+	await script(name, [
 		tool('update_intent', intent),
 		tool('write_file', { path: 'notes.md', content: '# Notes\n' }),
 		say('Done.')
@@ -160,8 +159,7 @@ test('work after shipping builds on the shipped commit', async () => {
 	await until(repo, id, (detail) => detail.summary.status === 'shipped');
 	const published = sh(canonical, 'rev-parse', 'main');
 
-	await idle();
-	await script([
+	await script('ship-later', [
 		tool('write_file', { path: 'footer.md', content: 'A footer\n' }),
 		say('Added a footer.')
 	]);
