@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { parseDiff } from './diff.ts';
 
 const diff = `diff --git a/src/members.ts b/src/members.ts

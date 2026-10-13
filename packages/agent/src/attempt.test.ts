@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'bun:test';
 import { runAttempt, type Checkpoints } from './attempt.ts';
 import type { CommitRequest, PushRequest } from './sandbox/protocol.ts';
 import { fakeTools, scriptedModel } from './testing.ts';

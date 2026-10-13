@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { suggestTools } from './suggest.ts';
 
 test('suggests separate work with the context a new thread needs', async () => {

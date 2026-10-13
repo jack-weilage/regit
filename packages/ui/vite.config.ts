@@ -12,6 +12,7 @@ export default defineConfig({
 				plugins: [storybookTest()],
 				test: {
 					name: 'storybook',
+					isolate: false,
 					browser: {
 						enabled: true,
 						headless: true,

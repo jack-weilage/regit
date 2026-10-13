@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test } from 'bun:test';
 import { mergeSkills, servicesSkill, skillTools, threadsSkill, withSkills } from './skills.ts';
 
 const release = {

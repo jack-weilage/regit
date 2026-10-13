@@ -22,7 +22,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	const pixels = Buffer.alloc(600_000);
 	for (let i = 0; i < pixels.length; i++) pixels[i] = i % 251;
 	const imageId = await repo.saveImage(id, `data:image/png;base64,${pixels.toString('base64')}`);
-	expect(Buffer.from((await repo.image(imageId))!.data)).toEqual(pixels);
+	expect(Buffer.from((await repo.image(imageId))!.data).equals(pixels)).toBe(true);
 
 	await repo.discard(id, sam);
 	expect((await repo.thread(id))!.summary.status).toBe('discarded');
@@ -45,7 +45,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	).rejects.toThrow();
 
 	await repo.restore(id);
-	expect(Buffer.from((await repo.image(imageId))!.data)).toEqual(pixels);
+	expect(Buffer.from((await repo.image(imageId))!.data).equals(pixels)).toBe(true);
 	expect(await repo.threads()).toMatchObject([{ id, deleted: null }]);
 
 	await repo.delete(id, sam);
