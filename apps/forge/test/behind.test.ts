@@ -188,3 +188,47 @@ test('tells an idle thread about conflicts with main even without a push event',
 		"that conflict with this thread's changes in notes.md"
 	);
 });
+
+test('notes files two live threads both change, in each thread and once to their agents', async () => {
+	const {
+		repo,
+		sam,
+		id: first
+	} = await startedThread('overlap', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	await untilThread(repo, first, (detail) => detail.summary.status === 'needs-you');
+	await script('overlap', [
+		writeNotes('# Better notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Rewrote the notes.' }]
+	]);
+	const { id: second } = await repo.openThread({
+		repo: 'overlap',
+		author: sam,
+		text: 'Rewrite the notes.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const noted = await untilThread(repo, second, (detail) => detail.summary.status === 'needs-you');
+	expect(noted.entries).toContainEqual(
+		expect.objectContaining({ type: 'event', text: 'Overlaps with "Add a title." in notes.md' })
+	);
+	expect((await repo.thread(first))!.entries.at(-1)).toMatchObject({
+		type: 'event',
+		text: 'Overlaps with "Rewrite the notes." in notes.md'
+	});
+
+	const told = async (text: string, reply: string) => {
+		await script('overlap', [[{ type: 'response.output_text.delta', delta: reply }]]);
+		await repo.reply(first, { author: sam, text });
+		await untilThread(repo, first, (detail) =>
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === reply)
+		);
+		return JSON.stringify((await modelRequests('overlap')).at(-1)!.query);
+	};
+	expect(await told('Carry on.', 'Noted the overlap.')).toContain(
+		`- Thread ${second} (\\"Rewrite the notes.\\"): notes.md`
+	);
+	expect((await told('And now?', 'Still noted.')).split('also change files')).toHaveLength(2);
+});

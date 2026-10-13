@@ -30,6 +30,7 @@ import type {
 	StartupStage,
 	ThreadActivity,
 	ThreadDetail,
+	ThreadOverlap,
 	ThreadService,
 	ThreadStatus,
 	ThreadSummary,
@@ -52,7 +53,7 @@ export type AttemptUpdate =
 	| { type: 'activity'; activity: ThreadActivity }
 	| { type: 'startup'; stages: StartupStage[] }
 	| { type: 'read'; entries: string[] }
-	| { type: 'changes'; summary: DiffSummary }
+	| { type: 'changes'; summary: DiffSummary; paths: string[] }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
 	| { type: 'behind'; behind: ThreadSummary['behind']; branch: string };
@@ -78,6 +79,8 @@ type ThreadRow = {
 	preview: string | null;
 	behind: string | null;
 	failure: string | null;
+	paths: string | null;
+	overlaps: string | null;
 	parent_headline?: string | null;
 };
 
@@ -180,7 +183,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				preview TEXT,
 				auto INTEGER,
 				behind TEXT,
-				failure TEXT
+				failure TEXT,
+				paths TEXT,
+				overlaps TEXT
 			);
 			CREATE TABLE IF NOT EXISTS entries (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,11 +211,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			);
 			DROP TABLE IF EXISTS promotions;
 		`);
-		// TODO: remove once every repository's coordinator has the failure column.
-		try {
-			this.#sql.exec('ALTER TABLE threads ADD COLUMN failure TEXT');
-		} catch {
-			/* Already added. */
+		// TODO: remove once every repository's coordinator has these columns.
+		for (const column of ['failure', 'paths', 'overlaps']) {
+			try {
+				this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${column} TEXT`);
+			} catch {
+				/* Already added. */
+			}
 		}
 	}
 
@@ -289,10 +296,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
+		await this.#refreshOverlaps();
 		await this.#agent(thread).cancel();
 	}
 
-	reopen(thread: string, by: Author) {
+	async reopen(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		if (summary.status !== 'discarded') return;
 		const [row] = this.#sql
@@ -303,6 +311,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.toArray();
 		this.#add(thread, { type: 'event', text: `Reopened by ${by.name}` });
 		this.#setStatus(thread, row?.reopen_status ?? 'needs-you');
+		await this.#refreshOverlaps();
 	}
 
 	// TODO: once threads ship, keep a tombstone (headline, author, commit) instead of purging shipped threads
@@ -318,6 +327,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		this.#touch(thread);
 		await this.#schedulePurge();
+		await this.#refreshOverlaps();
 		await this.#agent(thread).cancel();
 	}
 
@@ -358,10 +368,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await retrying('Agent', () => this.#agent(thread).retryNow());
 	}
 
-	restore(thread: string) {
+	async restore(thread: string) {
 		this.#require(thread);
 		this.#sql.exec('UPDATE threads SET deleted_at = NULL, deleted_by = NULL WHERE id = ?', thread);
 		this.#touch(thread);
+		await this.#refreshOverlaps();
 	}
 
 	override async alarm() {
@@ -769,7 +780,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setMeta('branch', branch);
 		await this.#agent(ship.thread).published({ sha, branch, from: ship.source.sha });
 		this.#sql.exec(
-			'UPDATE threads SET changes = NULL, behind = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
+			'UPDATE threads SET changes = NULL, paths = NULL, behind = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
 			sha,
 			Date.now(),
 			ship.by.name,
@@ -777,6 +788,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		this.#setStatus(ship.thread, 'shipped');
 		this.#add(ship.thread, { type: 'event', text: `Shipped ${sha.slice(0, 7)} to ${branch}` });
+		await this.#refreshOverlaps();
 	}
 
 	async shipFailed(ship: Ship, message: string) {
@@ -897,6 +909,47 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 	}
 
+	// Records which files each live thread changes alongside another and notes newly shared ones in both threads.
+	async #refreshOverlaps() {
+		const threads = this.#sql
+			.exec<Pick<ThreadRow, 'id' | 'headline' | 'paths' | 'overlaps'>>(
+				"SELECT id, headline, paths, overlaps FROM threads WHERE deleted_at IS NULL AND status != 'discarded'"
+			)
+			.toArray()
+			.map((row) => ({ ...row, files: new Set(JSON.parse(row.paths ?? '[]') as string[]) }));
+		const changed: [string, ThreadOverlap[]][] = [];
+		for (const thread of threads) {
+			const overlaps = threads.flatMap(({ id, headline, files }) => {
+				const shared = [...thread.files].filter((file) => id !== thread.id && files.has(file));
+				return shared.length ? [{ thread: id, headline, files: shared.sort() }] : [];
+			});
+			if (JSON.stringify(overlaps) === (thread.overlaps ?? '[]')) continue;
+			const was = JSON.parse(thread.overlaps ?? '[]') as ThreadOverlap[];
+			for (const { thread: other, headline, files } of overlaps) {
+				const known = was.find((overlap) => overlap.thread === other)?.files ?? [];
+				const fresh = files.filter((file) => !known.includes(file));
+				if (fresh.length)
+					this.#add(thread.id, {
+						type: 'event',
+						text: `Overlaps with "${headline || 'New thread'}" in ${fresh.join(', ')}`
+					});
+			}
+			this.#sql.exec(
+				'UPDATE threads SET overlaps = ? WHERE id = ?',
+				JSON.stringify(overlaps),
+				thread.id
+			);
+			changed.push([thread.id, overlaps]);
+		}
+		for (const [id, overlaps] of changed) {
+			try {
+				await this.#agent(id).overlapping(overlaps);
+			} catch (error) {
+				console.warn('Could not share overlapping threads', error);
+			}
+		}
+	}
+
 	#setBehind(thread: string, behind: ThreadSummary['behind']) {
 		const was = this.#summary(thread);
 		if (!was) return;
@@ -929,11 +982,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (!summary) return;
 		if (update.type === 'changes') {
 			this.#sql.exec(
-				'UPDATE threads SET changes = ? WHERE id = ?',
+				'UPDATE threads SET changes = ?, paths = ? WHERE id = ?',
 				JSON.stringify(update.summary),
+				JSON.stringify(update.paths),
 				thread
 			);
 			this.#touch(thread);
+			await this.#refreshOverlaps();
 			return;
 		}
 		if (update.type === 'behind') {
