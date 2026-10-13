@@ -1,7 +1,13 @@
 import type { InflightStep } from './types.ts';
 
 // Calls whose effects live outside the sandbox: replaying them would repeat those effects.
-const external = new Set(['update_intent', 'suggest_thread', 'message_thread', 'ask_threads']);
+const external = new Set([
+	'update_intent',
+	'record_done_when',
+	'suggest_thread',
+	'message_thread',
+	'ask_threads'
+]);
 
 export const interruptedOutput =
 	'Error: The sandbox stopped responding while this ran, so it may or may not have taken effect. Check before repeating it.';
