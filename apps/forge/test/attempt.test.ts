@@ -889,6 +889,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	await repo.landed(landing);
 	const warned = (await repo.thread(id))!;
 	expect(warned.summary.behind).toEqual({
+		branch: 'main',
 		commits: 1,
 		sha: main,
 		headline: 'Better notes',
@@ -912,7 +913,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	);
 	const notified = JSON.stringify((await modelRequests()).at(-1)!.query);
 	expect(notified).toContain(
-		`<system-notification>\\nMain has 1 new commit (latest ${main.slice(0, 7)} \\"Better notes\\") that conflict with this thread's changes in notes.md.`
+		`<system-notification>\\n\`main\` has 1 new commit (latest ${main.slice(0, 7)} \\"Better notes\\") that conflict with this thread's changes in notes.md.`
 	);
 	expect(notified.indexOf('system-notification')).toBeLessThan(notified.indexOf('Sam: Carry on.'));
 
@@ -974,6 +975,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		"that conflict with this thread's changes in notes.md"
 	);
 	expect(conflicting.summary.behind).toEqual({
+		branch: 'main',
 		commits: 1,
 		sha: main,
 		headline: 'Better notes',
@@ -1017,9 +1019,11 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
 
-	expect(shipped.entries.at(-1)).toMatchObject({
-		text: expect.stringContaining('to master')
-	});
+	expect(shipped.branch).toBe('master');
+	expect(shipped.entries.slice(-2).map((entry) => entry.type === 'event' && entry.text)).toEqual([
+		'Sam is shipping this thread to master',
+		`Shipped ${sh(join(dir, 'imported.git'), 'rev-parse', '--short=7', 'master')} to master`
+	]);
 	expect(sh(join(dir, 'imported.git'), 'log', '--format=%s', 'master')).toBe(
 		'docs: add a title\ninit'
 	);

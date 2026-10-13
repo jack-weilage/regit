@@ -51,7 +51,7 @@ export type AttemptUpdate =
 	| { type: 'changes'; summary: DiffSummary }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
-	| { type: 'behind'; behind: ThreadSummary['behind'] };
+	| { type: 'behind'; behind: ThreadSummary['behind']; branch: string };
 
 type ThreadRow = {
 	id: string;
@@ -248,10 +248,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (summary.status === 'discarded') return;
 		const entry = this.#add(thread, {
 			type: 'event',
-			text: `${by.name} asked to bring this thread up to date with main`
+			text: `${by.name} asked to bring this thread up to date with ${await this.#branch()}`
 		});
 		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
-		await this.#converse(thread, by, 'Bring this thread up to date with main.', entry, true);
+		await this.#converse(
+			thread,
+			by,
+			`Bring this thread up to date with ${await this.#branch()}.`,
+			entry,
+			true
+		);
 	}
 
 	async discard(thread: string, by: Author) {
@@ -470,12 +476,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return count;
 	}
 
-	thread(id: string): ThreadDetail | null {
+	async thread(id: string): Promise<ThreadDetail | null> {
 		const summary = this.#summary(id);
 		if (!summary) return null;
 		if (summary.deleted) {
 			return {
 				summary,
+				branch: await this.#branch(),
 				entries: [],
 				usage: this.#usage(id, summary.mode, []),
 				services: [],
@@ -487,6 +494,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.toArray();
 		return {
 			summary,
+			branch: await this.#branch(),
 			entries: rows.map((row) => JSON.parse(row.body) as Entry),
 			usage: this.#usage(id, summary.mode),
 			services: this.#services(id),
@@ -657,7 +665,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			since: now,
 			started: now
 		});
-		this.#add(thread, { type: 'event', text: `${by.name} is shipping this thread to main` });
+		this.#add(thread, {
+			type: 'event',
+			text: `${by.name} is shipping this thread to ${await this.#branch()}`
+		});
 		try {
 			await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
 		} catch (error) {
@@ -683,6 +694,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async shipped(ship: Ship, { sha, branch }: { sha: string; branch: string }) {
 		if (!this.#takeShip(ship)) return;
 		this.#setShipProgress(ship.thread, undefined);
+		this.#setMeta('branch', branch);
 		await this.#agent(ship.thread).published({ sha, branch, from: ship.source.sha });
 		this.#sql.exec(
 			'UPDATE threads SET changes = NULL, behind = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
@@ -700,7 +712,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setShipProgress(ship.thread, undefined);
 		const summary = this.#summary(ship.thread)!;
 		if (
-			message.startsWith('Ship conflicts with main') &&
+			message.startsWith('Ship conflicts with ') &&
 			ship.handBacks < maxHandBacks &&
 			!summary.deleted
 		)
@@ -754,7 +766,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.#converse(
 			ship.thread,
 			agent,
-			'Shipping conflicted with main. Bring this thread up to date with main; it ships again once you finish.',
+			`Shipping conflicted with ${/^Ship conflicts with (\S+) in /.exec(message)?.[1] ?? (await this.#branch())}. Bring this thread up to date with it; it ships again once you finish.`,
 			entry,
 			true
 		);
@@ -771,7 +783,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	// Main moved: record how far behind each thread is and warn those that now conflict. Forks only take main when asked or handed back.
-	async landed({ after, headline }: Landing) {
+	async landed({ after }: Landing) {
 		if (this.#meta('main') === after) return;
 		const forks = [];
 		for (const thread of this.threads()) {
@@ -780,13 +792,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			if (fork) forks.push({ id: thread.id, ...fork });
 		}
 		const repo = this.#repo();
-		const scan = forks.length
-			? await this.env.REPOSITORY_GIT.getByName(`scan-${repo}`).compare(repo, forks)
-			: { main: after, threads: [] };
+		if (!forks.length) return;
+		const scan = await this.env.REPOSITORY_GIT.getByName(`scan-${repo}`).compare(repo, forks);
 		if (this.#meta('main') === scan.main) return;
 		this.#setMeta('main', scan.main);
+		this.#setMeta('branch', scan.branch);
+		const { branch, headline } = scan;
 		for (const { id, behind: commits, conflicts } of scan.threads) {
-			const behind = commits ? { commits, sha: scan.main, headline, conflicts } : null;
+			const behind = commits ? { branch, commits, sha: scan.main, headline, conflicts } : null;
 			this.#setBehind(id, behind);
 			await this.#agent(id).behindMain(behind);
 		}
@@ -800,11 +813,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			behind && JSON.stringify(behind),
 			thread
 		);
+		if (behind) this.#setMeta('branch', behind.branch);
 		const conflicts = behind?.conflicts ?? [];
 		if (conflicts.length && JSON.stringify(was.behind?.conflicts) !== JSON.stringify(conflicts))
 			this.#add(thread, {
 				type: 'event',
-				text: `Conflicts with main in ${conflicts.join(', ')}`
+				text: `Conflicts with ${behind!.branch} in ${conflicts.join(', ')}`
 			});
 		this.#touch(thread);
 	}
@@ -831,6 +845,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			return;
 		}
 		if (update.type === 'behind') {
+			this.#setMeta('branch', update.branch);
 			this.#setBehind(thread, update.behind);
 			return;
 		}
@@ -1092,6 +1107,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#summary(id);
 		if (!summary) throw new Error(`There is no thread ${id}`);
 		return summary;
+	}
+
+	// The branch the repository's HEAD points to, as threads last saw it; seeded from the recorded default.
+	async #branch() {
+		const known = this.#meta('branch');
+		if (known) return known;
+		using repo = await this.env.ARTIFACTS.get(this.#repo());
+		const { defaultBranch } = await repo.info();
+		this.#setMeta('branch', defaultBranch);
+		return defaultBranch;
 	}
 
 	#meta(key: string) {

@@ -83,7 +83,7 @@ export class RepositoryGit extends DurableObject<Env> {
 						if (pushed) sha = built.sha;
 					}
 				}
-				if (!sha) throw new Error('Main kept moving while shipping');
+				if (!sha) throw new Error(`${target} kept moving while shipping`);
 				await progress('recording');
 				await workspace.publishProvenance({
 					sha,

@@ -187,7 +187,8 @@ export async function buildShip(
 			.split('\n')
 			.filter(Boolean);
 		await abortRebase(root);
-		if (conflicts.length) throw new Error(`Ship conflicts with main in ${conflicts.join(', ')}`);
+		if (conflicts.length)
+			throw new Error(`Ship conflicts with ${branch} in ${conflicts.join(', ')}`);
 		throw new Error(`Ship rebase failed: ${rebased.output.trim()}`);
 	}
 	const sha = await git(root, ['rev-parse', 'HEAD']);
@@ -214,7 +215,7 @@ export async function pushShip(
 	);
 	if (pushed.code === 0) return { pushed: true };
 	if ((await canonicalHead(root, remote, ref)) !== head) return { pushed: false };
-	throw new Error(`Pushing to main failed: ${pushed.output.trim()}`);
+	throw new Error(`Pushing to ${branch} failed: ${pushed.output.trim()}`);
 }
 
 export async function publishProvenance(
@@ -256,6 +257,8 @@ export async function compare(
 	if (!(await exists(join(root, '.git')))) await git(root, ['init', '--quiet']);
 	await git(root, ['fetch', '--no-tags', remote, 'HEAD']);
 	const main = await git(root, ['rev-parse', 'FETCH_HEAD']);
+	const headline = await git(root, ['log', '-1', '--format=%s', main]);
+	const branch = (await headBranch(root, { remote })) ?? 'HEAD';
 	const threads: CompareResponse['threads'] = [];
 	for (const fork of forks) {
 		safeRemote(fork.remote);
@@ -279,7 +282,7 @@ export async function compare(
 		const files = merged.code === 1 ? merged.stdout.trim().split('\n').slice(1) : [];
 		threads.push({ id: fork.id, behind, conflicts: files.filter(Boolean) });
 	}
-	return { main, threads };
+	return { main, branch, headline, threads };
 }
 
 export async function headBranch(root: string, { remote }: HeadBranchRequest) {

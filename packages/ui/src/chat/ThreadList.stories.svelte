@@ -34,7 +34,7 @@
 			status: 'needs-you',
 			updatedAt: minutes(60),
 			href: '#sessions',
-			conflicts: true
+			conflictsWith: 'main'
 		},
 		{
 			id: 'invoices',

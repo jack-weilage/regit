@@ -8,6 +8,7 @@
 	import Button from '../Button.svelte';
 
 	interface Props {
+		branch: string;
 		commits: number;
 		sha: string;
 		headline: string;
@@ -16,7 +17,15 @@
 		onupdate?: () => void;
 	}
 
-	let { commits, sha, headline, conflicts = [], updating = false, onupdate }: Props = $props();
+	let {
+		branch,
+		commits,
+		sha,
+		headline,
+		conflicts = [],
+		updating = false,
+		onupdate
+	}: Props = $props();
 
 	let expanded = $state(false);
 
@@ -45,7 +54,7 @@
 			{/if}
 		</svg>
 		<div class="body">
-			<p id="{id}-title" class="title">Main has {plural(commits, 'new commit')}</p>
+			<p id="{id}-title" class="title">{branch} has {plural(commits, 'new commit')}</p>
 			<p class="commit" title={headline}>
 				<svg class="commit-icon" viewBox="0 0 16 16" aria-hidden="true">
 					<circle cx="8" cy="8" r="2.75" />

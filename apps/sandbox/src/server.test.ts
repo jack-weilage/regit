@@ -412,6 +412,8 @@ describe('shipping', () => {
 			})
 		).toEqual({
 			main: await git(remote, ['rev-parse', 'main']),
+			branch: 'main',
+			headline: 'Main moved',
 			threads: [
 				{ id: 'a', behind: 1, conflicts: ['greeting.ts'] },
 				{ id: 'b', behind: 1, conflicts: [] }

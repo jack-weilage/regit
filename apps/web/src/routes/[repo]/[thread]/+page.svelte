@@ -117,7 +117,7 @@
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
 	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
 		const status = detail?.summary.status;
-		if (status === 'shipping') return { status: 'shipping', note: 'Shipping to main' };
+		if (status === 'shipping') return { status: 'shipping', note: `Shipping to ${detail!.branch}` };
 		if (status === 'shipped') {
 			const sha = detail!.summary.shipped?.sha.slice(0, 7);
 			return { status: 'shipped', note: sha ? `Shipped in ${sha}` : 'Shipped' };
@@ -331,6 +331,7 @@
 						{intent}
 						status={summary.status}
 						progress={activity?.ship}
+						branch={detail.branch}
 						onship={(commit) => shipThread({ ...ref, ...commit })}
 					/>
 				{/if}

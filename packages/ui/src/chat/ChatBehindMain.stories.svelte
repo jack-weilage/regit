@@ -12,6 +12,7 @@
 		component: ChatBehindMain,
 		tags: ['!autodocs'],
 		args: {
+			branch: 'main',
 			commits: 3,
 			sha: '4b02e7a91c3d5f6e8a0b2c4d6e8f0a1b2c3d4e5f',
 			headline: 'perf(settings): page the member list',
@@ -23,7 +24,7 @@
 <Story
 	name="Behind"
 	play={async ({ args, canvas, userEvent }) => {
-		const card = canvas.getByRole('region', { name: 'Main has 3 new commits' });
+		const card = canvas.getByRole('region', { name: 'main has 3 new commits' });
 		await expect(card).toHaveTextContent('4b02e7a');
 		await expect(card).toHaveTextContent('perf(settings): page the member list');
 		await expect(card).not.toHaveTextContent('Conflicts');
@@ -33,10 +34,10 @@
 />
 
 <Story
-	name="One commit"
-	args={{ commits: 1 }}
+	name="One commit on another branch"
+	args={{ branch: 'master', commits: 1 }}
 	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('region', { name: 'Main has 1 new commit' })).toBeVisible();
+		await expect(canvas.getByRole('region', { name: 'master has 1 new commit' })).toBeVisible();
 	}}
 />
 
@@ -44,7 +45,7 @@
 	name="Conflicts"
 	args={{ conflicts: ['src/settings/members.ts'] }}
 	play={async ({ canvas }) => {
-		const card = canvas.getByRole('region', { name: 'Main has 3 new commits' });
+		const card = canvas.getByRole('region', { name: 'main has 3 new commits' });
 		await expect(card).toHaveTextContent('Conflicts in 1 file');
 		await expect(card).toHaveTextContent('src/settings/members.ts');
 	}}
@@ -112,6 +113,7 @@
 			</ChatGroup>
 			<ChatEvent>Conflicts with main in src/settings/members.ts</ChatEvent>
 			<ChatBehindMain
+				branch="main"
 				commits={3}
 				sha="4b02e7a91c3d5f6e8a0b2c4d6e8f0a1b2c3d4e5f"
 				headline="perf(settings): page the member list"

@@ -46,7 +46,7 @@
 			status: thread.status,
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.id}`,
-			conflicts: !!thread.behind?.conflicts.length
+			conflictsWith: thread.behind?.conflicts.length ? thread.behind.branch : undefined
 		}))
 	);
 

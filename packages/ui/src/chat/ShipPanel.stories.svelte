@@ -10,7 +10,7 @@
 		title: 'Chat/Ship',
 		component: ShipPanel,
 		tags: ['!autodocs'],
-		args: { intent, status: 'needs-you', onship: fn().mockResolvedValue(undefined) }
+		args: { intent, branch: 'main', status: 'needs-you', onship: fn().mockResolvedValue(undefined) }
 	});
 </script>
 
@@ -54,7 +54,7 @@
 		}
 	}}
 	play={async ({ canvas }) => {
-		await expect(canvas.getByText('Shipping to the default branch')).toBeVisible();
+		await expect(canvas.getByText('Shipping to main')).toBeVisible();
 		await expect(canvas.queryByRole('button')).toBeNull();
 		await expect(canvas.queryByRole('listitem', { current: 'step' })).toBeNull();
 	}}
@@ -130,6 +130,11 @@
 
 <Story name="Narrow" asChild>
 	<div style="inline-size: 22rem; max-inline-size: 100%">
-		<ShipPanel {intent} status="needs-you" onship={fn().mockResolvedValue(undefined)} />
+		<ShipPanel
+			{intent}
+			branch="main"
+			status="needs-you"
+			onship={fn().mockResolvedValue(undefined)}
+		/>
 	</div>
 </Story>

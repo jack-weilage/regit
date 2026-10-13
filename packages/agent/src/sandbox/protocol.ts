@@ -123,6 +123,8 @@ export interface CompareRequest {
 
 export interface CompareResponse {
 	main: string;
+	branch: string;
+	headline: string;
 	threads: { id: string; behind: number; conflicts: string[] }[];
 }
 

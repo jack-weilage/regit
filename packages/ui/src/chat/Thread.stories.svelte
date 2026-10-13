@@ -208,6 +208,7 @@
 			{#if started && status !== 'shipped'}
 				<ShipPanel
 					{intent}
+					branch="main"
 					{status}
 					onship={async () => {
 						status = 'shipped';

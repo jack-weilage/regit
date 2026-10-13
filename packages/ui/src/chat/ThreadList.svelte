@@ -8,7 +8,7 @@
 		status: ThreadStatus;
 		updatedAt: number;
 		href: string;
-		conflicts?: boolean;
+		conflictsWith?: string;
 		preview?: Omit<ThreadPreviewProps, 'headline'>;
 	}
 
@@ -110,12 +110,12 @@
 							role="img"
 						/>
 						<span class="headline">{thread.headline}</span>
-						{#if thread.conflicts}
+						{#if thread.conflictsWith}
 							<svg
 								class="conflicts"
 								viewBox="0 0 16 16"
 								role="img"
-								aria-label="Conflicts with main"
+								aria-label="Conflicts with {thread.conflictsWith}"
 							>
 								<path d="M8 2.25 14.5 13.5h-13Z" />
 								<path d="M8 6.5v3.25M8 11.75v.01" />

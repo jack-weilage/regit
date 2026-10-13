@@ -537,7 +537,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	// Merges main into the thread so its agent can bring it up to date, as asked or after a conflicting ship.
 	async #sync(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'sync'");
-		await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
+		const branch = await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
 		if ((await this.#shell(fetch, 'git merge-base --is-ancestor FETCH_HEAD HEAD')).ok) return null;
 		const head = (await this.#git(fetch, 'git rev-parse FETCH_HEAD')).trim();
 		const landed = (
@@ -551,17 +551,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 					.filter(Boolean);
 		if (!merged.ok && !conflicts.length) {
 			await this.#shell(fetch, 'git merge --abort');
-			throw new Error(`Merging main failed: ${merged.output}`);
+			throw new Error(`Merging ${branch} failed: ${merged.output}`);
 		}
 		attempt.base = head;
 		this.#sql.exec('UPDATE agent SET base = ?', head);
 		this.#setMeta('notified', JSON.stringify(conflicts));
-		const what = landed ? `\n\nWhat landed on main:\n${landed}` : '';
+		const what = landed ? `\n\nWhat landed on \`${branch}\`:\n${landed}` : '';
 		if (merged.ok) {
 			await this.#push(fork, token, () => sandboxWorkspace(fetch).push({ ref: fork.branch }));
-			return `Main moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
+			return `\`${branch}\` moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
 		}
-		return `Main moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
+		return `\`${branch}\` moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
 	}
 
 	behindMain(behind: ThreadSummary['behind']) {
@@ -590,14 +590,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return [
 			{
 				role: 'notification',
-				text: `Main has ${commits} (latest ${behind.sha.slice(0, 7)} "${behind.headline}") that conflict with this thread's changes in ${conflicts.join(', ')}. Main has not been merged into your workspace, so your files are unchanged. Avoid deepening the conflict in those files where you can, and mention it in your reply; a person can bring the thread up to date.`
+				text: `\`${behind.branch}\` has ${commits} (latest ${behind.sha.slice(0, 7)} "${behind.headline}") that conflict with this thread's changes in ${conflicts.join(', ')}. \`${behind.branch}\` has not been merged into your workspace, so your files are unchanged. Avoid deepening the conflict in those files where you can, and mention it in your reply; a person can bring the thread up to date.`
 			}
 		];
 	}
 
 	async #reportBehind(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
 		try {
-			await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
+			const branch = await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
 			const commits = Number(await this.#git(fetch, 'git rev-list --count HEAD..FETCH_HEAD'));
 			let behind = null;
 			if (commits) {
@@ -613,12 +613,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 				const conflicts = merged.ok
 					? []
 					: merged.output.trim().split('\n').slice(1).filter(Boolean);
-				behind = { commits, sha, headline: subject.join(' '), conflicts };
+				behind = { branch, commits, sha, headline: subject.join(' '), conflicts };
 			}
 			this.#setMeta('behind', JSON.stringify(behind));
-			await this.#report(attempt.repo, { type: 'behind', behind });
+			await this.#report(attempt.repo, { type: 'behind', behind, branch });
 		} catch (error) {
-			console.warn('Could not compare the thread with main', error);
+			console.warn('Could not compare the thread with its default branch', error);
 		}
 	}
 
@@ -629,6 +629,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 		await this.#allowGit(info, plaintext, false);
 		try {
 			await this.#git(fetch, `git fetch --no-tags ${info.remote} ${ref}`);
+			const head = await this.#shell(fetch, `git ls-remote --symref ${info.remote} HEAD`);
+			return /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(head.output)?.[1] ?? info.defaultBranch;
 		} finally {
 			await this.#allowGit(fork, token, false);
 		}

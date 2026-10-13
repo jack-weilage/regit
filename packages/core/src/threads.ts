@@ -106,7 +106,13 @@ export interface ThreadSummary {
 	parent: { id: string; headline: string } | null;
 	changes: DiffSummary | null;
 	shipped: { sha: string; by: string; at: number } | null;
-	behind: { commits: number; sha: string; headline: string; conflicts: string[] } | null;
+	behind: {
+		branch: string;
+		commits: number;
+		sha: string;
+		headline: string;
+		conflicts: string[];
+	} | null;
 }
 
 export interface ShipInput {
@@ -142,6 +148,7 @@ export interface ThreadService {
 
 export interface ThreadDetail {
 	summary: ThreadSummary;
+	branch: string;
 	entries: Entry[];
 	usage: ThreadUsage;
 	services: ThreadService[];
@@ -178,5 +185,5 @@ export interface RepoCoordinatorApi {
 	assess(text: string): Promise<{ similar: SimilarMatch[]; size: Mode }>;
 	forwardIntent(thread: string, to: string, by: Author): Promise<string>;
 	threads(): ThreadSummary[];
-	thread(id: string): ThreadDetail | null;
+	thread(id: string): Promise<ThreadDetail | null>;
 }

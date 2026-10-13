@@ -20,14 +20,15 @@
 		intent?: Intent;
 		status: ThreadStatus;
 		progress?: ShipProgress | null;
+		branch: string;
 		now?: number;
 		onship: (commit: { title: string; body: string }) => Promise<unknown>;
 	}
 
-	let { intent, status, progress, now, onship }: Props = $props();
+	let { intent, status, progress, branch: known, now, onship }: Props = $props();
 
 	let current = $derived(stages.findIndex(({ stage }) => stage === progress?.stage));
-	let branch = $derived(progress?.branch ?? 'the default branch');
+	let branch = $derived(progress?.branch ?? known);
 
 	let busy = $state(false);
 	let error = $state<string | null>(null);

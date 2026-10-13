@@ -4,7 +4,7 @@ import type { Ship } from '@regit/core';
 
 // Conflicts and empty ships fail the same way on every retry; the thread's agent has to act first.
 export const isFinalShipError = (message: string) =>
-	message.startsWith('Ship conflicts with main') || message.includes('Nothing to ship');
+	message.startsWith('Ship conflicts with ') || message.includes('Nothing to ship');
 
 export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 	override async run({ payload: ship }: WorkflowEvent<Ship>, step: WorkflowStep) {
@@ -12,7 +12,7 @@ export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 		let shipped: { sha: string; branch: string };
 		try {
 			shipped = await step.do(
-				'ship to main',
+				'ship the thread',
 				{ retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' } },
 				async ({ attempt }) => {
 					try {
