@@ -255,7 +255,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async discard(thread: string, by: Author) {
 		const summary = this.#active(thread);
-		this.#notShipping(thread);
+		await this.#notShipping(thread);
 		this.#takeHandBack(thread);
 		if (summary.status === 'discarded') return;
 		const reopen = ['running', 'shipping'].includes(summary.status) ? 'needs-you' : summary.status;
@@ -281,7 +281,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	// TODO: once threads ship, keep a tombstone (headline, author, commit) instead of purging shipped threads
 	async delete(thread: string, by: Author) {
 		this.#active(thread);
-		this.#notShipping(thread);
+		await this.#notShipping(thread);
 		this.#takeHandBack(thread);
 		this.#sql.exec(
 			'UPDATE threads SET deleted_at = ?, deleted_by = ? WHERE id = ?',
@@ -296,7 +296,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async stop(thread: string, by: Author) {
 		const summary = this.#active(thread);
-		this.#notShipping(thread);
+		await this.#notShipping(thread);
 		this.#takeHandBack(thread);
 		await this.#agent(thread).stop();
 		const pending = this.#sql
@@ -649,7 +649,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setMeta(`ship:${thread}`, ship.id);
 		this.#setStatus(thread, 'shipping');
 		this.#add(thread, { type: 'event', text: `${by.name} is shipping this thread to main` });
-		await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
+		try {
+			await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
+		} catch (error) {
+			this.#stopShipping(thread, error instanceof Error ? error.message : String(error));
+			throw error;
+		}
 	}
 
 	async shipped(ship: Ship, { sha, branch }: { sha: string; branch: string }) {
@@ -675,8 +680,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			!summary.deleted
 		)
 			return await this.#handBack(ship, message);
-		this.#setStatus(ship.thread, 'needs-you');
-		this.#add(ship.thread, { type: 'event', text: `Shipping stopped: ${message}` });
+		this.#stopShipping(ship.thread, message);
 	}
 
 	// The ship workflow reports once per ship; a ship this thread no longer waits on is ignored.
@@ -686,9 +690,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return current;
 	}
 
-	#notShipping(thread: string) {
-		if (this.#summary(thread)?.status === 'shipping')
+	// A ship whose workflow ended without reporting back, or never started, releases the thread.
+	async #notShipping(thread: string) {
+		if (this.#summary(thread)?.status !== 'shipping') return;
+		const id = this.#meta(`ship:${thread}`);
+		const ship = id
+			? await this.env.SHIP_THREAD.get(id).then(
+					(instance) => instance.status(),
+					() => null
+				)
+			: null;
+		if (ship && !['errored', 'terminated', 'complete'].includes(ship.status))
 			throw new Error('This thread is shipping. Try again when it finishes.');
+		this.#stopShipping(thread, ship?.error?.message ?? 'the ship ended without reporting back');
+	}
+
+	#stopShipping(thread: string, reason: string) {
+		this.#sql.exec('DELETE FROM meta WHERE key = ?', `ship:${thread}`);
+		this.#setStatus(thread, 'needs-you');
+		this.#add(thread, { type: 'event', text: `Shipping stopped: ${reason}` });
 	}
 
 	// Conflicts with main: the thread's agent merges main, re-checks, and the thread ships again.
