@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { runAgent, type AgentOutcome } from './loop.ts';
 import { fakeTools, scriptedModel } from './testing.ts';
+import { SandboxUnavailableError } from './transient.ts';
 import type { AgentEvent } from './types.ts';
 
 const usage = { inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 5 };
+const outage = Object.assign(new Error('Service unavailable'), { status: 503 });
+const noWait = async () => {};
 const call = (id: string, name: string, args: object) =>
 	({ type: 'call', call: { id, name, arguments: JSON.stringify(args) } }) as const;
 
@@ -181,5 +184,75 @@ describe('runAgent', () => {
 			{ role: 'assistant', text: 'All done.', calls: [] },
 			{ role: 'user', text: 'Sam: also rename it' }
 		]);
+	});
+
+	test('retries transient model failures, discarding what the failed attempt streamed', async () => {
+		const { model, requests } = scriptedModel([
+			[{ type: 'text', delta: 'Half' }, outage],
+			[outage],
+			[
+				{ type: 'text', delta: 'Whole' },
+				{ type: 'done', usage }
+			]
+		]);
+		const waits: number[] = [];
+		const { tools } = fakeTools({});
+		const { events, outcome } = await collect(
+			runAgent({
+				model,
+				tools,
+				instructions: '',
+				history: [{ role: 'user', text: 'Hi' }],
+				retries: { limit: 5, baseMs: 1000, maxMs: 10_000 },
+				wait: async (ms) => void waits.push(ms)
+			})
+		);
+
+		expect(outcome).toBe('finished');
+		expect(requests).toHaveLength(3);
+		expect(events.filter((event) => event.type === 'retry')).toMatchObject([
+			{ label: 'Model request', error: 'Service unavailable', attempt: 2, limit: 5 },
+			{ attempt: 3, limit: 5 }
+		]);
+		expect(waits[1]).toBeGreaterThan(waits[0]!);
+		expect(events.at(-1)).toMatchObject({ turns: [{ role: 'assistant', text: 'Whole' }] });
+	});
+
+	test('gives up after the retry limit', async () => {
+		const { model } = scriptedModel([[outage], [outage], [outage]]);
+		const { tools } = fakeTools({});
+		const run = collect(
+			runAgent({
+				model,
+				tools,
+				instructions: '',
+				history: [],
+				retries: { limit: 3, baseMs: 1, maxMs: 1 },
+				wait: noWait
+			})
+		);
+		await expect(run).rejects.toThrow('Service unavailable');
+	});
+
+	test('does not retry permanent model failures', async () => {
+		const { model, requests } = scriptedModel([
+			[Object.assign(new Error('Context too long'), { status: 400 })]
+		]);
+		const { tools } = fakeTools({});
+		const run = collect(runAgent({ model, tools, instructions: '', history: [], wait: noWait }));
+		await expect(run).rejects.toThrow('Context too long');
+		expect(requests).toHaveLength(1);
+	});
+
+	test('stops instead of telling the model when the sandbox is unreachable', async () => {
+		const { model, requests } = scriptedModel([[call('c1', 'run', {}), { type: 'done', usage }]]);
+		const { tools } = fakeTools({
+			run: () => {
+				throw new SandboxUnavailableError('The sandbox is unreachable');
+			}
+		});
+		const run = collect(runAgent({ model, tools, instructions: '', history: [] }));
+		await expect(run).rejects.toBeInstanceOf(SandboxUnavailableError);
+		expect(requests).toHaveLength(1);
 	});
 });

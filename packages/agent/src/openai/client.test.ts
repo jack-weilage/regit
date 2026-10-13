@@ -3,6 +3,7 @@ import type { ModelEvent, ModelRequest } from '../types.ts';
 import { ModelError, openaiModel } from './client.ts';
 import { completed, eventStream, fakeGateway } from './testing.ts';
 import { runAgent } from '../loop.ts';
+import { isTransient } from '../transient.ts';
 
 const request: ModelRequest = {
 	instructions: 'Be brief',
@@ -233,6 +234,34 @@ describe('openaiModel', () => {
 			status: 502,
 			message: 'The model request failed with 502'
 		});
+	});
+
+	test('keeps how long the server asked to wait', async () => {
+		const { respond } = setup(
+			Response.json(
+				{ error: { message: 'Slow down' } },
+				{ status: 429, headers: { 'retry-after': '7' } }
+			)
+		);
+		await expect(respond()).rejects.toMatchObject({ status: 429, retryAfterMs: 7000 });
+	});
+
+	test('treats a stream that ends without completing as a transient failure', async () => {
+		const { respond } = setup(eventStream([{ type: 'response.output_text.delta', delta: 'Half' }]));
+		const error = await respond().catch((e: unknown) => e);
+		expect(error).toMatchObject({ code: 'stream_ended' });
+		expect(isTransient(error)).toBe(true);
+	});
+
+	test('treats an unreachable gateway as a transient failure', async () => {
+		const model = openaiModel({
+			gateway: { run: () => Promise.reject(new TypeError('fetch failed')) },
+			model: 'gpt-6-luna',
+			sessionId: 'offline'
+		});
+		const error = await Array.fromAsync(model.respond(request)).catch((e: unknown) => e);
+		expect(error).toMatchObject({ code: 'connection_error' });
+		expect(isTransient(error)).toBe(true);
 	});
 
 	test('surfaces failed responses mid-stream', async () => {

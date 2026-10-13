@@ -1,12 +1,23 @@
 import type {
 	AgentEvent,
+	InflightStep,
 	ModelClient,
+	Reply,
 	ToolCall,
 	ToolExecutor,
 	ToolResult,
 	Turn,
 	Usage
 } from './types.ts';
+import { backoff, errorMessage, isTransient, SandboxUnavailableError, sleep } from './transient.ts';
+
+export interface RetryPolicy {
+	limit: number;
+	baseMs: number;
+	maxMs: number;
+}
+
+export const modelRetries: RetryPolicy = { limit: 5, baseMs: 2000, maxMs: 30_000 };
 
 export interface AgentOptions {
 	model: ModelClient;
@@ -16,6 +27,10 @@ export interface AgentOptions {
 	maxSteps?: number;
 	signal?: AbortSignal;
 	steer?: () => Turn[] | Promise<Turn[]>;
+	retries?: RetryPolicy;
+	// Finishes an interrupted step: kept results are replayed as is and the other calls run.
+	resume?: InflightStep;
+	wait?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export type AgentOutcome = 'finished' | 'step-limit' | 'aborted';
@@ -27,36 +42,70 @@ export async function* runAgent({
 	history,
 	maxSteps = 50,
 	signal,
-	steer
+	steer,
+	retries = modelRetries,
+	resume,
+	wait = sleep
 }: AgentOptions): AsyncGenerator<AgentEvent, AgentOutcome> {
 	const turns = [...history];
+	let resuming = resume;
 
 	for (let step = 0; step < maxSteps; step++) {
 		if (signal?.aborted) return 'aborted';
 
 		let text = '';
-		const calls: ToolCall[] = [];
-		const reasoning: string[] = [];
+		let calls: ToolCall[] = [];
+		let reasoning: string[] = [];
 		let usage: Usage | undefined;
+		const kept = new Map<string, ToolResult>();
 
-		for await (const event of model.respond(
-			{ instructions, history: turns, tools: tools.specs },
-			signal
-		)) {
-			if (event.type === 'text') {
-				text += event.delta;
-				yield event;
-			} else if (event.type === 'call') {
-				calls.push(event.call);
-				yield event;
-			} else if (event.type === 'reasoning') {
-				reasoning.push(event.data);
-			} else {
-				usage = event.usage;
+		if (resuming) {
+			({ text, calls } = resuming.reply);
+			reasoning = resuming.reply.reasoning ?? [];
+			usage = resuming.usage;
+			for (const result of resuming.results) kept.set(result.callId, result);
+			for (const call of calls) yield { type: 'call', call };
+			resuming = undefined;
+		} else {
+			for (let attempt = 1; ; attempt++) {
+				try {
+					for await (const event of model.respond(
+						{ instructions, history: turns, tools: tools.specs },
+						signal
+					)) {
+						if (event.type === 'text') {
+							text += event.delta;
+							yield event;
+						} else if (event.type === 'call') {
+							calls.push(event.call);
+							yield event;
+						} else if (event.type === 'reasoning') {
+							reasoning.push(event.data);
+						} else {
+							usage = event.usage;
+						}
+					}
+					break;
+				} catch (error) {
+					if (signal?.aborted) return 'aborted';
+					if (attempt >= retries.limit || !isTransient(error)) throw error;
+					const delayMs = backoff(attempt, retries.baseMs, retries.maxMs, error);
+					yield {
+						type: 'retry',
+						label: 'Model request',
+						error: errorMessage(error),
+						attempt: attempt + 1,
+						limit: retries.limit,
+						delayMs
+					};
+					[text, calls, reasoning, usage] = ['', [], [], undefined];
+					await wait(delayMs, signal);
+					if (signal?.aborted) return 'aborted';
+				}
 			}
 		}
 
-		const reply: Turn = { role: 'assistant', text, calls, ...(reasoning.length && { reasoning }) };
+		const reply: Reply = { role: 'assistant', text, calls, ...(reasoning.length && { reasoning }) };
 
 		if (calls.length === 0) {
 			const steered = (await steer?.()) ?? [];
@@ -66,12 +115,20 @@ export async function* runAgent({
 			continue;
 		}
 
+		yield { type: 'reply', reply, usage };
 		const results: ToolResult[] = [];
 		for (const call of calls) {
 			if (signal?.aborted) return 'aborted';
-			const output = await tools
-				.execute(call, signal)
-				.catch((error: unknown) => `Error: ${errorMessage(error)}`);
+			const replayed = kept.get(call.id);
+			if (replayed) {
+				results.push(replayed);
+				yield { type: 'result', result: replayed };
+				continue;
+			}
+			const output = await tools.execute(call, signal).catch((error: unknown) => {
+				if (error instanceof SandboxUnavailableError) throw error;
+				return `Error: ${errorMessage(error)}`;
+			});
 			const result: ToolResult =
 				typeof output === 'string'
 					? { callId: call.id, output }
@@ -86,8 +143,4 @@ export async function* runAgent({
 	}
 
 	return 'step-limit';
-}
-
-function errorMessage(error: unknown) {
-	return error instanceof Error ? error.message : String(error);
 }

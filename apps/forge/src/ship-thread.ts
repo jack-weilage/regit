@@ -6,6 +6,9 @@ import type { Ship } from '@regit/core';
 export const isFinalShipError = (message: string) =>
 	message.startsWith('Ship conflicts with ') || message.includes('Nothing to ship');
 
+const retries = 3;
+const delayMs = 10_000;
+
 export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 	override async run({ payload: ship }: WorkflowEvent<Ship>, step: WorkflowStep) {
 		const repos = () => this.env.REPOS.getByName(ship.repo);
@@ -13,16 +16,27 @@ export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 		try {
 			shipped = await step.do(
 				'ship the thread',
-				{ retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' } },
+				{ retries: { limit: retries, delay: `${delayMs / 1000} seconds`, backoff: 'exponential' } },
 				async ({ attempt }) => {
 					try {
 						const { sha, branch } = await this.env.REPOSITORY_GIT.getByName(
 							`ship-${ship.repo}`
-						).ship(ship, attempt);
+						).ship(ship);
 						return { sha, branch };
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
-						throw isFinalShipError(message) ? new NonRetryableError(message) : error;
+						if (isFinalShipError(message)) throw new NonRetryableError(message);
+						if (attempt <= retries) {
+							const next = { attempt: attempt + 1, limit: retries + 1 };
+							await repos()
+								.shipRetrying(ship, {
+									error: message,
+									...next,
+									delayMs: delayMs * 2 ** (attempt - 1)
+								})
+								.catch((cause: unknown) => console.warn('Could not report the ship retry', cause));
+						}
+						throw error;
 					}
 				}
 			);

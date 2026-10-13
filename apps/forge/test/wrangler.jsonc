@@ -8,7 +8,8 @@
 		"AI_GATEWAY": "regit",
 		"SANDBOX_URL": "",
 		"PREVIEW_DOMAIN": "regit.run",
-		"GIT_HOST": "git.regit.dev"
+		"GIT_HOST": "git.regit.dev",
+		"RETRY_DELAY_SCALE": "0.001"
 	},
 	"services": [{ "binding": "MODELS", "service": "fake-models" }],
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],

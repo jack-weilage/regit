@@ -30,6 +30,7 @@ import type {
 	ToolResponse
 } from './protocol.ts';
 import { toolSpecs } from './specs.ts';
+import { errorMessage, SandboxUnavailableError } from '../transient.ts';
 
 const origin = 'http://sandbox';
 
@@ -39,8 +40,20 @@ async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortS
 		headers: { 'Content-Type': 'application/json' },
 		body,
 		signal
+	}).catch((error: unknown) => {
+		if (signal?.aborted) throw error;
+		throw new SandboxUnavailableError(`The sandbox is unreachable: ${errorMessage(error)}`, {
+			cause: error
+		});
 	});
-	const result = (await response.json()) as T | ErrorResponse;
+	const text = await response.text();
+	let result: T | ErrorResponse;
+	try {
+		result = JSON.parse(text) as T | ErrorResponse;
+	} catch {
+		const reason = `The sandbox answered ${response.status}: ${text.slice(0, 200)}`;
+		throw response.status >= 500 ? new SandboxUnavailableError(reason) : new Error(reason);
+	}
 	if (!response.ok) throw new Error((result as ErrorResponse).error);
 	return result as T;
 }

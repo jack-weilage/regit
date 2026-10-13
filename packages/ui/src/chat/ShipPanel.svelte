@@ -12,6 +12,7 @@
 <script lang="ts">
 	import Button from '../Button.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
+	import ChatRetry from './ChatRetry.svelte';
 	import { stopwatch } from './clock.svelte.ts';
 	import { formatDuration } from './format.ts';
 	import type { Intent, ShipProgress, ThreadStatus } from '@regit/core';
@@ -87,6 +88,7 @@
 				</li>
 			{/each}
 		</ol>
+		{#if progress?.retry}<ChatRetry retry={progress.retry} {now} />{/if}
 	{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if writing && !shipping}

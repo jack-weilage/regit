@@ -52,6 +52,15 @@ export interface ToolExecutor {
 	execute(call: ToolCall, signal?: AbortSignal): Promise<ToolOutput>;
 }
 
+export type Reply = Extract<Turn, { role: 'assistant' }>;
+
+// A step whose reply arrived but whose tool calls didn't all finish.
+export interface InflightStep {
+	reply: Reply;
+	usage?: Usage;
+	results: ToolResult[];
+}
+
 export interface Step {
 	turns: Turn[];
 	usage?: Usage;
@@ -60,5 +69,7 @@ export interface Step {
 export type AgentEvent =
 	| { type: 'text'; delta: string }
 	| { type: 'call'; call: ToolCall }
+	| { type: 'reply'; reply: Reply; usage?: Usage }
 	| { type: 'result'; result: ToolResult }
+	| { type: 'retry'; label: string; error: string; attempt: number; limit: number; delayMs: number }
 	| ({ type: 'step' } & Step);

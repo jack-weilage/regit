@@ -8,7 +8,12 @@
 	let { state, ...rest }: Props = $props();
 </script>
 
-<svg class={['status', state]} viewBox="0 0 16 16" aria-hidden="true" {...rest}>
+<svg
+	class={['status', state]}
+	viewBox="0 0 16 16"
+	aria-hidden={rest['aria-label'] ? undefined : 'true'}
+	{...rest}
+>
 	{#if state === 'attention'}
 		<circle cx="8" cy="8" r="4.5" />
 	{:else if state === 'shipping'}

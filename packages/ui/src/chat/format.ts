@@ -3,6 +3,12 @@ export const formatTime = new Intl.DateTimeFormat(undefined, {
 	minute: '2-digit'
 }).format;
 
+export const formatClock = new Intl.DateTimeFormat(undefined, {
+	hour: 'numeric',
+	minute: '2-digit',
+	second: '2-digit'
+}).format;
+
 const shortDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 export function formatAge(at: number, now = Date.now()) {

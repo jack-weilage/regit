@@ -159,6 +159,16 @@ export const stopThread = command(thread, async ({ repo, id }) => {
 	getThreads(repo).refresh();
 });
 
+export const resumeThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo, 'editor')).resume(id, author());
+	getThread({ repo, id }).refresh();
+	getThreads(repo).refresh();
+});
+
+export const retryThreadNow = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo, 'editor')).retryNow(id);
+});
+
 export const bringThreadUpToDate = command(thread, async ({ repo, id }) => {
 	await (await coordinator(repo, 'editor')).bringUpToDate(id, author());
 	getThread({ repo, id }).refresh();

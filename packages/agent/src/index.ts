@@ -27,7 +27,9 @@ export {
 } from './skills.ts';
 export { askThreads, askThreadsTools } from './search.ts';
 export { combineTools } from './tools.ts';
-export { runAgent, type AgentOutcome } from './loop.ts';
+export { modelRetries, runAgent, type AgentOutcome, type RetryPolicy } from './loop.ts';
+export { interruptedOutput, resumeStep } from './resume.ts';
+export { backoff, errorMessage, isTransient, SandboxUnavailableError, sleep } from './transient.ts';
 export { modes, searcher, type Mode } from './modes.ts';
 export { cost, models } from './pricing.ts';
 export type * from './types.ts';

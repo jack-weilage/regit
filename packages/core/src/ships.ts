@@ -1,3 +1,4 @@
+import type { Retry } from './retries.ts';
 import type { Author, Intent } from './threads.ts';
 
 export interface Revision {
@@ -17,6 +18,7 @@ export interface ShipProgress {
 	branch: string | null;
 	since: number;
 	started: number;
+	retry?: Retry | null;
 }
 
 export interface Ship {
