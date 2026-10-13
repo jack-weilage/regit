@@ -22,11 +22,16 @@ interface Running {
 export interface ServicesOptions {
 	logs?: string;
 	readyTimeoutMs?: number;
+	portGraceMs?: number;
 }
 
 export function createServices(
 	root: string,
-	{ logs = join(homedir(), '.regit', 'logs'), readyTimeoutMs = 180_000 }: ServicesOptions = {}
+	{
+		logs = join(homedir(), '.regit', 'logs'),
+		readyTimeoutMs = 180_000,
+		portGraceMs = 2000
+	}: ServicesOptions = {}
 ) {
 	const running = new Map<string, Running>();
 
@@ -67,6 +72,10 @@ export function createServices(
 			throw new ToolError('Service names may only use letters, digits, ., - and _');
 		const current = running.get(spec.name);
 		if (current && current.status !== 'exited') return info(current);
+		if (await taken(spec.port, portGraceMs))
+			throw new ToolError(
+				`Port ${spec.port} is already in use by another process, so ${spec.name} can't start on it. Stop that process or give ${spec.name} another port.`
+			);
 
 		await mkdir(logs, { recursive: true });
 		const log = openSync(join(logs, `${spec.name}.log`), 'w');
@@ -168,6 +177,16 @@ function signal(child: ChildProcess, name: NodeJS.Signals) {
 	} catch {
 		// The process group already exited.
 	}
+}
+
+// Gives a process that is still shutting down, as during a restart, a moment to release the port.
+async function taken(port: number, graceMs: number) {
+	const deadline = Date.now() + graceMs;
+	while (await listening(port)) {
+		if (Date.now() >= deadline) return true;
+		await new Promise((resolve) => setTimeout(resolve, 250));
+	}
+	return false;
 }
 
 function listening(port: number) {
