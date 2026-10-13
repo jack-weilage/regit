@@ -28,7 +28,7 @@ function freePort() {
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), 'regit-services-'));
 	logs = join(root, '.logs');
-	sandbox = createSandbox(root, { services: { logs, readyTimeoutMs: 10_000 } });
+	sandbox = createSandbox(root, { services: { logs, readyTimeoutMs: 10_000, portGraceMs: 300 } });
 });
 
 afterEach(async () => {
@@ -86,6 +86,29 @@ test('starts a saved service, serves it through the preview path and stops it', 
 	await sandbox.services.stop('hello');
 	expect(await sandbox.services.list()).toMatchObject([{ name: 'hello', status: 'stopped' }]);
 	expect((await fetch(`http://sandbox/preview/${port}/`)).status).toBe(502);
+});
+
+test('refuses to start a service on a port another process holds, and restarts on its own port', async () => {
+	const port = await freePort();
+	await mkdir(join(root, '.agents'));
+	await writeFile(
+		join(root, '.agents/services.yml'),
+		`services:\n  hello:\n    command: ${server('hi')}\n    port: ${port}\n`
+	);
+	const holder = createServer().listen(port);
+	await new Promise((resolve) => holder.once('listening', resolve));
+
+	const startedAt = Date.now();
+	await expect(sandbox.services.start({ name: 'hello' })).rejects.toThrow(
+		`Port ${port} is already in use by another process, so hello can't start on it.`
+	);
+	expect(Date.now() - startedAt).toBeLessThan(5000);
+	expect(await sandbox.services.list()).toMatchObject([{ name: 'hello', status: 'stopped' }]);
+
+	await new Promise((resolve) => holder.close(resolve));
+	expect(await sandbox.services.start({ name: 'hello' })).toMatchObject({ status: 'running' });
+	expect(await sandbox.services.restart('hello')).toMatchObject({ status: 'running' });
+	expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toBe('hi');
 });
 
 test('runs one-off services from the CLI', async () => {
