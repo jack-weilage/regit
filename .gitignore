@@ -11,3 +11,4 @@ vite.config.ts.timestamp-*
 .DS_Store
 worker-configuration.d.ts
 debug-storybook.log
+.claude/worktrees/
