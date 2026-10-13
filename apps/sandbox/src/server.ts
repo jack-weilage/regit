@@ -1,3 +1,5 @@
+import { readCi } from './ci.ts';
+import { createJobs } from './jobs.ts';
 import { createServices, type ServicesOptions } from './services.ts';
 import { discoverSkills } from './skills.ts';
 import { isTool, ToolError, tools } from './tools.ts';
@@ -19,13 +21,20 @@ import {
 export interface SandboxOptions {
 	mise?: string;
 	services?: ServicesOptions;
+	jobs?: string;
 }
 
 export function createSandbox(
 	root: string,
-	{ mise = 'mise', services: options }: SandboxOptions = {}
+	{ mise = 'mise', services: options, jobs: jobLogs }: SandboxOptions = {}
 ) {
 	const services = createServices(root, options);
+	const jobs = createJobs(root, jobLogs);
+	const jobRoutes: Record<string, (body: never) => Promise<object>> = {
+		start: (body) => jobs.start(body),
+		read: (body) => jobs.read(body),
+		stop: (body) => jobs.stop(body)
+	};
 	const serviceRoutes: Record<string, (body: never) => Promise<object>> = {
 		list: async () => ({ services: await services.list() }),
 		start: async (body) => ({ service: await services.start(body) }),
@@ -48,6 +57,7 @@ export function createSandbox(
 		toolchain: async () => ({ tools: await toolchain(root, mise) }),
 		hook: (body) => hook(root, body),
 		skills: async () => ({ skills: await discoverSkills(root) }),
+		ci: () => readCi(root),
 		trust: () => trustInterception()
 	};
 
@@ -86,6 +96,9 @@ export function createSandbox(
 			if (group === 'services' && Object.hasOwn(serviceRoutes, name)) {
 				return Response.json(await serviceRoutes[name]!((await request.json()) as never));
 			}
+			if (group === 'jobs' && Object.hasOwn(jobRoutes, name)) {
+				return Response.json(await jobRoutes[name]!((await request.json()) as never));
+			}
 			if (group === 'workspace' && Object.hasOwn(workspace, name)) {
 				return Response.json(await workspace[name]!((await request.json()) as never));
 			}
@@ -96,7 +109,7 @@ export function createSandbox(
 		}
 	}
 
-	return Object.assign(handle, { services });
+	return Object.assign(handle, { services, jobs });
 }
 
 function error(message: string, status: number) {

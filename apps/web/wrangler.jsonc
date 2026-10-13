@@ -9,7 +9,10 @@
 		"directory": ".svelte-kit/cloudflare"
 	},
 	"durable_objects": {
-		"bindings": [{ "name": "REPOS", "class_name": "RepoCoordinator", "script_name": "regit-forge" }]
+		"bindings": [
+			{ "name": "REPOS", "class_name": "RepoCoordinator", "script_name": "regit-forge" },
+			{ "name": "CI", "class_name": "RepoCi", "script_name": "regit-forge" }
+		]
 	},
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"d1_databases": [

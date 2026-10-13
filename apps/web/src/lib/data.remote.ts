@@ -1,11 +1,11 @@
 import { command, getRequestEvent, query } from '$app/server';
 import { error } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
-import { machines, repoNamePattern, type Machine } from '@regit/core';
-import { repos, repoMembers, type RepoRole } from '@regit/db';
+import { ciSecretPattern, machines, repoNamePattern, type Machine } from '@regit/core';
+import { canAccessRepository, repos, repoMembers, type RepoRole } from '@regit/db';
 import { and, asc, eq } from 'drizzle-orm';
 import * as v from 'valibot';
-import { coordinatorFor } from '#lib/server/coordinators.ts';
+import { ciFor, coordinatorFor } from '#lib/server/coordinators.ts';
 import { db } from '#lib/server/db.ts';
 import { createGitToken, listGitTokens, revokeGitToken } from '#lib/server/git.ts';
 import { createRepo as create, RepoError } from '#lib/server/repos.ts';
@@ -259,3 +259,52 @@ export const revokeRepoMember = command(member, async ({ repo, principalId }) =>
 		.where(and(eq(repoMembers.repo, repo), eq(repoMembers.principalId, principalId)));
 	getRepoMembers(repo).refresh();
 });
+
+async function ci(repo: string, role: RepoRole = 'viewer') {
+	await requireRepoAccess(repo, getRequestEvent().locals.user?.id, role);
+	return ciFor(repo);
+}
+
+const ciRun = v.object({ repo: name, id: v.pipe(v.string(), v.regex(/^[0-9a-f]{12}$/)) });
+const secretName = v.pipe(v.string(), v.regex(ciSecretPattern));
+
+export const getCiRuns = query(name, async (repo) => {
+	const target = await ci(repo);
+	const owner = await canAccessRepository(db(), repo, getRequestEvent().locals.user.id, 'owner');
+	return { ...(await target.runs()), secrets: owner ? await target.secrets() : null };
+});
+
+export const getCiLog = query(
+	v.object({ ...ciRun.entries, step: v.pipe(v.string(), v.regex(/^[\w.-]+$/)) }),
+	async ({ repo, id, step }) => (await ci(repo)).log(id, step)
+);
+
+export const rerunCi = command(ciRun, async ({ repo, id }) => {
+	await (await ci(repo, 'owner')).rerun(id, author());
+	getCiRuns(repo).refresh();
+});
+
+export const cancelCi = command(ciRun, async ({ repo, id }) => {
+	await (await ci(repo, 'owner')).cancel(id, author());
+	getCiRuns(repo).refresh();
+});
+
+export const setCiSecret = command(
+	v.object({
+		repo: name,
+		name: secretName,
+		value: v.pipe(v.string(), v.minLength(1), v.maxLength(32_768))
+	}),
+	async ({ repo, name, value }) => {
+		await (await ci(repo, 'owner')).setSecret(name, value, author());
+		getCiRuns(repo).refresh();
+	}
+);
+
+export const deleteCiSecret = command(
+	v.object({ repo: name, name: secretName }),
+	async ({ repo, name }) => {
+		await (await ci(repo, 'owner')).deleteSecret(name, author());
+		getCiRuns(repo).refresh();
+	}
+);

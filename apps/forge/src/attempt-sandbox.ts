@@ -36,6 +36,7 @@ import {
 	skillTools,
 	threadsSkill,
 	toolchainsSkill,
+	ciSkill,
 	verificationSkill,
 	repositoryGuidance,
 	withSkills,
@@ -446,6 +447,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				threadsSkill,
 				servicesSkill,
 				toolchainsSkill,
+				ciSkill,
 				verificationSkill
 			]);
 			const guidance = await repositoryGuidance(this.#tools(fetch));
@@ -1453,7 +1455,7 @@ function isActive(status: AttemptStatus) {
 	return ['queued', 'running'].includes(status);
 }
 
-async function waitUntilHealthy(fetch: Fetch) {
+export async function waitUntilHealthy(fetch: Fetch) {
 	let lastError: unknown;
 	const deadline = Date.now() + healthTimeoutMs;
 	while (Date.now() < deadline) {

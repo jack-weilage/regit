@@ -103,6 +103,27 @@ Toolchains come from mise. The versions the repository declares (mise.toml, .too
 - \`mise ls --current\` shows what is installed and active.`
 };
 
+export const ciSkill: Skill = {
+	name: 'ci',
+	description:
+		'Set up or change CI: the checks, builds and deploys that run on each commit that lands on the default branch.',
+	body: `# CI
+
+ReGit runs the steps in \`.agents/ci.yml\` on each commit that lands on the default branch, one run at a time, in a fresh sandbox prepared like yours (toolchains, then \`.agents/setup\`). People follow runs on the repository's CI page.
+
+\`\`\`yaml
+steps:
+  check: bun run check
+  deploy:
+    run: bash .agents/deploy
+\`\`\`
+
+- Steps run in order from the repository root, each as a bash command; the first that fails skips the rest. Put long scripts in a file such as \`.agents/deploy\`.
+- Every step gets the repository's CI secrets as environment variables, plus \`CI=true\`, \`REGIT_REPO\`, \`REGIT_BRANCH\`, \`REGIT_SHA\` and \`REGIT_LAST_PASSED_SHA\` (empty before the first passing run).
+- Only owners can see or set secrets. Never print them, and ask a person to add any a step needs.
+- A run has 60 minutes in total. Runs never happen in threads, so check the same commands yourself before shipping.`
+};
+
 export function mergeSkills(builtIn: Skill[], repo: Skill[]) {
 	const names = new Set(repo.map((skill) => skill.name));
 	return [...builtIn.filter((skill) => !names.has(skill.name)), ...repo];

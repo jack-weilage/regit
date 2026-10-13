@@ -24,6 +24,7 @@
 		getGitAccess,
 		getRepos,
 		revokeGitAccessToken,
+		getCiRuns,
 		getThread,
 		getThreads,
 		getUser,
@@ -46,6 +47,7 @@
 		(known.find((known) => known.name === repo)?.machine as Machine | undefined) ?? defaultMachine
 	);
 	let summaries = $derived(await getThreads(repo));
+	let ci = $derived(await getCiRuns(repo));
 	let threads = $derived<ThreadListItem[]>(
 		summaries.map((thread) => ({
 			id: thread.id,
@@ -77,6 +79,7 @@
 			if (opened) {
 				for (const thread of Object.keys(activities)) delete activities[thread];
 				getThreads(repo).refresh();
+				getCiRuns(repo).refresh();
 				if (page.params.thread) getThread({ repo, id: page.params.thread }).refresh();
 			}
 			opened = true;
@@ -85,6 +88,10 @@
 			const message = JSON.parse(event.data) as LiveMessage;
 			if (message.type === 'activity') {
 				activities[message.thread] = message.activity;
+				return;
+			}
+			if (message.type === 'ci') {
+				getCiRuns(repo).refresh();
 				return;
 			}
 			const thread = message.type === 'entry' ? message.thread : message.summary.id;
@@ -136,6 +143,11 @@
 		{repos}
 		{threads}
 		current={page.params.thread}
+		ci={{
+			href: `/${repo}/ci`,
+			current: page.route.id === '/[repo]/ci',
+			status: ci.runs[0]?.status
+		}}
 		account={user}
 		bind:mode
 		bind:machine

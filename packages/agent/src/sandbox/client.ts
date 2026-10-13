@@ -2,6 +2,7 @@ import type { ToolExecutor } from '../types.ts';
 import type {
 	BuildShipRequest,
 	BuildShipResponse,
+	CiConfig,
 	PushShipRequest,
 	PushShipResponse,
 	CloneRequest,
@@ -18,6 +19,9 @@ import type {
 	HeadBranchResponse,
 	HookRequest,
 	HookResponse,
+	JobRead,
+	JobReadRequest,
+	JobStartRequest,
 	PublishProvenanceRequest,
 	PushRequest,
 	PushResponse,
@@ -150,6 +154,18 @@ export function sandboxWorkspace(fetch: Fetch) {
 				JSON.stringify({ name, lines })
 			);
 			return logs;
+		},
+		ci() {
+			return post<CiConfig>(fetch, '/workspace/ci', '{}');
+		},
+		async startJob(request: JobStartRequest) {
+			await post(fetch, '/jobs/start', JSON.stringify(request));
+		},
+		readJob(request: JobReadRequest) {
+			return post<JobRead>(fetch, '/jobs/read', JSON.stringify(request));
+		},
+		async stopJob(name: string) {
+			await post(fetch, '/jobs/stop', JSON.stringify({ name }));
 		},
 		async diff(request: DiffRequest) {
 			const { diff } = await post<DiffResponse>(fetch, '/workspace/diff', JSON.stringify(request));

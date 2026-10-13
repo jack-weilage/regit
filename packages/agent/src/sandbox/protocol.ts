@@ -155,6 +155,28 @@ export interface ServiceLogsRequest extends ServiceRequest {
 	lines?: number;
 }
 
+export interface CiConfig {
+	steps: { name: string; command: string }[] | null;
+}
+
+export interface JobStartRequest {
+	name: string;
+	command: string;
+	env?: Record<string, string>;
+}
+
+export interface JobReadRequest {
+	name: string;
+	offset?: number;
+}
+
+export interface JobRead {
+	status: 'running' | 'exited' | 'unknown';
+	exitCode: number | null;
+	output: string;
+	offset: number;
+}
+
 export interface HeadBranchRequest {
 	remote: string;
 }

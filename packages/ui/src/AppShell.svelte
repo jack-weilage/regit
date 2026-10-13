@@ -4,7 +4,9 @@
 	import Button from './Button.svelte';
 	import Menu from './Menu.svelte';
 	import NewRepoPalette, { type NewRepo } from './NewRepoPalette.svelte';
-	import type { Machine } from '@regit/core';
+	import type { CiStatus, Machine } from '@regit/core';
+	import StatusIcon from './StatusIcon.svelte';
+	import { ciStatuses } from './ci-status.ts';
 	import NewThreadPalette, { type Mode } from './chat/NewThreadPalette.svelte';
 	import ThreadIcon from './chat/ThreadIcon.svelte';
 	import ThreadList, { type ThreadListItem } from './chat/ThreadList.svelte';
@@ -21,6 +23,7 @@
 		similar?: SimilarThread[];
 		size?: Exclude<Mode, 'auto'>;
 		now?: number;
+		ci?: { href: string; current?: boolean; status?: CiStatus };
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onclone?: () => void;
@@ -41,6 +44,7 @@
 		similar,
 		size,
 		now,
+		ci,
 		onswitchrepo,
 		oncreaterepo,
 		onclone,
@@ -98,6 +102,26 @@
 		>
 			<ThreadList {threads} {current} {now} newThread="{id}-new-thread" />
 		</div>
+
+		{#if ci}
+			<div class="links">
+				<a
+					href={ci.href}
+					aria-current={ci.current ? 'page' : undefined}
+					class={ci.status}
+					onclick={() => (open = false)}
+				>
+					<span>CI</span>
+					{#if ci.status}
+						<StatusIcon
+							state={ciStatuses[ci.status].icon}
+							role="img"
+							aria-label={ciStatuses[ci.status].label}
+						/>
+					{/if}
+				</a>
+			</div>
+		{/if}
 
 		{#if account}
 			<div class="account">
@@ -161,7 +185,7 @@
 
 	.sidebar {
 		display: grid;
-		grid-template-rows: auto minmax(0, 1fr) auto;
+		grid-template-rows: auto minmax(0, 1fr) auto auto;
 		grid-template-columns: minmax(0, 1fr);
 		min-inline-size: 0;
 		border-inline-end: 1px solid var(--color-border);
@@ -219,6 +243,43 @@
 	.list {
 		overflow-y: auto;
 		padding: var(--space-2) var(--space-3);
+	}
+
+	.links {
+		padding: var(--space-2) var(--space-3);
+		border-block-start: 1px solid var(--color-border);
+
+		a {
+			--icon-size: 0.9em;
+
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: var(--space-3);
+			padding: var(--space-3) var(--space-4);
+			border-radius: var(--radius);
+			color: var(--color-muted);
+			text-decoration: none;
+
+			&:hover,
+			&[aria-current='page'] {
+				background: var(--color-surface);
+				color: var(--color-fg);
+			}
+
+			&:focus-visible {
+				outline: 2px solid var(--color-accent);
+				outline-offset: -2px;
+			}
+
+			&.passed > :global(.status) {
+				color: var(--color-added);
+			}
+
+			&.failed > :global(.status) {
+				color: var(--color-danger-text);
+			}
+		}
 	}
 
 	.account {

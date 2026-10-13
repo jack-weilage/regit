@@ -7,6 +7,7 @@ export { AttemptSandbox } from './attempt-sandbox.ts';
 export { GitProxy } from './git-proxy.ts';
 export { RepositoryGit, PublisherGitProxy } from './repository-git.ts';
 export { RepoCoordinator } from './repo-coordinator.ts';
+export { RepoCi } from './repo-ci.ts';
 export { Models } from './models.ts';
 export { RepoPushed } from './repo-pushed.ts';
 export { ShipThread } from './ship-thread.ts';

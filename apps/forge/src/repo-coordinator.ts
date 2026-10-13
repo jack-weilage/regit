@@ -13,6 +13,7 @@ import {
 	type Usage
 } from '@regit/agent';
 import type {
+	CiRun,
 	Author,
 	Entry,
 	Failure,
@@ -1200,6 +1201,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#touch(thread: string) {
 		this.#sql.exec('UPDATE threads SET updated_at = ? WHERE id = ?', Date.now(), thread);
 		this.#broadcast({ type: 'thread', summary: this.#summary(thread)! });
+	}
+
+	ciUpdated(run: CiRun) {
+		this.#broadcast({ type: 'ci', run });
 	}
 
 	#broadcast(message: LiveMessage) {

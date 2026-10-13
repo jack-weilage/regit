@@ -1,0 +1,6 @@
+# Runs in order on each commit that lands on main; a failing step skips the rest.
+# Owners set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID under CI → Secrets.
+steps:
+  check: bun run check
+  test: bun run test
+  deploy: bash .agents/deploy

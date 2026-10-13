@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ServiceInfo, ServiceSpec } from '@regit/agent';
 import { ToolError } from './tools.ts';
+import { isMap, parseYaml } from './yaml.ts';
 
 export const servicesFile = '.agents/services.yml';
 
@@ -201,7 +202,7 @@ function listening(port: number) {
 }
 
 export function parseServices(text: string): ServiceSpec[] {
-	const root = parseYaml(text);
+	const root = parseYaml(text, servicesFile);
 	const services = root.services;
 	if (services === undefined) return [];
 	if (!isMap(services))
@@ -227,36 +228,4 @@ export function parseServices(text: string): ServiceSpec[] {
 			})
 		};
 	});
-}
-
-type YamlMap = { [key: string]: string | YamlMap };
-
-const isMap = (value: unknown): value is YamlMap => typeof value === 'object' && value !== null;
-
-function parseYaml(text: string): YamlMap {
-	const root: YamlMap = {};
-	const stack: { indent: number; map: YamlMap }[] = [{ indent: -1, map: root }];
-	for (const [index, raw] of text.split('\n').entries()) {
-		const line = raw.replace(/\s+#.*$/, '').trimEnd();
-		if (!line.trim() || line.trim().startsWith('#')) continue;
-		const indent = line.length - line.trimStart().length;
-		const match = /^([\w.-]+):(?:\s+(.*))?$/.exec(line.trim());
-		if (!match) throw new ToolError(`${servicesFile}:${index + 1}: expected "key: value"`);
-		while (stack.length > 1 && indent <= stack.at(-1)!.indent) stack.pop();
-		const parent = stack.at(-1)!.map;
-		const [, key, value] = match;
-		if (value === undefined || value === '') {
-			const child: YamlMap = {};
-			parent[key!] = child;
-			stack.push({ indent, map: child });
-		} else {
-			parent[key!] = unquote(value);
-		}
-	}
-	return root;
-}
-
-function unquote(value: string) {
-	const quoted = /^(['"])(.*)\1$/.exec(value);
-	return quoted ? quoted[2]! : value;
 }

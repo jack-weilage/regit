@@ -163,7 +163,8 @@ export interface ThreadDetail {
 export type LiveMessage =
 	| { type: 'entry'; thread: string; entry: Entry }
 	| { type: 'thread'; summary: ThreadSummary }
-	| { type: 'activity'; thread: string; activity: ThreadActivity | null };
+	| { type: 'activity'; thread: string; activity: ThreadActivity | null }
+	| { type: 'ci'; run: import('./ci.ts').CiRun };
 
 export interface RepoCoordinatorApi {
 	image(id: string): { mime: string; data: Uint8Array<ArrayBuffer> } | null;

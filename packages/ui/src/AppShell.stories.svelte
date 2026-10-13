@@ -3,6 +3,7 @@
 	import type { ComponentProps } from 'svelte';
 	import { expect, fn, waitFor } from 'storybook/test';
 	import AppShell from './AppShell.svelte';
+	import CiView from './CiView.svelte';
 	import ChatComposer from './chat/ChatComposer.svelte';
 	import ChatFooter from './chat/ChatFooter.svelte';
 	import ChatGroup from './chat/ChatGroup.svelte';
@@ -66,6 +67,7 @@
 			current: 'members',
 			now,
 			account: { name: 'Jack Weilage', email: 'jack@regit.dev' },
+			ci: { href: '#ci', status: 'failed' },
 			onswitchrepo: fn(),
 			oncreaterepo: fn(async () => {}),
 			onstart: fn()
@@ -165,5 +167,66 @@
 >
 	{#snippet template(args)}
 		{@render shell(args, '24rem')}
+	{/snippet}
+</Story>
+
+<Story
+	name="CI"
+	args={{ current: undefined, ci: { href: '#ci', current: true, status: 'passed' } }}
+	play={async ({ canvas, canvasElement, userEvent }) => {
+		const sidebar = canvasElement.querySelector('aside')!;
+		canvasElement.addEventListener('click', (event) => event.preventDefault());
+		await userEvent.click(canvas.getByRole('button', { name: 'Threads' }));
+		await waitFor(() => expect(sidebar).toBeVisible());
+		const link = canvas.getByRole('link', { name: 'CI Passed' });
+		await expect(link).toHaveAttribute('aria-current', 'page');
+		await userEvent.click(link);
+		await waitFor(() => expect(sidebar).not.toBeVisible());
+	}}
+>
+	{#snippet template(args)}
+		{@const { children: _, ...props } = args}
+		<div style="block-size: 40rem; inline-size: 24rem">
+			<AppShell {...props}>
+				<CiView
+					repo="regit/web"
+					{now}
+					runs={[
+						{
+							id: 'r1',
+							sha: '4b81e0c2f9a7d613',
+							branch: 'main',
+							headline: 'fix(auth): refresh expired sessions',
+							status: 'passed',
+							by: null,
+							startedAt: minutes(30),
+							finishedAt: minutes(27),
+							error: null,
+							steps: [
+								{
+									name: 'Prepare',
+									command: '',
+									status: 'passed',
+									startedAt: minutes(30),
+									finishedAt: minutes(29),
+									exitCode: 0,
+									logSize: 1024
+								},
+								{
+									name: 'check',
+									command: 'bun run check',
+									status: 'passed',
+									startedAt: minutes(29),
+									finishedAt: minutes(27),
+									exitCode: 0,
+									logSize: 1024
+								}
+							]
+						}
+					]}
+					log="svelte-check found 0 errors"
+				/>
+			</AppShell>
+		</div>
 	{/snippet}
 </Story>

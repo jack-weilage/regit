@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Forge first: web binds to its Durable Objects.
+bun run --filter @regit/forge deploy
+bun run --filter @regit/web deploy

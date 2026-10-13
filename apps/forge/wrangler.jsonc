@@ -47,7 +47,8 @@
 		"bindings": [
 			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
 			{ "name": "REPOSITORY_GIT", "class_name": "RepositoryGit" },
-			{ "name": "REPOS", "class_name": "RepoCoordinator" }
+			{ "name": "REPOS", "class_name": "RepoCoordinator" },
+			{ "name": "CI", "class_name": "RepoCi" }
 		]
 	},
 	"exports": {
@@ -57,7 +58,8 @@
 			"storage": "sqlite",
 			"container": "repository-git"
 		},
-		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" }
+		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" },
+		"RepoCi": { "type": "durable-object", "storage": "sqlite", "container": "ci" }
 	},
 	"containers": [
 		{
@@ -67,6 +69,11 @@
 		},
 		{
 			"name": "repository-git",
+			"scheduling_policy": "durable_object",
+			"images": { "sandbox": { "dockerfile": "../sandbox/Dockerfile" } }
+		},
+		{
+			"name": "ci",
 			"scheduling_policy": "durable_object",
 			"images": { "sandbox": { "dockerfile": "../sandbox/Dockerfile" } }
 		}

@@ -25,7 +25,8 @@
 		"bindings": [
 			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
 			{ "name": "REPOSITORY_GIT", "class_name": "RepositoryGit" },
-			{ "name": "REPOS", "class_name": "RepoCoordinator" }
+			{ "name": "REPOS", "class_name": "RepoCoordinator" },
+			{ "name": "CI", "class_name": "RepoCi" }
 		]
 	},
 	"workflows": [
@@ -35,6 +36,7 @@
 	"exports": {
 		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite" },
 		"RepositoryGit": { "type": "durable-object", "storage": "sqlite" },
-		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" }
+		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" },
+		"RepoCi": { "type": "durable-object", "storage": "sqlite" }
 	}
 }
