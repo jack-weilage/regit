@@ -407,7 +407,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 					model,
 					effort,
 					sessionId: this.#thread(),
-					metadata: { thread: this.#thread(), mode: attempt.mode, task: 'agent' }
+					metadata: {
+						repo: attempt.repo,
+						thread: this.#thread(),
+						mode: attempt.mode,
+						task: 'agent'
+					}
 				}),
 				tools: combineTools(
 					skillTools(skills),
@@ -713,7 +718,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				model: searcher.model,
 				effort: searcher.effort,
 				sessionId: `${thread}/search`,
-				metadata: { thread, mode: this.#meta('mode') ?? 'medium', task: 'search' }
+				metadata: { repo, thread, mode: this.#meta('mode') ?? 'medium', task: 'search' }
 			}),
 			source: {
 				list: () => coordinator.otherThreads(thread),

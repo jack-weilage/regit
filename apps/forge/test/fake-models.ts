@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { GatewayRequest, JevRequest, JevResponse } from '@regit/agent';
+import type { GatewayRequest, JevRequest, JevResponse, Metadata } from '@regit/agent';
 
 const completed = {
 	type: 'response.completed',
@@ -8,43 +8,49 @@ const completed = {
 	}
 };
 
-let replies: object[][] = [];
-let requests: GatewayRequest[] = [];
-let decisions: JevResponse[] = [];
-let decided: JevRequest[] = [];
+const replies = new Map<string, object[][]>();
+const requests = new Map<string, GatewayRequest[]>();
+const decisions = new Map<string, JevResponse[]>();
+const decided = new Map<string, JevRequest[]>();
+
+function list<T>(lists: Map<string, T[]>, repo: string) {
+	if (!lists.has(repo)) lists.set(repo, []);
+	return lists.get(repo)!;
+}
 
 export default class FakeModels extends WorkerEntrypoint {
-	script(next: object[][]) {
-		replies = next;
-		requests = [];
+	script(repo: string, next: object[][]) {
+		replies.set(repo, next);
+		requests.set(repo, []);
 	}
 
-	requests() {
-		return JSON.stringify(requests);
+	requests(repo: string) {
+		return JSON.stringify(list(requests, repo));
 	}
 
-	scriptDecisions(next: JevResponse[]) {
-		decisions = next;
-		decided = [];
+	scriptDecisions(repo: string, next: JevResponse[]) {
+		decisions.set(repo, next);
+		decided.set(repo, []);
 	}
 
-	decisionRequests() {
-		return JSON.stringify(decided);
+	decisionRequests(repo: string) {
+		return JSON.stringify(list(decided, repo));
 	}
 
-	decide(request: JevRequest): JevResponse {
-		decided.push(request);
+	decide(request: JevRequest, { repo }: Metadata = {}): JevResponse {
+		list(decided, String(repo)).push(request);
 		const unrelated = { probabilities: { unrelated: 1 } };
 		return (
-			decisions.shift() ?? {
+			list(decisions, String(repo)).shift() ?? {
 				answers: Object.fromEntries(Object.keys(request.questions).map((key) => [key, unrelated]))
 			}
 		);
 	}
 
 	run(request: GatewayRequest) {
-		requests.push(request);
-		const reply = replies.shift();
+		const { repo } = request.headers['cf-aig-metadata'] as Metadata;
+		list(requests, String(repo)).push(request);
+		const reply = list(replies, String(repo)).shift();
 		if (!reply)
 			return Response.json(
 				{ error: { message: 'The fake model ran out of replies' } },

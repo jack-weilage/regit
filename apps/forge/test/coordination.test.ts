@@ -1,0 +1,426 @@
+import { expect, test } from 'vitest';
+import { setup, untilThread } from './support.ts';
+
+const { worker, script, modelRequests, scriptDecisions, decisionRequests, seed } = await setup();
+
+test('suggests separate work and spins it off into a linked thread', async () => {
+	await seed('suggesting', { 'notes.md': 'Some notes\n' });
+	const suggestion = {
+		headline: 'fix(audit): query only the last entry',
+		purpose: 'Settings fetch the whole audit log.',
+		doneWhen: ['One query returns one row'],
+		context: 'notes.md:1 mentions the audit log query.'
+	};
+	await script('suggesting', [
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'suggest',
+					name: 'suggest_thread',
+					arguments: JSON.stringify(suggestion)
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Noted that separately.' }],
+		[{ type: 'response.output_text.delta', delta: 'Got it.' }]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('suggesting');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'suggesting',
+		author: sam,
+		text: 'Tidy the notes.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const parent = await untilThread(repo, id, (detail) =>
+		detail.entries.some(
+			(entry) => entry.type === 'message' && entry.text === 'Noted that separately.'
+		)
+	);
+	const card = parent.entries.find((entry) => entry.type === 'suggestion')!;
+	expect(card).toMatchObject({
+		intent: { headline: suggestion.headline, doneWhen: suggestion.doneWhen },
+		context: suggestion.context,
+		outcome: null
+	});
+
+	const child = await repo.spinOff(id, card.id, sam);
+	expect(child).toMatchObject({
+		headline: suggestion.headline,
+		status: 'needs-you',
+		mode: 'small',
+		parent: { id, headline: 'Tidy the notes.' }
+	});
+	expect((await repo.thread(id))!.entries.find((entry) => entry.id === card.id)).toMatchObject({
+		outcome: { kind: 'spun-off', thread: child.id, by: 'Sam' }
+	});
+	expect((await repo.thread(child.id))!.entries).toMatchObject([
+		{ type: 'message', author: { name: 'ReGit' }, text: suggestion.context },
+		{ type: 'intent', intent: { headline: suggestion.headline } }
+	]);
+	await expect(repo.spinOff(id, card.id, sam)).rejects.toThrow();
+
+	await repo.reply(child.id, { author: sam, text: 'Go ahead.' });
+	await untilThread(repo, child.id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Got it.')
+	);
+	const requests = await modelRequests('suggesting');
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain('spun off from another one');
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain(suggestion.context);
+
+	await repo.suggestThread(id, { ...suggestion, headline: 'docs: explain the audit log' });
+	const second = (await repo.thread(id))!.entries.findLast((entry) => entry.type === 'suggestion')!;
+	repo.dismissSuggestion(id, second.id, sam);
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some(
+			(entry) =>
+				entry.id === second.id && entry.type === 'suggestion' && entry.outcome?.kind === 'dismissed'
+		)
+	);
+});
+
+test("delivers a thread's message to another thread's agent", async () => {
+	await seed('pair', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('pair');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const replied = async (thread: string, count: number) => {
+		await expect
+			.poll(
+				async () =>
+					(await repo.thread(thread))!.entries.filter(
+						(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+					).length,
+				{ timeout: 20_000 }
+			)
+			.toBe(count);
+	};
+
+	await script('pair', [[{ type: 'response.output_text.delta', delta: 'Listening.' }]]);
+	const ui = await repo.openThread({
+		repo: 'pair',
+		author: sam,
+		text: 'Rework the settings page.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(ui.id, 1);
+
+	await script('pair', [
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'tell',
+					name: 'message_thread',
+					arguments: JSON.stringify({ thread: ui.id, text: 'User.id is now User.accountId.' })
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Noted.' }],
+		[{ type: 'response.output_text.delta', delta: 'Noted.' }]
+	]);
+	const api = await repo.openThread({
+		repo: 'pair',
+		author: sam,
+		text: 'Rename the user id and tell the settings thread.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(api.id, 1);
+	await replied(ui.id, 2);
+
+	expect((await repo.thread(api.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			direction: 'out',
+			thread: ui.id,
+			text: 'User.id is now User.accountId.'
+		})
+	);
+	expect((await repo.thread(ui.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			direction: 'in',
+			thread: api.id,
+			headline: 'Rename the user id and tell the settings thread.',
+			text: 'User.id is now User.accountId.'
+		})
+	);
+	const delivered = (await modelRequests('pair')).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === ui.id
+	);
+	expect(JSON.stringify(delivered)).toContain(`Thread ${api.id} (`);
+});
+
+test('refuses thread messages to itself, unknown or idle threads, and past the limit', async () => {
+	await seed('guarded', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('guarded');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	await script(
+		'guarded',
+		Array.from({ length: 8 }, () => [{ type: 'response.output_text.delta', delta: 'Ok.' }])
+	);
+	const open = (text: string) =>
+		repo.openThread({ repo: 'guarded', author: sam, text, mode: 'small', machine: 'standard-1' });
+	const [from, to, idle] = [await open('One.'), await open('Two.'), await open('Three.')];
+	// Miniflare's test bridge drops the message of a rejected RPC call, so only the rejection is checked.
+	const send = async (a: string, b: string, text: string) => repo.messageThread(a, b, text);
+
+	await expect(send(from.id, from.id, 'Hi')).rejects.toThrow();
+	await expect(send(from.id, 'nope', 'Hi')).rejects.toThrow();
+	await repo.discard(idle.id, sam);
+	await expect(send(from.id, idle.id, 'Hi')).rejects.toThrow();
+	for (let i = 0; i < 5; i++) await send(from.id, to.id, `Message ${i}`);
+	await expect(send(from.id, to.id, 'One more')).rejects.toThrow();
+	await repo.reply(to.id, { author: sam, text: 'Carry on.' });
+	await expect(send(from.id, to.id, 'After the person')).resolves.toContain('Delivered');
+});
+
+test('flags a proposed intent that duplicates another thread, and forwards it there', async () => {
+	await seed('dupes', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('dupes');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const propose = (headline: string) => [
+		{
+			type: 'response.output_item.done',
+			item: {
+				type: 'function_call',
+				call_id: 'intent',
+				name: 'update_intent',
+				arguments: JSON.stringify({
+					headline,
+					purpose: 'Big orgs wait for every member to load.',
+					doneWhen: ['Settings loads in under a second']
+				})
+			}
+		}
+	];
+	const intent = async (thread: string) => {
+		await expect
+			.poll(
+				async () =>
+					(await repo.thread(thread))!.entries.findLast((entry) => entry.type === 'intent'),
+				{
+					timeout: 20_000
+				}
+			)
+			.toBeDefined();
+		return (await repo.thread(thread))!.entries.findLast((entry) => entry.type === 'intent')!;
+	};
+
+	await script('dupes', [
+		propose('perf(settings): load org members in pages'),
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const first = await repo.openThread({
+		repo: 'dupes',
+		author: sam,
+		text: 'Settings are slow.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	expect(await intent(first.id)).not.toHaveProperty('similar');
+	await untilThread(repo, first.id, (detail) => detail.summary.status === 'needs-you');
+
+	await scriptDecisions('dupes', [
+		{
+			answers: { t1: { probabilities: { same: 0.93, overlap: 0.05, related: 0.02, unrelated: 0 } } }
+		}
+	]);
+	await script('dupes', [
+		propose('fix(settings): page the member list'),
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const second = await repo.openThread({
+		repo: 'dupes',
+		author: sam,
+		text: 'Members take ages.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await expect
+		.poll(
+			async () =>
+				(await intent(second.id)).type === 'intent' &&
+				((await intent(second.id)) as { similar?: unknown }).similar,
+			{
+				timeout: 20_000
+			}
+		)
+		.toEqual([{ thread: first.id, relation: 'same', probability: 0.93 }]);
+	const [asked] = await decisionRequests('dupes');
+	expect(asked!.state).toMatchObject({
+		new_intent: expect.stringContaining('fix(settings): page the member list'),
+		threads: {
+			t1: 'perf(settings): load org members in pages — Big orgs wait for every member to load.'
+		}
+	});
+	await untilThread(repo, second.id, (detail) => detail.summary.status === 'needs-you');
+
+	await script('dupes', [[{ type: 'response.output_text.delta', delta: 'Thanks.' }]]);
+	await repo.forwardIntent(second.id, first.id, sam);
+	expect((await repo.thread(first.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			direction: 'in',
+			thread: second.id,
+			text: expect.stringContaining(
+				'Sam found that this thread has the same goal as yours: fix(settings): page the member list'
+			)
+		})
+	);
+
+	await scriptDecisions('dupes', [
+		{
+			answers: {
+				t1: { probabilities: { unrelated: 1 } },
+				t2: { probabilities: { same: 0.2, overlap: 0.6, related: 0.1, unrelated: 0.1 } }
+			}
+		}
+	]);
+	const live = await repo.assess('Show members a page at a time');
+	expect(live).toEqual({
+		similar: [{ thread: expect.any(String), relation: 'overlap', probability: 0.8 }],
+		size: 'medium'
+	});
+});
+
+test('sizes an auto thread when it opens and again when its intent changes', async () => {
+	await seed('sized', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('sized');
+	await scriptDecisions('sized', [
+		{ answers: { size: { probabilities: { small: 0.1, medium: 0.2, large: 0.7 } } } },
+		{ answers: { size: { probabilities: { small: 0.85, medium: 0.1, large: 0.05 } } } }
+	]);
+	await script('sized', [
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'intent',
+					name: 'update_intent',
+					arguments: JSON.stringify({
+						headline: 'docs: fix a typo in the notes',
+						purpose: 'The notes misspell "receive".',
+						doneWhen: ['notes.md spells it correctly']
+					})
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const opened = await repo.openThread({
+		repo: 'sized',
+		author: { name: 'Sam', kind: 'person' },
+		text: 'Rework how notes are stored.',
+		mode: 'auto',
+		machine: 'standard-1'
+	});
+	expect(opened).toMatchObject({ mode: 'large', auto: true });
+	await expect
+		.poll(async () => (await repo.thread(opened.id))!.summary.mode, { timeout: 20_000 })
+		.toBe('small');
+	expect((await repo.thread(opened.id))!.summary.auto).toBe(true);
+	const [first] = await decisionRequests('sized');
+	expect(first!.state).toMatchObject({ new_intent: 'Rework how notes are stored.' });
+});
+
+test('answers questions about another thread without interrupting it', async () => {
+	await seed('observed', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('observed');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const callTool = (call_id: string, name: string, args: object) => [
+		{
+			type: 'response.output_item.done',
+			item: { type: 'function_call', call_id, name, arguments: JSON.stringify(args) }
+		}
+	];
+	const replied = async (thread: string) =>
+		expect
+			.poll(
+				async () =>
+					(await repo.thread(thread))!.entries.some(
+						(entry) => entry.type === 'message' && entry.author.kind === 'agent'
+					),
+				{ timeout: 20_000 }
+			)
+			.toBe(true);
+
+	await script('observed', [
+		callTool('intent', 'update_intent', {
+			headline: 'docs(notes): add a title',
+			purpose: 'The notes have no heading.',
+			doneWhen: ['notes.md starts with a title']
+		}),
+		[{ type: 'response.output_text.delta', delta: 'Proposed.' }]
+	]);
+	const target = await repo.openThread({
+		repo: 'observed',
+		author: sam,
+		text: 'The notes need a title.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(target.id);
+
+	await script('observed', [
+		callTool('ask', 'ask_threads', {
+			question: 'What is the notes thread doing?',
+			thread: target.id
+		}),
+		callTool('read', 'read_thread', { id: target.id }),
+		[{ type: 'response.output_text.delta', delta: 'It is adding a title to notes.md.' }],
+		[{ type: 'response.output_text.delta', delta: 'Done.' }]
+	]);
+	const watcher = await repo.openThread({
+		repo: 'observed',
+		author: sam,
+		text: 'What are the others doing?',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	await replied(watcher.id);
+
+	const detail = (await repo.thread(watcher.id))!;
+	expect(detail.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'tools',
+			calls: [
+				expect.objectContaining({
+					tool: 'ask_threads',
+					status: 'done',
+					output: 'It is adding a title to notes.md.'
+				})
+			]
+		})
+	);
+	expect(detail.usage.rows.map((row) => row.task)).toContain('search');
+	const searches = (await modelRequests('observed')).filter(
+		(request) => (request.headers['cf-aig-metadata'] as { task: string }).task === 'search'
+	);
+	expect(searches).toHaveLength(2);
+	expect(JSON.stringify(searches[0]!.query)).toContain(
+		`What is the notes thread doing? (thread ${target.id})`
+	);
+	expect(JSON.stringify(searches[1]!.query)).toContain('docs(notes): add a title');
+	expect(JSON.stringify(searches[1]!.query)).toContain('notes.md starts with a title');
+	expect(
+		(await repo.thread(target.id))!.entries.some((entry) => entry.type === 'thread-message')
+	).toBe(false);
+
+	expect(await repo.searchThread(target.id, 'title')).toMatch(
+		/^\d+ matches in \d+ entries:\n#\d+ of \d+: /
+	);
+	expect(await repo.threadDiff(target.id)).toBe('No changes.');
+});

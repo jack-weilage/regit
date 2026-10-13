@@ -548,7 +548,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			});
 		try {
 			return await Promise.race([
-				assessRequest((request) => this.env.MODELS.decide(request), text, candidates),
+				assessRequest(
+					(request) => this.env.MODELS.decide(request, { repo: this.#repo() }),
+					text,
+					candidates
+				),
 				new Promise<never>((_, reject) =>
 					setTimeout(() => reject(new Error('Assessing the request timed out')), similarTimeoutMs)
 				)
