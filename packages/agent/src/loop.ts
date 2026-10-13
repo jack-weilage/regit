@@ -56,12 +56,14 @@ export async function* runAgent({
 		let text = '';
 		let calls: ToolCall[] = [];
 		let reasoning: string[] = [];
+		let compaction: string | undefined;
 		let usage: Usage | undefined;
 		const kept = new Map<string, ToolResult>();
 
 		if (resuming) {
 			({ text, calls } = resuming.reply);
 			reasoning = resuming.reply.reasoning ?? [];
+			compaction = resuming.reply.compaction;
 			usage = resuming.usage;
 			for (const result of resuming.results) kept.set(result.callId, result);
 			for (const call of calls) yield { type: 'call', call };
@@ -81,6 +83,10 @@ export async function* runAgent({
 							yield event;
 						} else if (event.type === 'reasoning') {
 							reasoning.push(event.data);
+						} else if (event.type === 'compaction') {
+							compaction = event.data;
+						} else if (event.type === 'compacting') {
+							yield event;
 						} else {
 							usage = event.usage;
 						}
@@ -98,14 +104,20 @@ export async function* runAgent({
 						limit: retries.limit,
 						delayMs
 					};
-					[text, calls, reasoning, usage] = ['', [], [], undefined];
+					[text, calls, reasoning, compaction, usage] = ['', [], [], undefined, undefined];
 					await wait(delayMs, signal);
 					if (signal?.aborted) return 'aborted';
 				}
 			}
 		}
 
-		const reply: Reply = { role: 'assistant', text, calls, ...(reasoning.length && { reasoning }) };
+		const reply: Reply = {
+			role: 'assistant',
+			text,
+			calls,
+			...(reasoning.length && { reasoning }),
+			...(compaction && { compaction })
+		};
 
 		if (calls.length === 0) {
 			const steered = (await steer?.()) ?? [];

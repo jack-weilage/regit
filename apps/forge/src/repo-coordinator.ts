@@ -977,6 +977,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				this.#touch(thread);
 			}
 			for (const turn of update.step.turns) {
+				if (turn.role === 'assistant' && turn.compaction)
+					this.#add(thread, { type: 'event', text: 'Context compacted' });
 				if (turn.role === 'assistant' && turn.text.trim()) {
 					this.#add(thread, { type: 'message', author: agent, text: turn.text.trim() });
 				}

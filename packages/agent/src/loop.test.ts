@@ -255,4 +255,24 @@ describe('runAgent', () => {
 		await expect(run).rejects.toBeInstanceOf(SandboxUnavailableError);
 		expect(requests).toHaveLength(1);
 	});
+
+	test('keeps the compaction on the reply and passes compacting on', async () => {
+		const { model } = scriptedModel([
+			[
+				{ type: 'compacting' },
+				{ type: 'compaction', data: '{"type":"compaction"}' },
+				{ type: 'text', delta: 'Carrying on' },
+				{ type: 'done', usage }
+			]
+		]);
+		const { tools } = fakeTools({});
+		const { events } = await collect(
+			runAgent({ model, tools, instructions: '', history: [{ role: 'user', text: 'Hi' }] })
+		);
+
+		expect(events[0]).toEqual({ type: 'compacting' });
+		expect(events.at(-1)).toMatchObject({
+			turns: [{ role: 'assistant', text: 'Carrying on', compaction: '{"type":"compaction"}' }]
+		});
+	});
 });

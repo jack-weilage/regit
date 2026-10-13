@@ -16,6 +16,8 @@ export interface OpenAIModelOptions {
 	effort?: ReasoningEffort;
 	metadata?: Metadata;
 	maxRetries?: number;
+	// Input tokens past which the server compacts the context into a summary item.
+	compactThreshold?: number;
 	resolveImage?: (url: string) => Promise<string>;
 }
 
@@ -41,8 +43,10 @@ export function openaiModel({
 	effort = 'medium',
 	metadata,
 	maxRetries = 0,
+	compactThreshold,
 	resolveImage = async (url) => url
 }: OpenAIModelOptions): ModelClient {
+	let compacting = compactThreshold !== undefined;
 	if (sessionId.length > 64) throw new Error(`Session ids are at most 64 characters: ${sessionId}`);
 	const client = new OpenAI({
 		apiKey: 'ai-gateway',
@@ -53,27 +57,42 @@ export function openaiModel({
 
 	return {
 		async *respond({ instructions, history, tools }, signal) {
-			try {
-				const stream = await client.responses.create(
+			const window = sinceCompaction(history);
+			const input: ResponseInputItem[] = [
+				{ type: 'message', role: 'developer', content: [cached(instructions)] },
+				...withBreakpoint(
+					(await Promise.all(window.map((turn) => toInput(turn, resolveImage)))).flat()
+				)
+			];
+			const create = () =>
+				client.responses.create(
 					{
 						model,
 						stream: true,
 						store: false,
-						input: [
-							{ type: 'message', role: 'developer', content: [cached(instructions)] },
-							...withBreakpoint(
-								(await Promise.all(history.map((turn) => toInput(turn, resolveImage)))).flat()
-							)
-						],
+						input,
 						tools: tools.map((tool) => ({ type: 'function', strict: false, ...tool })),
 						tool_choice: 'auto',
 						parallel_tool_calls: true,
 						reasoning: { effort },
 						include: ['reasoning.encrypted_content'],
-						prompt_cache_key: sessionId
+						prompt_cache_key: sessionId,
+						...(compacting && {
+							context_management: [{ type: 'compaction', compact_threshold: compactThreshold }]
+						})
 					},
 					{ signal }
 				);
+			try {
+				let stream;
+				try {
+					stream = await create();
+				} catch (error) {
+					if (!compacting || !rejectsCompaction(error)) throw error;
+					// TODO: compact with the standalone /responses/compact endpoint for models without server-side compaction
+					compacting = false;
+					stream = await create();
+				}
 				let completed = false;
 				for await (const event of stream) {
 					if (event.type === 'response.completed') completed = true;
@@ -100,6 +119,20 @@ export function openaiModel({
 			}
 		}
 	};
+}
+
+// The latest compaction item stands in for everything before its reply.
+function sinceCompaction(history: Turn[]) {
+	const from = history.findLastIndex((turn) => turn.role === 'assistant' && !!turn.compaction);
+	return from > 0 ? history.slice(from) : history;
+}
+
+function rejectsCompaction(error: unknown) {
+	return (
+		error instanceof OpenAI.APIError &&
+		error.status === 400 &&
+		/context_management|compact/i.test(error.message)
+	);
 }
 
 function retryAfter(headers: Headers | undefined) {
@@ -155,6 +188,7 @@ async function toInput(
 			];
 		case 'assistant':
 			return [
+				...(turn.compaction ? [JSON.parse(turn.compaction) as ResponseInputItem] : []),
 				...(turn.reasoning ?? []).map((item) => JSON.parse(item) as ResponseInputItem),
 				...(turn.text
 					? [{ type: 'message' as const, role: 'assistant' as const, content: turn.text }]
@@ -197,7 +231,12 @@ function* fromEvent(event: ResponseStreamEvent): Generator<ModelEvent> {
 				yield { type: 'call', call: { id: call_id, name, arguments: args } };
 			} else if (event.item.type === 'reasoning') {
 				yield { type: 'reasoning', data: JSON.stringify(event.item) };
+			} else if (event.item.type === 'compaction') {
+				yield { type: 'compaction', data: JSON.stringify(event.item) };
 			}
+			break;
+		case 'response.compaction.compacting':
+			yield { type: 'compacting' };
 			break;
 		case 'response.completed': {
 			const usage = event.response.usage;

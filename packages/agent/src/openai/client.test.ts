@@ -264,6 +264,85 @@ describe('openaiModel', () => {
 		expect(isTransient(error)).toBe(true);
 	});
 
+	test('asks the server to compact only when given a threshold', async () => {
+		const { gateway, requests } = fakeGateway(eventStream([completed]), eventStream([completed]));
+		const compacting = openaiModel({ gateway, model: 'm', sessionId: 's', compactThreshold: 1000 });
+		const plain = openaiModel({ gateway, model: 'm', sessionId: 's' });
+		await Array.fromAsync(compacting.respond(request));
+		await Array.fromAsync(plain.respond(request));
+
+		expect(requests[0]!.query).toMatchObject({
+			context_management: [{ type: 'compaction', compact_threshold: 1000 }]
+		});
+		expect(requests[1]!.query).not.toHaveProperty('context_management');
+	});
+
+	test('streams compaction and keeps the compaction item', async () => {
+		const item = { type: 'compaction', id: 'cmp_1', encrypted_content: 'sealed' };
+		const { respond } = setup(
+			eventStream([
+				{ type: 'response.compaction.compacting', item_id: 'cmp_1', output_index: 0 },
+				{ type: 'response.output_item.done', item },
+				completed
+			])
+		);
+		const events = await respond();
+
+		expect(events[0]).toEqual({ type: 'compacting' });
+		expect(events[1]).toEqual({ type: 'compaction', data: JSON.stringify(item) });
+	});
+
+	test('sends only what follows the latest compaction', async () => {
+		const item = { type: 'compaction', id: 'cmp_1', encrypted_content: 'sealed' };
+		const { respond, requests } = setup(eventStream([completed]));
+		await respond({
+			...request,
+			history: [
+				{ role: 'user', text: 'Long ago' },
+				{ role: 'assistant', text: 'Old reply', calls: [] },
+				{ role: 'user', text: 'Recently' },
+				{
+					role: 'assistant',
+					text: 'Fresh reply',
+					calls: [],
+					reasoning: ['{"type":"reasoning","id":"rs_2"}'],
+					compaction: JSON.stringify(item)
+				},
+				{ role: 'user', text: 'Now' }
+			]
+		});
+
+		const input = (requests[0]!.query as { input: { type: string; role?: string }[] }).input;
+		expect(input.map((entry) => entry.type)).toEqual([
+			'message',
+			'compaction',
+			'reasoning',
+			'message',
+			'message'
+		]);
+		expect(input[1]).toEqual(item);
+		expect(JSON.stringify(input)).not.toContain('Long ago');
+		expect(JSON.stringify(input)).not.toContain('Recently');
+	});
+
+	test('stops asking for compaction when the model rejects it', async () => {
+		const { gateway, requests } = fakeGateway(
+			Response.json(
+				{ error: { message: "Unsupported parameter: 'context_management'" } },
+				{ status: 400 }
+			),
+			eventStream([completed]),
+			eventStream([completed])
+		);
+		const model = openaiModel({ gateway, model: 'm', sessionId: 's', compactThreshold: 1000 });
+		await Array.fromAsync(model.respond(request));
+		await Array.fromAsync(model.respond(request));
+
+		expect(requests).toHaveLength(3);
+		expect(requests[1]!.query).not.toHaveProperty('context_management');
+		expect(requests[2]!.query).not.toHaveProperty('context_management');
+	});
+
 	test('surfaces failed responses mid-stream', async () => {
 		const { respond } = setup(
 			eventStream([
