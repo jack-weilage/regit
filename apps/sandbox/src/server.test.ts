@@ -373,8 +373,8 @@ describe('shipping', () => {
 
 	const id = 'a'.repeat(32);
 
-	function ship(sourceSha: string, shipId = id) {
-		return workspace.ship({
+	function build(sourceSha: string, shipId = id) {
+		return workspace.buildShip({
 			id: shipId,
 			sourceSha,
 			base,
@@ -384,6 +384,12 @@ describe('shipping', () => {
 			author: sam,
 			committer: author
 		});
+	}
+
+	async function ship(sourceSha: string, shipId = id) {
+		const built = await build(sourceSha, shipId);
+		if (!built.shipped) await workspace.pushShip({ ...built, remote, branch: 'main' });
+		return { sha: built.sha };
 	}
 
 	test('reports how far behind main each fork is and which conflict', async () => {
@@ -475,7 +481,7 @@ describe('shipping', () => {
 			`Trusted squash\n\nReGit-Ship: ${id}`
 		);
 
-		expect(await ship(sourceSha)).toEqual({ sha });
+		expect(await build(sourceSha)).toEqual({ sha, head: sha, shipped: true });
 		expect(await git(remote, ['rev-list', '--count', `${base}..main`])).toBe('2');
 	});
 
@@ -502,6 +508,37 @@ describe('shipping', () => {
 		expect(await git(remote, ['rev-parse', 'main'])).toBe(sha);
 	});
 
+	test('refuses to push when main moved after the build, so the ship can be rebuilt', async () => {
+		const sourceSha = (await checkpoint("export const greeting = 'hi';\n", 'Source'))!;
+		const built = await build(sourceSha);
+		const elsewhere = join(dir, 'racing');
+		await git(dir, ['clone', remote, elsewhere]);
+		await writeFile(join(elsewhere, 'other.txt'), 'other\n');
+		await git(elsewhere, ['add', '.']);
+		await git(elsewhere, [
+			'-c',
+			'user.name=Lin',
+			'-c',
+			'user.email=lin@example.com',
+			'commit',
+			'-m',
+			'Other'
+		]);
+		await git(elsewhere, ['push', 'origin', 'main']);
+		const moved = await git(remote, ['rev-parse', 'main']);
+
+		expect(await workspace.pushShip({ ...built, remote, branch: 'main' })).toEqual({
+			pushed: false
+		});
+		expect(await git(remote, ['rev-parse', 'main'])).toBe(moved);
+		const rebuilt = await build(sourceSha);
+		expect(rebuilt).toMatchObject({ head: moved, shipped: false });
+		expect(await workspace.pushShip({ ...rebuilt, remote, branch: 'main' })).toEqual({
+			pushed: true
+		});
+		expect(await git(remote, ['rev-parse', 'main^'])).toBe(moved);
+	});
+
 	test('reports conflicting files, leaves no rebase behind and rejects empty or invalid ships', async () => {
 		await expect(ship(base)).rejects.toThrow('Nothing to ship');
 		const sourceSha = (await checkpoint("export const greeting = 'hi';\n", 'Source'))!;
@@ -514,7 +551,7 @@ describe('shipping', () => {
 		expect(await git(root, ['diff', '--name-only', '--diff-filter=U'])).toBe('');
 		await expect(ship(sourceSha, 'not-an-id')).rejects.toThrow('Invalid ship id');
 		await expect(
-			workspace.ship({
+			workspace.buildShip({
 				id,
 				sourceSha,
 				base,

@@ -3,6 +3,7 @@ import { discoverSkills } from './skills.ts';
 import { isTool, ToolError, tools } from './tools.ts';
 import { trustInterception } from './trust.ts';
 import {
+	buildShip,
 	clone,
 	commit,
 	compare,
@@ -11,7 +12,7 @@ import {
 	hook,
 	publishProvenance,
 	push,
-	ship,
+	pushShip,
 	toolchain
 } from './workspace.ts';
 
@@ -35,7 +36,8 @@ export function createSandbox(
 		})
 	};
 	const workspace: Record<string, (body: never) => Promise<object>> = {
-		ship: (body) => ship(root, body),
+		'build-ship': (body) => buildShip(root, body),
+		'push-ship': (body) => pushShip(root, body),
 		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
 		clone: (body) => services.pausedDuring(() => clone(root, body)),
 		compare: (body) => compare(root, body),

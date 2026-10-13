@@ -9,6 +9,15 @@ export interface Revision {
 	at: number;
 }
 
+export type ShipStage = 'starting' | 'fetching' | 'building' | 'pushing' | 'recording';
+
+export interface ShipProgress {
+	stage: ShipStage;
+	note: string | null;
+	since: number;
+	started: number;
+}
+
 export interface Ship {
 	id: string;
 	repo: string;

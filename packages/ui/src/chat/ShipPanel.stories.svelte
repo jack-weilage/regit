@@ -4,6 +4,8 @@
 	import ShipPanel from './ShipPanel.svelte';
 	import { intent } from './fixtures.ts';
 
+	const now = Date.UTC(2026, 9, 12, 18);
+
 	const { Story } = defineMeta({
 		title: 'Chat/Ship',
 		component: ShipPanel,
@@ -39,11 +41,64 @@
 />
 
 <Story
-	name="Shipping"
-	args={{ status: 'shipping' }}
+	name="Starting"
+	args={{
+		status: 'shipping',
+		now,
+		progress: { stage: 'starting', note: null, since: now - 1_000, started: now - 1_000 }
+	}}
 	play={async ({ canvas }) => {
 		await expect(canvas.getByText('Shipping to main')).toBeVisible();
 		await expect(canvas.queryByRole('button')).toBeNull();
+		await expect(canvas.queryByRole('listitem', { current: 'step' })).toBeNull();
+	}}
+/>
+
+<Story
+	name="Pushing"
+	args={{
+		status: 'shipping',
+		now,
+		progress: {
+			stage: 'pushing',
+			note: 'a1b2c3d onto 9f8e7d6',
+			since: now - 12_000,
+			started: now - 12_000
+		}
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('listitem', { current: 'step' })).toHaveTextContent(
+			'Pushing to main a1b2c3d onto 9f8e7d6'
+		);
+		await expect(canvas.getByText('12s')).toBeVisible();
+	}}
+/>
+
+<Story
+	name="Rebuilding"
+	args={{
+		status: 'shipping',
+		now,
+		progress: {
+			stage: 'building',
+			note: 'Main moved, so rebuilding on the new main',
+			since: now - 3_000,
+			started: now - 31_000
+		}
+	}}
+/>
+
+<Story
+	name="Retrying"
+	args={{
+		status: 'shipping',
+		now,
+		progress: {
+			stage: 'fetching',
+			note: 'Retrying, attempt 2',
+			since: now - 4_000,
+			started: now - 4_000
+		}
 	}}
 />
 

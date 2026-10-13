@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import type { ThreadDetail } from '@regit/core';
+import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
 const { dir, worker, seed, commit, sh, idle, script } = await setup();
@@ -89,9 +89,23 @@ test('only an owner can ship, and shipping squashes the thread onto main with pr
 	}
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
 
+	const live: LiveMessage[] = [];
+	const { webSocket: socket } = await repo.fetch('https://repo/live', {
+		headers: { Upgrade: 'websocket' }
+	});
+	socket!.accept();
+	socket!.addEventListener('message', (event) => live.push(JSON.parse(String(event.data))));
 	await repo.ship(id, input);
 	const shipped = await until(repo, id, (detail) => detail.summary.status === 'shipped');
+	socket!.close();
 	const sha = sh(canonical, 'rev-parse', 'main');
+	const stages = live.flatMap((message) =>
+		message.type === 'activity' && message.thread === id && message.activity?.ship
+			? [message.activity.ship.stage]
+			: []
+	);
+	expect(stages).toEqual(['starting', 'fetching', 'building', 'pushing', 'recording']);
+	expect(shipped.activity).toBeNull();
 	expect(shipped.summary).toMatchObject({ changes: null, shipped: { sha, by: 'Sam' } });
 	expect(shipped.entries.at(-1)).toMatchObject({
 		type: 'event',

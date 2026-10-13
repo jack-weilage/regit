@@ -22,6 +22,7 @@ import type {
 	Mode,
 	ModeChoice,
 	Ship,
+	ShipProgress,
 	RepoCoordinatorApi,
 	ShipInput,
 	StartupStage,
@@ -648,6 +649,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		};
 		this.#setMeta(`ship:${thread}`, ship.id);
 		this.#setStatus(thread, 'shipping');
+		const now = Date.now();
+		this.#setShipProgress(thread, { stage: 'starting', note: null, since: now, started: now });
 		this.#add(thread, { type: 'event', text: `${by.name} is shipping this thread to main` });
 		try {
 			await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
@@ -657,8 +660,23 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 	}
 
+	shipProgress(ship: Ship, progress: Omit<ShipProgress, 'started'>) {
+		if (this.#meta(`ship:${ship.thread}`) !== ship.id) return;
+		const started = this.#activities.get(ship.thread)?.ship?.started ?? progress.since;
+		this.#setShipProgress(ship.thread, { ...progress, started });
+	}
+
+	#setShipProgress(thread: string, ship: ShipProgress | undefined) {
+		const activity = this.#activities.get(thread);
+		this.#setActivity(
+			thread,
+			activity ? { ...activity, ship } : { startup: null, status: null, text: '', calls: [], ship }
+		);
+	}
+
 	async shipped(ship: Ship, { sha, branch }: { sha: string; branch: string }) {
 		if (!this.#takeShip(ship)) return;
+		this.#setShipProgress(ship.thread, undefined);
 		await this.#agent(ship.thread).published({ sha, branch, from: ship.source.sha });
 		this.#sql.exec(
 			'UPDATE threads SET changes = NULL, behind = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
@@ -673,6 +691,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async shipFailed(ship: Ship, message: string) {
 		if (!this.#takeShip(ship)) return;
+		this.#setShipProgress(ship.thread, undefined);
 		const summary = this.#summary(ship.thread)!;
 		if (
 			message.startsWith('Ship conflicts with main') &&
@@ -707,6 +726,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	#stopShipping(thread: string, reason: string) {
 		this.#sql.exec('DELETE FROM meta WHERE key = ?', `ship:${thread}`);
+		this.#setShipProgress(thread, undefined);
 		this.#setStatus(thread, 'needs-you');
 		this.#add(thread, { type: 'event', text: `Shipping stopped: ${reason}` });
 	}
@@ -958,7 +978,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#setActivity(thread: string, activity: ThreadActivity | null) {
 		const idle =
 			!activity ||
-			(!activity.startup && !activity.status && !activity.text && !activity.calls.length);
+			(!activity.startup &&
+				!activity.status &&
+				!activity.text &&
+				!activity.calls.length &&
+				!activity.ship);
 		if (idle && !this.#activities.has(thread)) return;
 		if (idle) this.#activities.delete(thread);
 		else this.#activities.set(thread, activity);

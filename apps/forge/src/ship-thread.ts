@@ -14,11 +14,11 @@ export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 			shipped = await step.do(
 				'ship to main',
 				{ retries: { limit: 3, delay: '10 seconds', backoff: 'exponential' } },
-				async () => {
+				async ({ attempt }) => {
 					try {
 						const { sha, branch } = await this.env.REPOSITORY_GIT.getByName(
 							`ship-${ship.repo}`
-						).ship(ship);
+						).ship(ship, attempt);
 						return { sha, branch };
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);

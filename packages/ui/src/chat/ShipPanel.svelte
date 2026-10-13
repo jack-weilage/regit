@@ -1,15 +1,32 @@
+<script module lang="ts">
+	import type { ShipStage } from '@regit/core';
+
+	const stages: { stage: ShipStage; label: string }[] = [
+		{ stage: 'fetching', label: "Fetching the thread's work" },
+		{ stage: 'building', label: 'Building one commit on main' },
+		{ stage: 'pushing', label: 'Pushing to main' },
+		{ stage: 'recording', label: 'Recording provenance' }
+	];
+</script>
+
 <script lang="ts">
 	import Button from '../Button.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
-	import type { Intent, ThreadStatus } from '@regit/core';
+	import { stopwatch } from './clock.svelte.ts';
+	import { formatDuration } from './format.ts';
+	import type { Intent, ShipProgress, ThreadStatus } from '@regit/core';
 
 	interface Props {
 		intent?: Intent;
 		status: ThreadStatus;
+		progress?: ShipProgress | null;
+		now?: number;
 		onship: (commit: { title: string; body: string }) => Promise<unknown>;
 	}
 
-	let { intent, status, onship }: Props = $props();
+	let { intent, status, progress, now, onship }: Props = $props();
+
+	let current = $derived(stages.findIndex(({ stage }) => stage === progress?.stage));
 
 	let busy = $state(false);
 	let error = $state<string | null>(null);
@@ -39,6 +56,9 @@
 			><StatusIcon state={shipping ? 'shipping' : 'pending'} />
 			{shipping ? 'Shipping to main' : 'Unshipped changes'}</strong
 		>
+		{#if shipping && progress}
+			<span class="elapsed">{formatDuration((now ?? stopwatch.now) - progress.started)}</span>
+		{/if}
 		{#if !writing && !shipping}
 			<Button
 				variant="primary"
@@ -52,6 +72,20 @@
 			>
 		{/if}
 	</header>
+	{#if shipping}
+		<ol aria-label="Shipping progress">
+			{#each stages as { stage, label }, index (stage)}
+				{@const state = index < current ? 'passed' : index === current ? 'running' : 'pending'}
+				<li class={state} aria-current={index === current ? 'step' : undefined}>
+					<StatusIcon {state} />
+					<span>
+						{label}
+						{#if index === current && progress?.note}<span class="note">{progress.note}</span>{/if}
+					</span>
+				</li>
+			{/each}
+		</ol>
+	{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if writing && !shipping}
 		<form
@@ -104,8 +138,39 @@
 		}
 	}
 
-	p {
+	p,
+	ol {
 		margin: 0;
+	}
+
+	.elapsed {
+		color: var(--color-muted);
+		font-size: var(--text-meta);
+		font-variant-numeric: tabular-nums;
+	}
+
+	ol {
+		display: grid;
+		gap: var(--space-2);
+		padding: 0;
+		list-style: none;
+		font-size: var(--text-meta);
+	}
+
+	li {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-3);
+		color: var(--color-muted);
+
+		&.running {
+			color: var(--color-fg);
+		}
+	}
+
+	.note {
+		margin-inline-start: var(--space-3);
+		color: var(--color-muted);
 	}
 
 	.error {

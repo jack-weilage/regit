@@ -58,6 +58,7 @@ export interface ThreadActivity {
 	status: { label: string; since: number } | null;
 	text: string;
 	calls: ToolCallRecord[];
+	ship?: import('./ships.ts').ShipProgress;
 }
 
 export type Entry =

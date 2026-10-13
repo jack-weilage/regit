@@ -330,6 +330,7 @@
 					<ShipPanel
 						{intent}
 						status={summary.status}
+						progress={activity?.ship}
 						onship={(commit) => shipThread({ ...ref, ...commit })}
 					/>
 				{/if}

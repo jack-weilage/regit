@@ -1,6 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { sandboxWorkspace, type Fetch } from '@regit/agent';
-import { defaultMachine, type Ship } from '@regit/core';
+import { defaultMachine, type Ship, type ShipStage } from '@regit/core';
 import { proxyGit, type GitAccess } from './git-access.ts';
 
 export class PublisherGitProxy extends WorkerEntrypoint<Env, { targets: GitAccess[] }> {
@@ -29,9 +29,15 @@ export class RepositoryGit extends DurableObject<Env> {
 		return next;
 	}
 
-	// Squashes the thread onto main, pushes it and records provenance. Safe to retry: a ship already on main is found, not repeated.
-	async ship(ship: Ship): Promise<{ sha: string; branch: string }> {
+	// Squashes the thread onto main, pushes it and records provenance, reporting each stage.
+	// Safe to retry: a ship already on main is found, not repeated.
+	async ship(ship: Ship, attempt = 1): Promise<{ sha: string; branch: string }> {
+		const progress = (stage: ShipStage, note: string | null = null) =>
+			this.env.REPOS.getByName(ship.repo)
+				.shipProgress(ship, { stage, note, since: Date.now() })
+				.catch((error: unknown) => console.warn('Could not report ship progress', error));
 		return this.#serial(async () => {
+			await progress('fetching', attempt > 1 ? `Retrying, attempt ${attempt}` : null);
 			using source = await this.env.ARTIFACTS.get(ship.source.repository);
 			using canonical = await this.env.ARTIFACTS.get(ship.repo);
 			const sourceInfo = await source.info();
@@ -48,18 +54,35 @@ export class RepositoryGit extends DurableObject<Env> {
 					(await workspace.headBranch({ remote: canonicalInfo.remote })) ??
 					canonicalInfo.defaultBranch;
 				await this.#allow(targets);
-				const { sha } = await workspace.ship({
-					id: ship.id,
-					sourceSha: ship.source.sha,
-					base: ship.source.base,
-					remote: canonicalInfo.remote,
-					branch,
-					message: [ship.title, ship.body, 'Co-authored-by: ReGit <agent@regit.dev>']
-						.filter(Boolean)
-						.join('\n\n'),
-					author: { name: ship.by.name, email: ship.email },
-					committer
-				});
+				let sha: string | null = null;
+				for (let moved = 0; moved < 5 && !sha; moved++) {
+					await progress('building', moved ? 'Main moved, so rebuilding on the new main' : null);
+					const built = await workspace.buildShip({
+						id: ship.id,
+						sourceSha: ship.source.sha,
+						base: ship.source.base,
+						remote: canonicalInfo.remote,
+						branch,
+						message: [ship.title, ship.body, 'Co-authored-by: ReGit <agent@regit.dev>']
+							.filter(Boolean)
+							.join('\n\n'),
+						author: { name: ship.by.name, email: ship.email },
+						committer
+					});
+					if (built.shipped) sha = built.sha;
+					else {
+						await progress('pushing', `${built.sha.slice(0, 7)} onto ${built.head.slice(0, 7)}`);
+						const { pushed } = await workspace.pushShip({
+							sha: built.sha,
+							head: built.head,
+							remote: canonicalInfo.remote,
+							branch
+						});
+						if (pushed) sha = built.sha;
+					}
+				}
+				if (!sha) throw new Error('Main kept moving while shipping');
+				await progress('recording');
 				await workspace.publishProvenance({
 					sha,
 					remote: canonicalInfo.remote,

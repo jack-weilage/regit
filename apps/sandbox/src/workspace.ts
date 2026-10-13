@@ -6,6 +6,10 @@ import type {
 	CommitRequest,
 	CompareRequest,
 	CompareResponse,
+	BuildShipRequest,
+	BuildShipResponse,
+	PushShipRequest,
+	PushShipResponse,
 	DiffRequest,
 	HeadBranchRequest,
 	HookRequest,
@@ -13,8 +17,6 @@ import type {
 	Identity,
 	PublishProvenanceRequest,
 	PushRequest,
-	ShipRequest,
-	ShipResponse,
 	SquashRequest,
 	Toolchain
 } from '@regit/agent';
@@ -146,67 +148,73 @@ async function canonicalHead(root: string, remote: string, ref: string) {
 
 const shipTrailer = 'ReGit-Ship';
 
-// Squashes the thread's work onto main and pushes it, rebuilding whenever main moves first.
-// A retried ship finds its own commit on main by its trailer instead of shipping twice.
-export async function ship(
+// Squashes the thread's work into one commit on main, or finds it there when a retried ship already landed.
+export async function buildShip(
 	root: string,
-	{ id, sourceSha, base, remote, branch, message, author, committer }: ShipRequest
-): Promise<ShipResponse> {
+	{ id, sourceSha, base, remote, branch, message, author, committer }: BuildShipRequest
+): Promise<BuildShipResponse> {
 	if (!/^[0-9a-f]{32}$/.test(id)) throw new Error('Invalid ship id');
 	exactSha(sourceSha);
 	exactSha(base);
 	safeRemote(remote);
 	const ref = await branchRef(root, branch);
-	for (let attempt = 0; attempt < 5; attempt++) {
-		const head = await canonicalHead(root, remote, ref);
-		const shipped = await git(root, [
-			'log',
-			'-1',
-			'--format=%H',
-			'--fixed-strings',
-			`--grep=${shipTrailer}: ${id}`,
-			head
-		]);
-		if (shipped) return { sha: shipped };
-		await git(root, ['reset', '--hard', sourceSha]);
-		await git(root, ['clean', '-fd']);
-		await git(root, ['merge-base', '--is-ancestor', base, sourceSha]);
-		const squashed = await squash(root, {
-			base,
-			message: `${message}\n\n${shipTrailer}: ${id}`,
-			author,
-			committer
-		});
-		if (!squashed) throw new Error('Nothing to ship');
-		const rebased = await exec(
-			'git',
-			[...noHooks, 'rebase', '--empty=stop', '--onto', head, base],
-			{
-				cwd: root,
-				env: identity('COMMITTER', committer)
-			}
-		);
-		if (rebased.code !== 0) {
-			const conflicts = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
-				.split('\n')
-				.filter(Boolean);
-			await abortRebase(root);
-			if (conflicts.length) throw new Error(`Ship conflicts with main in ${conflicts.join(', ')}`);
-			throw new Error(`Ship rebase failed: ${rebased.output.trim()}`);
-		}
-		const sha = await git(root, ['rev-parse', 'HEAD']);
-		if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${head}`)
-			throw new Error('A ship must be exactly one commit');
-		const pushed = await exec(
-			'git',
-			[...noHooks, 'push', `--force-with-lease=${ref}:${head}`, remote, `${sha}:${ref}`],
-			{ cwd: root }
-		);
-		if (pushed.code === 0) return { sha };
-		if ((await canonicalHead(root, remote, ref)) === head)
-			throw new Error(`Pushing to main failed: ${pushed.output.trim()}`);
+	const head = await canonicalHead(root, remote, ref);
+	const shipped = await git(root, [
+		'log',
+		'-1',
+		'--format=%H',
+		'--fixed-strings',
+		`--grep=${shipTrailer}: ${id}`,
+		head
+	]);
+	if (shipped) return { sha: shipped, head, shipped: true };
+	await git(root, ['reset', '--hard', sourceSha]);
+	await git(root, ['clean', '-fd']);
+	await git(root, ['merge-base', '--is-ancestor', base, sourceSha]);
+	const squashed = await squash(root, {
+		base,
+		message: `${message}\n\n${shipTrailer}: ${id}`,
+		author,
+		committer
+	});
+	if (!squashed) throw new Error('Nothing to ship');
+	const rebased = await exec('git', [...noHooks, 'rebase', '--empty=stop', '--onto', head, base], {
+		cwd: root,
+		env: identity('COMMITTER', committer)
+	});
+	if (rebased.code !== 0) {
+		const conflicts = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
+			.split('\n')
+			.filter(Boolean);
+		await abortRebase(root);
+		if (conflicts.length) throw new Error(`Ship conflicts with main in ${conflicts.join(', ')}`);
+		throw new Error(`Ship rebase failed: ${rebased.output.trim()}`);
 	}
-	throw new Error('Main kept moving while shipping');
+	const sha = await git(root, ['rev-parse', 'HEAD']);
+	if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${head}`)
+		throw new Error('A ship must be exactly one commit');
+	return { sha, head, shipped: false };
+}
+
+// Pushes a built ship only if main is still where it was built; reports when main moved instead.
+export async function pushShip(
+	root: string,
+	{ sha, head, remote, branch }: PushShipRequest
+): Promise<PushShipResponse> {
+	exactSha(sha);
+	exactSha(head);
+	safeRemote(remote);
+	const ref = await branchRef(root, branch);
+	if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${head}`)
+		throw new Error('The ship was not built on that head');
+	const pushed = await exec(
+		'git',
+		[...noHooks, 'push', `--force-with-lease=${ref}:${head}`, remote, `${sha}:${ref}`],
+		{ cwd: root }
+	);
+	if (pushed.code === 0) return { pushed: true };
+	if ((await canonicalHead(root, remote, ref)) !== head) return { pushed: false };
+	throw new Error(`Pushing to main failed: ${pushed.output.trim()}`);
 }
 
 export async function publishProvenance(

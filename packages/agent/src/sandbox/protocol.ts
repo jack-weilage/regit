@@ -81,7 +81,7 @@ export interface Identity {
 	email: string;
 }
 
-export interface ShipRequest {
+export interface BuildShipRequest {
 	id: string;
 	sourceSha: string;
 	base: string;
@@ -92,8 +92,21 @@ export interface ShipRequest {
 	committer: Identity;
 }
 
-export interface ShipResponse {
+export interface BuildShipResponse {
 	sha: string;
+	head: string;
+	shipped: boolean;
+}
+
+export interface PushShipRequest {
+	sha: string;
+	head: string;
+	remote: string;
+	branch: string;
+}
+
+export interface PushShipResponse {
+	pushed: boolean;
 }
 
 export interface PublishProvenanceRequest {

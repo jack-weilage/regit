@@ -1,5 +1,9 @@
 import type { ToolExecutor } from '../types.ts';
 import type {
+	BuildShipRequest,
+	BuildShipResponse,
+	PushShipRequest,
+	PushShipResponse,
 	CloneRequest,
 	CloneResponse,
 	CompareRequest,
@@ -19,8 +23,6 @@ import type {
 	PushResponse,
 	ServiceInfo,
 	ServicesResponse,
-	ShipRequest,
-	ShipResponse,
 	SkillsResponse,
 	ToolchainResponse,
 	ToolArguments,
@@ -67,8 +69,11 @@ export function sandboxTools(
 
 export function sandboxWorkspace(fetch: Fetch) {
 	return {
-		ship(request: ShipRequest) {
-			return post<ShipResponse>(fetch, '/workspace/ship', JSON.stringify(request));
+		buildShip(request: BuildShipRequest) {
+			return post<BuildShipResponse>(fetch, '/workspace/build-ship', JSON.stringify(request));
+		},
+		pushShip(request: PushShipRequest) {
+			return post<PushShipResponse>(fetch, '/workspace/push-ship', JSON.stringify(request));
 		},
 		compare(request: CompareRequest) {
 			return post<CompareResponse>(fetch, '/workspace/compare', JSON.stringify(request));
