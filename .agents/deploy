@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Deploys forge, which applies D1 migrations and builds the sandbox image, then web, which binds to forge.
+set -euo pipefail
+
+: "${CLOUDFLARE_API_TOKEN:?Add a CLOUDFLARE_API_TOKEN deploy secret in ReGit}"
+
+mise exec -- bun run --filter @regit/forge deploy
+mise exec -- bun run --filter @regit/web deploy

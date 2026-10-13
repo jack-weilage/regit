@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Attachment } from 'svelte/attachments';
-	import type { DeploySecret } from '@regit/core';
+	import { machines, type DeploySecret, type Machine } from '@regit/core';
 	import Button from './Button.svelte';
 	import { formatAgo } from './chat/format.ts';
 
@@ -8,12 +8,23 @@
 		open?: boolean;
 		repo: string;
 		secrets: DeploySecret[];
+		machine: Machine;
 		now?: number;
+		onmachine: (machine: Machine) => void;
 		onsave: (secret: { name: string; value: string }) => Promise<unknown>;
 		onremove: (name: string) => void;
 	}
 
-	let { open = $bindable(false), repo, secrets, now, onsave, onremove }: Props = $props();
+	let {
+		open = $bindable(false),
+		repo,
+		secrets,
+		machine,
+		now,
+		onmachine,
+		onsave,
+		onremove
+	}: Props = $props();
 
 	const id = $props.id();
 	let name = $state('');
@@ -52,7 +63,21 @@
 	onclose={() => (open = false)}
 	onclick={(event) => event.target === event.currentTarget && (open = false)}
 >
-	<h2 id="{id}-title">Deploy secrets for {repo}</h2>
+	<h2 id="{id}-title">Deploys for {repo}</h2>
+
+	<label class="machine">
+		<span>Machine for deploy checks and deploys</span>
+		<select value={machine} onchange={(event) => onmachine(event.currentTarget.value as Machine)}>
+			{#each Object.entries(machines) as [option, { vcpu, memoryGib, diskGb }] (option)}
+				<option value={option}
+					>{vcpu === 0.5 ? '½' : vcpu} vCPU · {memoryGib} GiB · {diskGb} GB disk</option
+				>
+			{/each}
+		</select>
+		<span class="hint">Takes effect the next time the deploy sandbox starts.</span>
+	</label>
+
+	<h3>Secrets</h3>
 	<p class="hint">
 		<code>.agents/deploy</code> gets these as environment variables when main's deploy checks pass. Agents
 		never see them, and values can't be read back.
@@ -145,10 +170,36 @@
 		}
 	}
 
-	h2 {
+	h2,
+	h3 {
 		margin: 0;
 		font-size: 0.9375rem;
 		font-weight: 600;
+	}
+
+	h3 {
+		font-size: inherit;
+	}
+
+	.machine {
+		display: grid;
+		gap: var(--space-2);
+
+		select {
+			justify-self: start;
+			max-inline-size: 100%;
+			padding: 0.35em 0.6em;
+			border: 1px solid var(--color-border);
+			border-radius: var(--radius);
+			background: var(--color-bg);
+			color: inherit;
+			font: inherit;
+
+			&:focus-visible {
+				outline: 2px solid var(--color-accent);
+				outline-offset: -1px;
+			}
+		}
 	}
 
 	p {

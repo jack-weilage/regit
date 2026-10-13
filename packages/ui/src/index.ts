@@ -2,7 +2,7 @@ export { default as AppShell } from './AppShell.svelte';
 export { default as Avatar } from './Avatar.svelte';
 export { default as Button } from './Button.svelte';
 export { default as CloneDialog, type GitTokenView } from './CloneDialog.svelte';
-export { default as DeploySecretsDialog } from './DeploySecretsDialog.svelte';
+export { default as DeployDialog } from './DeployDialog.svelte';
 export { default as MainStatus } from './MainStatus.svelte';
 export { default as Menu, type MenuItem } from './Menu.svelte';
 export { default as NewRepoPalette, type NewRepo } from './NewRepoPalette.svelte';

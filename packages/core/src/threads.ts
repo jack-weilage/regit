@@ -17,6 +17,8 @@ export type Machine = keyof typeof machines;
 
 export const defaultMachine: Machine = 'standard-1';
 
+export const defaultDeployMachine: Machine = 'standard-3';
+
 export type ThreadStatus = 'running' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
 
 export interface Author {

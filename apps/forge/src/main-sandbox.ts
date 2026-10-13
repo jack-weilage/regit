@@ -9,7 +9,7 @@ import {
 	type Fetch,
 	type PlannedCheck
 } from '@regit/agent';
-import { defaultMachine, type CheckResult, type Machine } from '@regit/core';
+import { defaultDeployMachine, type CheckResult, type Machine } from '@regit/core';
 import { db } from './db.ts';
 import { open } from './secrets.ts';
 
@@ -135,12 +135,12 @@ export class MainSandbox extends DurableObject<Env> {
 		await container.interceptOutboundHttps(new URL(remote).hostname, proxy);
 		if (!container.running) {
 			const [row] = await db
-				.select({ machine: repos.machine })
+				.select({ machine: repos.deployMachine })
 				.from(repos)
 				.where(eq(repos.name, repo));
 			container.start({
 				image: container.images.sandbox!,
-				instance: (row?.machine as Machine | undefined) ?? defaultMachine,
+				instance: (row?.machine as Machine | undefined) ?? defaultDeployMachine,
 				enableInternet: true
 			});
 			// TODO: restore the repository's toolchain snapshot, as thread sandboxes do, instead of installing from scratch.

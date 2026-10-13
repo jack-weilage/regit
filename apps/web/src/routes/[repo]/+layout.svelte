@@ -4,7 +4,7 @@
 	import {
 		AppShell,
 		CloneDialog,
-		DeploySecretsDialog,
+		DeployDialog,
 		Toast,
 		type Mode,
 		type SimilarThread,
@@ -24,7 +24,7 @@
 		assessRequest,
 		createGitAccessToken,
 		deleteDeploySecret,
-		getDeploySecrets,
+		getDeploySettings,
 		getGitAccess,
 		getMain,
 		getRepos,
@@ -33,6 +33,7 @@
 		getThreads,
 		getUser,
 		openThread,
+		setDeployMachine,
 		setDeploySecret
 	} from '#lib/data.remote.ts';
 	import { similarThreads } from '#lib/similar.ts';
@@ -115,8 +116,8 @@
 		return () => source.close();
 	};
 
-	let managingSecrets = $state(false);
-	let secrets = $derived(managingSecrets ? await getDeploySecrets(repo) : null);
+	let managingDeploys = $state(false);
+	let deploys = $derived(managingDeploys ? await getDeploySettings(repo) : null);
 
 	let cloning = $state(false);
 	let created = $state<{ label: string; secret: string } | null>(null);
@@ -166,7 +167,7 @@
 		{similar}
 		{size}
 		{main}
-		onsecrets={owner ? () => (managingSecrets = true) : undefined}
+		ondeploys={owner ? () => (managingDeploys = true) : undefined}
 		onclone={() => {
 			created = null;
 			cloning = true;
@@ -188,11 +189,13 @@
 			ondismiss={() => (alert = null)}>{alert.text}</Toast
 		>
 	{/if}
-	{#if secrets}
-		<DeploySecretsDialog
-			bind:open={managingSecrets}
+	{#if deploys}
+		<DeployDialog
+			bind:open={managingDeploys}
 			{repo}
-			{secrets}
+			secrets={deploys.secrets}
+			machine={deploys.machine}
+			onmachine={(machine) => setDeployMachine({ repo, machine })}
 			onsave={(secret) => setDeploySecret({ repo, ...secret })}
 			onremove={(name) => deleteDeploySecret({ repo, name })}
 		/>
