@@ -43,6 +43,23 @@ export interface ThreadOverlap {
 	files: string[];
 }
 
+export type CheckAction = 'handoff' | 'ship';
+
+export interface CheckResult {
+	name: string;
+	kind: 'run' | 'ask';
+	status: 'passed' | 'failed' | 'warned';
+	reused: boolean;
+	output: string;
+	log?: string;
+}
+
+export interface CheckRun {
+	action: CheckAction;
+	at: number;
+	results: CheckResult[];
+}
+
 export interface ToolCallRecord {
 	id: string;
 	tool: string;
@@ -125,6 +142,7 @@ export interface ThreadSummary {
 		headline: string;
 		conflicts: string[];
 	} | null;
+	checks: CheckRun | null;
 }
 
 export interface ShipInput {

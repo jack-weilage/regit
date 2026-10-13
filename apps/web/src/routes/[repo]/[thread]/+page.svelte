@@ -352,6 +352,7 @@
 						{intent}
 						status={summary.status}
 						progress={activity?.ship}
+						checks={summary.checks}
 						branch={detail.branch}
 						onship={(commit) => shipThread({ ...ref, ...commit })}
 					/>

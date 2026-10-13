@@ -31,9 +31,12 @@ test('ships the pinned revision once, even when retried, and records provenance'
 	const env = await harness.worker.getEnv();
 	const publisher = env.REPOSITORY_GIT.getByName(`ship-${repo}`);
 
-	const shipped = await publisher.ship(ship);
-	expect(await publisher.ship(ship)).toEqual(shipped);
 	const canonical = join(harness.dir, `${repo}.git`);
+	expect(await publisher.ship(ship, 'f'.repeat(40))).toEqual({ moved: true });
+	expect(harness.sh(canonical, 'rev-list', '--count', 'main')).toBe('1');
+
+	const shipped = (await publisher.ship(ship)) as { sha: string; branch: string };
+	expect(await publisher.ship(ship)).toEqual(shipped);
 	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(shipped.sha);
 	expect(shipped.branch).toBe('main');
 	expect(harness.sh(canonical, 'rev-list', '--count', 'main')).toBe('2');

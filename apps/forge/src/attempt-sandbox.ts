@@ -16,12 +16,22 @@ import {
 	type StartupStage,
 	type ThreadActivity,
 	type ThreadOverlap,
-	type ThreadSummary
+	type ThreadSummary,
+	type CheckAction,
+	type CheckResult,
+	type Ship,
+	type ShipVerification
 } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
+	askRequest,
 	askThreads,
 	askThreadsTools,
+	askVerdict,
+	blockingFailures,
+	checksNotice,
+	dueChecks,
+	runChecks,
 	backoff,
 	compactThreshold,
 	errorMessage,
@@ -34,6 +44,7 @@ import {
 	combineTools,
 	mergeSkills,
 	browserSkill,
+	checksSkill,
 	servicesSkill,
 	skillTools,
 	threadsSkill,
@@ -65,7 +76,8 @@ import {
 	type ToolName,
 	type ToolResult,
 	type Toolchain,
-	type Turn
+	type Turn,
+	type PlannedCheck
 } from '@regit/agent';
 
 export interface ConverseInput {
@@ -144,6 +156,7 @@ const outcomes: Record<AgentOutcome, AttemptStatus> = {
 
 export class AttemptSandbox extends DurableObject<Env> {
 	#sql = this.ctx.storage.sql;
+	#verifying: { id: string; result: Promise<ShipVerification> } | null = null;
 	#controller?: AbortController;
 	#activity: ThreadActivity = idle();
 	#published = 0;
@@ -180,6 +193,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS evidence (
+				key TEXT PRIMARY KEY,
+				at INTEGER NOT NULL
+			);
 			CREATE TABLE IF NOT EXISTS steps (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
 				turns TEXT NOT NULL,
@@ -208,6 +225,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			}
 		}
 		this.#sql.exec('UPDATE agent SET mode = ?', mode);
+		this.#sql.exec("DELETE FROM meta WHERE key = 'check-rounds'");
 		this.#sql.exec('INSERT INTO inbox (author, text, entry) VALUES (?, ?, ?)', author, text, entry);
 		if (isActive(this.#agent()!.status)) return;
 		this.#setStatus('queued');
@@ -397,7 +415,59 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	override async alarm() {
 		const attempt = this.#agent();
-		if (attempt && isActive(attempt.status)) await this.#run(attempt);
+		if (!attempt || !isActive(attempt.status)) return;
+		if (this.#verifying) return await this.ctx.storage.setAlarm(Date.now() + 2000);
+		await this.#run(attempt);
+	}
+
+	// Checks the exact tree a ship would push: the thread's changes since its base on top of main as it is now.
+	// A repeated call for the same ship, such as a Workflow retry, joins the one in progress.
+	verifyShip(ship: Ship): Promise<ShipVerification> {
+		if (this.#verifying?.id !== ship.id) {
+			const result = this.#verifyShip(ship).finally(() => {
+				if (this.#verifying?.result === result) this.#verifying = null;
+			});
+			this.#verifying = { id: ship.id, result };
+		}
+		return this.#verifying.result;
+	}
+
+	// No turn starts meanwhile, since checking switches the sandbox's Git access to main; a turn already running finishes first.
+	async #verifyShip(ship: Ship): Promise<ShipVerification> {
+		const attempt = this.#agent();
+		if (!attempt) throw new Error("This thread hasn't started a sandbox yet");
+		const deadline = Date.now() + turnWaitMs;
+		while (this.#controller) {
+			if (Date.now() > deadline)
+				throw new Error('The agent is still working, so the checks could not start');
+			await scheduler.wait(1000);
+		}
+		const fork = await this.#fork(attempt);
+		const token = await this.#token(fork);
+		const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+		const branch = await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
+		const main = (await this.#git(fetch, 'git rev-parse FETCH_HEAD')).trim();
+		const candidate = await sandboxWorkspace(fetch).candidate({
+			base: ship.source.base,
+			onto: main,
+			source: ship.source.sha
+		});
+		if ('conflicts' in candidate) return { conflicts: candidate.conflicts, branch };
+		// TODO: skip waking the sandbox when neither main nor the thread has a checks file.
+		const results = await this.#check(attempt, fetch, 'ship', {
+			base: main,
+			commit: candidate.sha,
+			config: main,
+			started: () =>
+				this.env.REPOS.getByName(ship.repo)
+					.shipProgress(ship, { stage: 'checking', note: null, branch, since: Date.now() })
+					.catch((error: unknown) => console.warn('Could not report ship progress', error))
+		});
+		if (!results) return { tree: null };
+		const notice = checksNotice('ship', results);
+		if (!notice) return { tree: candidate.tree };
+		this.#setMeta('check-notice', notice);
+		return { failed: blockingFailures(results).map(({ name }) => name) };
 	}
 
 	async #run(attempt: AgentRow) {
@@ -428,6 +498,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				...this.#rebuiltNotes(),
 				...this.#retriedNotes(),
 				...(synced ? [] : this.#conflictNotes()),
+				...this.#checkNotes(),
 				...this.#overlapNotes(),
 				...pending,
 				...(synced ? [{ role: 'notification' as const, text: synced }] : [])
@@ -449,7 +520,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 				threadsSkill,
 				servicesSkill,
 				toolchainsSkill,
-				verificationSkill
+				verificationSkill,
+				checksSkill
 			]);
 			const guidance = await repositoryGuidance(this.#tools(fetch));
 			const run = runAttempt({
@@ -547,8 +619,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			if (this.#agent()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
-			if (next.value === 'finished') await this.#settle(attempt);
-			else await this.#finish(attempt, outcomes[next.value]);
+			if (next.value === 'finished') {
+				await this.#handoffChecks(attempt, fetch);
+				if (this.#agent()?.status !== 'running') return;
+				await this.#settle(attempt);
+			} else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
 			this.#clearActivity();
 			const status = this.#agent()?.status;
@@ -578,11 +653,136 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #settle(attempt: AgentRow) {
 		const queued =
-			this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0 || !!this.#meta('sync');
+			this.#sql.exec('SELECT 1 FROM inbox LIMIT 1').toArray().length > 0 ||
+			!!this.#meta('sync') ||
+			!!this.#meta('check-notice');
 		if (!queued) return await this.#finish(attempt, 'finished');
 		this.#setStatus('running');
 		await this.#report(attempt.repo, { type: 'status', status: 'running', error: null });
 		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	// Runs the repository's handoff checks; blocking failures go back to the agent for a few rounds before a person sees them.
+	// A turn that changed nothing since the last checks isn't sent back again: the agent stopped on purpose.
+	async #handoffChecks(attempt: AgentRow, fetch: Fetch) {
+		if (!attempt.base) return;
+		const signal = this.#controller?.signal;
+		const cancel = () =>
+			void sandboxWorkspace(fetch)
+				.cancelChecks()
+				.catch((error: unknown) => console.warn('Could not cancel the checks', error));
+		signal?.addEventListener('abort', cancel, { once: true });
+		try {
+			const tree = (await this.#git(fetch, 'git rev-parse HEAD^{tree}')).trim();
+			if (tree === this.#meta('handoff-tree')) return;
+			const results = await this.#check(attempt, fetch, 'handoff', {
+				base: attempt.base,
+				commit: 'HEAD',
+				signal
+			});
+			if (signal?.aborted) return;
+			this.#setMeta('handoff-tree', tree);
+			const notice = results && checksNotice('handoff', results);
+			const rounds = Number(this.#meta('check-rounds') ?? 0);
+			if (!notice || rounds >= maxCheckRounds) {
+				this.#sql.exec("DELETE FROM meta WHERE key = 'check-rounds'");
+				return;
+			}
+			this.#setMeta('check-rounds', String(rounds + 1));
+			this.#setMeta('check-notice', notice);
+		} catch (error) {
+			console.warn('Could not run the checks', error);
+		} finally {
+			signal?.removeEventListener('abort', cancel);
+		}
+	}
+
+	// Runs the checks due before an action on a commit, reusing passes whose inputs haven't changed, and reports them.
+	async #check(
+		attempt: AgentRow,
+		fetch: Fetch,
+		action: CheckAction,
+		{
+			base,
+			commit,
+			config,
+			started,
+			signal
+		}: {
+			base: string;
+			commit: string;
+			config?: string;
+			started?: () => Promise<unknown>;
+			signal?: AbortSignal;
+		}
+	): Promise<CheckResult[] | null> {
+		const workspace = sandboxWorkspace(fetch);
+		const plan = await workspace.checks({ base, commit, config });
+		let results: CheckResult[] = [];
+		if (plan.error) {
+			results = [
+				{ name: 'checks.yml', kind: 'run', status: 'failed', reused: false, output: plan.error }
+			];
+		} else if (dueChecks(plan.checks, action).length) {
+			if (action === 'handoff') this.#think('Running checks');
+			await started?.();
+			let diff: Promise<string> | undefined;
+			results = await runChecks({
+				checks: plan.checks,
+				action,
+				signal,
+				environment: attempt.toolchain ?? '',
+				evidence: {
+					passed: (key) =>
+						this.#sql
+							.exec(
+								'SELECT 1 FROM evidence WHERE key = ? AND at > ?',
+								key,
+								Date.now() - evidenceTtlMs
+							)
+							.toArray().length > 0,
+					record: (key) =>
+						void this.#sql.exec(
+							'INSERT INTO evidence (key, at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET at = excluded.at',
+							key,
+							Date.now()
+						)
+				},
+				run: (check: PlannedCheck) =>
+					workspace.runCheck({
+						name: check.name,
+						command: check.run!,
+						commit,
+						timeoutSeconds: check.timeoutSeconds
+					}),
+				ask: async (check: PlannedCheck) => {
+					diff ??= workspace.diff({ base, head: commit });
+					const request = askRequest(check.ask!, await diff);
+					const metadata = { repo: attempt.repo, thread: this.#thread(), task: 'check' };
+					return askVerdict(await this.env.MODELS.decide(request, metadata));
+				}
+			});
+		}
+		if (signal?.aborted) return null;
+		if (config && plan.configChanged)
+			results.push({
+				name: 'checks.yml',
+				kind: 'run',
+				status: 'warned',
+				reused: false,
+				output:
+					'This thread changes .agents/checks.yml. Ships use the checks on main, so the changes apply once this ships.'
+			});
+		if (!results.length) return null;
+		await this.#report(attempt.repo, { type: 'checks', run: { action, at: Date.now(), results } });
+		return results;
+	}
+
+	#checkNotes(): Turn[] {
+		const notice = this.#meta('check-notice');
+		if (!notice) return [];
+		this.#sql.exec("DELETE FROM meta WHERE key = 'check-notice'");
+		return [{ role: 'notification', text: notice }];
 	}
 
 	async #saveChanges(attempt: AgentRow, fetch: Fetch) {
@@ -1478,6 +1678,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 }
 
 const publishIntervalMs = 250;
+const maxCheckRounds = 3;
+const turnWaitMs = 30 * 60 * 1000;
+const evidenceTtlMs = 30 * 24 * 60 * 60 * 1000;
+
 const gitAsReGit = `git -c core.hooksPath=/dev/null -c user.name='${author.name}' -c user.email=${author.email}`;
 
 function idle(): ThreadActivity {

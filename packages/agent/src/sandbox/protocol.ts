@@ -1,4 +1,7 @@
+import type { CheckAction } from '@regit/core';
 import type { ToolOutput } from '../types.ts';
+
+export type { CheckAction };
 
 export interface ToolArguments {
 	read_file: { path: string; offset?: number; limit?: number };
@@ -94,6 +97,7 @@ export interface BuildShipRequest {
 
 export interface BuildShipResponse {
 	sha: string;
+	tree: string;
 	head: string;
 	shipped: boolean;
 }
@@ -174,7 +178,57 @@ export interface HeadBranchResponse {
 
 export interface DiffRequest {
 	base: string;
+	head?: string;
 }
+
+export interface CheckSpec {
+	name: string;
+	run?: string;
+	ask?: string;
+	when?: string[];
+	inputs?: string[];
+	before: CheckAction[];
+	blocking: boolean;
+	timeoutSeconds?: number;
+}
+
+export interface PlannedCheck extends CheckSpec {
+	applies: boolean;
+	inputsHash: string;
+}
+
+export interface ChecksRequest {
+	base: string;
+	commit: string;
+	config?: string;
+}
+
+export interface ChecksResponse {
+	checks: PlannedCheck[];
+	error?: string;
+	configChanged: boolean;
+}
+
+export interface RunCheckRequest {
+	name: string;
+	command: string;
+	commit?: string;
+	timeoutSeconds?: number;
+}
+
+export interface RunCheckResponse {
+	ok: boolean;
+	output: string;
+	log: string;
+}
+
+export interface CandidateRequest {
+	base: string;
+	onto: string;
+	source: string;
+}
+
+export type CandidateResponse = { sha: string; tree: string } | { conflicts: string[] };
 
 export interface DiffResponse {
 	diff: string;

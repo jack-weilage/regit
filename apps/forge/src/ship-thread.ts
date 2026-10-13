@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import type { Ship } from '@regit/core';
+import type { Ship, ShipVerification } from '@regit/core';
 
 // Conflicts and empty ships fail the same way on every retry; the thread's agent has to act first.
 export const isFinalShipError = (message: string) =>
@@ -8,38 +8,67 @@ export const isFinalShipError = (message: string) =>
 
 const retries = 3;
 const delayMs = 10_000;
+const maxRounds = 5;
+
+// RPC results carry a disposer that step outputs can't store.
+const plain = <T>(value: T) => JSON.parse(JSON.stringify(value)) as T;
 
 export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 	override async run({ payload: ship }: WorkflowEvent<Ship>, step: WorkflowStep) {
 		const repos = () => this.env.REPOS.getByName(ship.repo);
-		let shipped: { sha: string; branch: string };
+		let shipped: { sha: string; branch: string } | undefined;
 		try {
-			shipped = await step.do(
-				'ship the thread',
-				{ retries: { limit: retries, delay: `${delayMs / 1000} seconds`, backoff: 'exponential' } },
-				async ({ attempt }) => {
-					try {
-						const { sha, branch } = await this.env.REPOSITORY_GIT.getByName(
-							`ship-${ship.repo}`
-						).ship(ship);
-						return { sha, branch };
-					} catch (error) {
-						const message = error instanceof Error ? error.message : String(error);
-						if (isFinalShipError(message)) throw new NonRetryableError(message);
-						if (attempt <= retries) {
-							const next = { attempt: attempt + 1, limit: retries + 1 };
-							await repos()
-								.shipRetrying(ship, {
-									error: message,
-									...next,
-									delayMs: delayMs * 2 ** (attempt - 1)
-								})
-								.catch((cause: unknown) => console.warn('Could not report the ship retry', cause));
+			// Checks run on the exact tree a ship would push; if main moves before the push, they run again on the new tree.
+			for (let round = 1; !shipped; round++) {
+				const again = round > 1 ? ` (round ${round})` : '';
+				const verified = await step.do(
+					`check the thread${again}`,
+					{ retries: { limit: 10, delay: '15 seconds', backoff: 'constant' }, timeout: '6 hours' },
+					async () =>
+						plain<ShipVerification>(await this.env.ATTEMPTS.getByName(ship.thread).verifyShip(ship))
+				);
+				if ('conflicts' in verified)
+					throw new NonRetryableError(
+						`Ship conflicts with ${verified.branch} in ${verified.conflicts.join(', ')}`
+					);
+				if ('failed' in verified)
+					throw new NonRetryableError(`Checks failed: ${verified.failed.join(', ')}`);
+				const result = await step.do(
+					`ship the thread${again}`,
+					{
+						retries: { limit: retries, delay: `${delayMs / 1000} seconds`, backoff: 'exponential' }
+					},
+					async ({ attempt }) => {
+						try {
+							return plain<{ sha: string; branch: string } | { moved: true }>(
+								await this.env.REPOSITORY_GIT.getByName(`ship-${ship.repo}`).ship(
+									ship,
+									verified.tree
+								)
+							);
+						} catch (error) {
+							const message = error instanceof Error ? error.message : String(error);
+							if (isFinalShipError(message)) throw new NonRetryableError(message);
+							if (attempt <= retries) {
+								const next = { attempt: attempt + 1, limit: retries + 1 };
+								await repos()
+									.shipRetrying(ship, {
+										error: message,
+										...next,
+										delayMs: delayMs * 2 ** (attempt - 1)
+									})
+									.catch((cause: unknown) =>
+										console.warn('Could not report the ship retry', cause)
+									);
+							}
+							throw error;
 						}
-						throw error;
 					}
-				}
-			);
+				);
+				if ('sha' in result) shipped = { sha: result.sha, branch: result.branch };
+				else if (round >= maxRounds)
+					throw new NonRetryableError('Main kept moving while the checks ran');
+			}
 		} catch (error) {
 			const message = (error instanceof Error ? error.message : String(error)).replace(
 				/^NonRetryableError: /,
@@ -48,6 +77,6 @@ export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 			await step.do('report the failure', () => repos().shipFailed(ship, message));
 			return;
 		}
-		await step.do('record the ship', () => repos().shipped(ship, shipped));
+		await step.do('record the ship', () => repos().shipped(ship, shipped!));
 	}
 }

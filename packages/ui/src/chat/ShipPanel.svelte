@@ -2,11 +2,14 @@
 	import type { ShipStage } from '@regit/core';
 
 	const stages: { stage: ShipStage; label: (branch: string) => string }[] = [
+		{ stage: 'checking', label: () => 'Running checks' },
 		{ stage: 'fetching', label: () => "Fetching the thread's work" },
 		{ stage: 'building', label: (branch) => `Building one commit on ${branch}` },
 		{ stage: 'pushing', label: (branch) => `Pushing to ${branch}` },
 		{ stage: 'recording', label: () => 'Recording provenance' }
 	];
+
+	const icons = { passed: 'passed', failed: 'failed', warned: 'attention' } as const;
 </script>
 
 <script lang="ts">
@@ -15,20 +18,29 @@
 	import ChatRetry from './ChatRetry.svelte';
 	import { stopwatch } from './clock.svelte.ts';
 	import { formatDuration } from './format.ts';
-	import type { Intent, ShipProgress, ThreadStatus } from '@regit/core';
+	import type { CheckResult, CheckRun, Intent, ShipProgress, ThreadStatus } from '@regit/core';
 
 	interface Props {
 		intent?: Intent;
 		status: ThreadStatus;
 		progress?: ShipProgress | null;
+		checks?: CheckRun | null;
 		branch: string;
 		now?: number;
 		onship: (commit: { title: string; body: string }) => Promise<unknown>;
 	}
 
-	let { intent, status, progress, branch: known, now, onship }: Props = $props();
+	let { intent, status, progress, checks, branch: known, now, onship }: Props = $props();
 
-	let current = $derived(stages.findIndex(({ stage }) => stage === progress?.stage));
+	const uid = $props.id();
+
+	let visible = $derived(
+		stages.filter(
+			({ stage }) =>
+				stage !== 'checking' || progress?.stage === 'checking' || checks?.action === 'ship'
+		)
+	);
+	let current = $derived(visible.findIndex(({ stage }) => stage === progress?.stage));
 	let branch = $derived(progress?.branch ?? known);
 
 	let busy = $state(false);
@@ -52,6 +64,12 @@
 		}
 	}
 </script>
+
+{#snippet check(result: CheckResult)}
+	<StatusIcon state={icons[result.status]} />
+	<span class="name">{result.name}</span>
+	{#if result.reused}<span class="reused">unchanged</span>{/if}
+{/snippet}
 
 <section class="ship" aria-label="Ship" aria-busy={busy || shipping}>
 	<header>
@@ -77,7 +95,7 @@
 	</header>
 	{#if shipping}
 		<ol aria-label="Shipping progress">
-			{#each stages as { stage, label }, index (stage)}
+			{#each visible as { stage, label }, index (stage)}
 				{@const state = index < current ? 'passed' : index === current ? 'running' : 'pending'}
 				<li class={state} aria-current={index === current ? 'step' : undefined}>
 					<StatusIcon {state} />
@@ -89,6 +107,25 @@
 			{/each}
 		</ol>
 		{#if progress?.retry}<ChatRetry retry={progress.retry} {now} />{/if}
+	{/if}
+	{#if !shipping && checks?.results.length}
+		<div class="checks">
+			<p class="label" id="{uid}-checks">Checks before {checks.action}</p>
+			<ul aria-labelledby="{uid}-checks">
+				{#each checks.results as result (result.name)}
+					<li class={result.status}>
+						{#if result.status !== 'passed' && result.output}
+							<details>
+								<summary>{@render check(result)}</summary>
+								<pre>{result.output}</pre>
+							</details>
+						{:else}
+							<div class="row">{@render check(result)}</div>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</div>
 	{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if writing && !shipping}
@@ -143,7 +180,8 @@
 	}
 
 	p,
-	ol {
+	ol,
+	ul {
 		margin: 0;
 	}
 
@@ -179,6 +217,95 @@
 
 	.error {
 		color: var(--color-danger-text);
+	}
+
+	.checks {
+		display: grid;
+		gap: var(--space-2);
+		min-inline-size: 0;
+		font-size: var(--text-meta);
+	}
+
+	.label {
+		color: var(--color-muted);
+	}
+
+	ul {
+		display: grid;
+		gap: var(--space-1);
+		padding: 0;
+		list-style: none;
+		min-inline-size: 0;
+	}
+
+	ul li {
+		display: block;
+		min-inline-size: 0;
+		color: var(--color-fg);
+
+		&.passed :global(svg) {
+			color: var(--color-muted);
+		}
+
+		&.failed {
+			:global(svg),
+			.name {
+				color: var(--color-danger-text);
+			}
+		}
+	}
+
+	.row,
+	summary {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		padding-block: var(--space-1);
+	}
+
+	summary {
+		inline-size: fit-content;
+		max-inline-size: 100%;
+		list-style: none;
+		cursor: pointer;
+
+		&::-webkit-details-marker {
+			display: none;
+		}
+
+		&::after {
+			content: '';
+			border-block: 0.3em solid transparent;
+			border-inline-start: 0.4em solid var(--color-muted);
+			transition: rotate 0.15s;
+		}
+
+		&:focus-visible {
+			outline: 2px solid var(--color-accent);
+			outline-offset: 2px;
+			border-radius: var(--radius);
+		}
+	}
+
+	details[open] > summary::after {
+		rotate: 90deg;
+	}
+
+	.reused {
+		color: var(--color-muted);
+	}
+
+	pre {
+		max-block-size: 14em;
+		overflow: auto;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		margin: var(--space-2) 0 0;
+		padding: var(--space-3);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		font-family: var(--font-mono);
+		font-size: inherit;
 	}
 
 	form {

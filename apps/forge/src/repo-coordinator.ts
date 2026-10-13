@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
 	assessRequest,
+	describeChecks,
 	compactThreshold,
 	maxSimilarCandidates,
 	type Assessment,
@@ -15,6 +16,7 @@ import {
 } from '@regit/agent';
 import type {
 	Author,
+	CheckRun,
 	Entry,
 	Failure,
 	RetryFailure,
@@ -57,7 +59,8 @@ export type AttemptUpdate =
 	| { type: 'changes'; summary: DiffSummary; paths: string[] }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
-	| { type: 'behind'; behind: ThreadSummary['behind']; branch: string };
+	| { type: 'behind'; behind: ThreadSummary['behind']; branch: string }
+	| { type: 'checks'; run: CheckRun };
 
 type ThreadRow = {
 	id: string;
@@ -82,12 +85,14 @@ type ThreadRow = {
 	failure: string | null;
 	paths: string | null;
 	overlaps: string | null;
+	checks: string | null;
 	parent_headline?: string | null;
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
 const shipSteps: Record<ShipProgress['stage'], string> = {
 	starting: 'Ship',
+	checking: 'Checks',
 	fetching: 'Fetch',
 	building: 'Build',
 	pushing: 'Push',
@@ -191,7 +196,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				behind TEXT,
 				failure TEXT,
 				paths TEXT,
-				overlaps TEXT
+				overlaps TEXT,
+				checks TEXT
 			);
 			CREATE TABLE IF NOT EXISTS entries (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,7 +224,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			DROP TABLE IF EXISTS promotions;
 		`);
 		// TODO: remove once every repository's coordinator has these columns.
-		for (const column of ['failure', 'paths', 'overlaps']) {
+		for (const column of ['failure', 'paths', 'overlaps', 'checks']) {
 			try {
 				this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${column} TEXT`);
 			} catch {
@@ -802,11 +808,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const failures = this.#shipFailures(ship.thread);
 		this.#setShipProgress(ship.thread, undefined);
 		const summary = this.#summary(ship.thread)!;
-		if (
-			message.startsWith('Ship conflicts with ') &&
-			ship.handBacks < maxHandBacks &&
-			!summary.deleted
-		)
+		const fixable =
+			message.startsWith('Ship conflicts with ') || message.startsWith('Checks failed: ');
+		if (fixable && ship.handBacks < maxHandBacks && !summary.deleted)
 			return await this.#handBack(ship, message);
 		this.#stopShipping(ship.thread, message, failures);
 	}
@@ -868,17 +872,20 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				handBacks: ship.handBacks + 1
 			})
 		);
+		const conflict = /^Ship conflicts with (\S+) in /.exec(message);
 		const entry = this.#add(ship.thread, {
 			type: 'event',
-			text: `${message}. Handing it back to the agent to bring up to date.`
+			text: `${message}. Handing it back to the agent to ${conflict ? 'bring up to date' : 'fix'}.`
 		});
 		this.#setStatus(ship.thread, 'running');
 		await this.#converse(
 			ship.thread,
 			agent,
-			`Shipping conflicted with ${/^Ship conflicts with (\S+) in /.exec(message)?.[1] ?? (await this.#branch())}. Bring this thread up to date with it; it ships again once you finish.`,
+			conflict
+				? `Shipping conflicted with ${conflict[1]}. Bring this thread up to date with it; it ships again once you finish.`
+				: 'Shipping stopped because checks failed. Fix them; it ships again once you finish.',
 			entry,
-			true
+			!!conflict
 		);
 	}
 
@@ -1056,6 +1063,23 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			);
 			this.#touch(thread);
 			this.#checkOverlaps(thread);
+			return;
+		}
+		if (update.type === 'checks') {
+			const outcome = ({ action, results }: CheckRun) =>
+				JSON.stringify([action, results.map(({ name, status }) => [name, status])]);
+			const unchanged = summary.checks && outcome(summary.checks) === outcome(update.run);
+			this.#sql.exec(
+				'UPDATE threads SET checks = ? WHERE id = ?',
+				JSON.stringify(update.run),
+				thread
+			);
+			if (!unchanged)
+				this.#add(thread, {
+					type: 'event',
+					text: describeChecks(update.run.action, update.run.results)
+				});
+			this.#touch(thread);
 			return;
 		}
 		if (update.type === 'behind') {
@@ -1428,6 +1452,7 @@ function toSummary(row: ThreadRow): ThreadSummary {
 				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }
 				: null,
 		behind: row.behind ? (JSON.parse(row.behind) as ThreadSummary['behind']) : null,
-		failure: row.failure ? (JSON.parse(row.failure) as ThreadSummary['failure']) : null
+		failure: row.failure ? (JSON.parse(row.failure) as ThreadSummary['failure']) : null,
+		checks: row.checks ? (JSON.parse(row.checks) as CheckRun) : null
 	};
 }

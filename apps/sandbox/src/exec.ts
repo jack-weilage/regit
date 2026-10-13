@@ -4,6 +4,7 @@ export interface ExecOptions {
 	cwd: string;
 	env?: Record<string, string>;
 	timeout?: number;
+	signal?: AbortSignal;
 }
 
 export interface ExecResult {
@@ -16,7 +17,7 @@ export interface ExecResult {
 export function exec(
 	command: string,
 	args: string[],
-	{ cwd, env, timeout = 120_000 }: ExecOptions
+	{ cwd, env, timeout = 120_000, signal }: ExecOptions
 ) {
 	return new Promise<ExecResult>((resolve, reject) => {
 		const child = spawn(command, args, {
@@ -34,14 +35,23 @@ export function exec(
 		});
 		child.stderr.on('data', (chunk: Buffer) => (output += chunk));
 
+		const kill = () => {
+			try {
+				process.kill(-child.pid!, 'SIGKILL');
+			} catch {
+				/* Already exited. */
+			}
+		};
 		const timer = setTimeout(() => {
 			timedOut = true;
-			process.kill(-child.pid!, 'SIGKILL');
+			kill();
 		}, timeout);
+		signal?.addEventListener('abort', kill, { once: true });
 
 		child.on('error', reject);
 		child.on('close', (code) => {
 			clearTimeout(timer);
+			signal?.removeEventListener('abort', kill);
 			resolve({ code, output, stdout, timedOut });
 		});
 	});

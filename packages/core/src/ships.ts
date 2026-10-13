@@ -10,7 +10,11 @@ export interface Revision {
 	at: number;
 }
 
-export type ShipStage = 'starting' | 'fetching' | 'building' | 'pushing' | 'recording';
+export type ShipStage = 'starting' | 'checking' | 'fetching' | 'building' | 'pushing' | 'recording';
+
+// What checking a ship found: the tree its checks passed on (null when the repository has none), conflicts, or failures.
+export type ShipVerification =
+	{ tree: string | null } | { conflicts: string[]; branch: string } | { failed: string[] };
 
 export interface ShipProgress {
 	stage: ShipStage;

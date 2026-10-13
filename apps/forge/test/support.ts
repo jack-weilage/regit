@@ -128,8 +128,13 @@ export async function setup({ containers = false } = {}) {
 		throw new Error(`Never saw ${count} requests from ${thread}`);
 	}
 
-	async function startedThread(name: string, steps: object[][], branch?: string) {
-		await seed(name, { 'notes.md': 'Some notes\n' }, branch);
+	async function startedThread(
+		name: string,
+		steps: object[][],
+		branch?: string,
+		files: Record<string, string> = {}
+	) {
+		await seed(name, { 'notes.md': 'Some notes\n', ...files }, branch);
 		await script(name, steps);
 		const env = await worker.getEnv();
 		await env.DB.prepare('INSERT INTO repos (name, created_at) VALUES (?, ?)')
