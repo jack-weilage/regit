@@ -2,7 +2,24 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { setup, untilThread, writeNotes } from './support.ts';
 
-const { dir, script, modelRequests, sh, commit, startedThread } = await setup();
+const { dir, git, script, modelRequests, sh, commit, startedThread } = await setup();
+
+test('reads main once per turn while the thread is up to date, however often it checkpoints', async () => {
+	const { repo, id } = await startedThread('current', [
+		writeNotes('# Notes\\n'),
+		writeNotes('# Notes\\n\\nSome notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	const done = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	expect(
+		done.entries.filter((entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint'))
+	).toHaveLength(2);
+	expect(done.summary.behind).toBeNull();
+	const mainReads = (await git.paths()).filter((path) =>
+		path.startsWith('GET /current.git/info/refs')
+	);
+	expect(mainReads).toHaveLength(2);
+});
 
 test('records how far behind main threads are, warns on conflicts and merges only when asked', async () => {
 	const { env, repo, sam, id } = await startedThread('landing', [

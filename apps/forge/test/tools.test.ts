@@ -60,6 +60,7 @@ test('replays image pixels after the source is removed and keeps durable referen
 		.toContain(`![Inspected capture](/images/images/${imageId})`);
 });
 
+// TODO: find why serviceAction('start') sometimes fails Miniflare's proxy result-type assertion (about 1 run in 12).
 test('runs saved services and serves them on preview hosts', async () => {
 	const port = 40_000 + Math.floor(Math.random() * 10_000);
 	const command = `node -e "console.log('booting'); require('http').createServer((q, s) => { const body = 'hi from ' + q.url; if (/gzip/.test(q.headers['accept-encoding'] || '')) { s.setHeader('content-encoding', 'gzip'); s.end(require('zlib').gzipSync(body)); } else s.end(body); }).listen(process.env.PORT)"`;

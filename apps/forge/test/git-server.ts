@@ -6,14 +6,20 @@ import type { AddressInfo } from 'node:net';
 
 export async function serveGit(root: string) {
 	const requests: IncomingHttpHeaders[] = [];
+	const paths: string[] = [];
 	const server = createServer((req, res) => {
 		const url = new URL(req.url!, 'http://git');
 		if (url.pathname === '/_control/requests') {
 			res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(requests));
 			return;
 		}
+		if (url.pathname === '/_control/paths') {
+			res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(paths));
+			return;
+		}
 		forkOnFirstUse(root, url.pathname);
 		requests.push(req.headers);
+		paths.push(`${req.method} ${url.pathname}${url.search}`);
 		const backend = spawn('git', ['http-backend'], {
 			env: {
 				...process.env,
