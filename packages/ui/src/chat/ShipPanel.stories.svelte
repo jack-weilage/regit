@@ -78,6 +78,7 @@
 			'Pushing to main a1b2c3d onto 9f8e7d6'
 		);
 		await expect(canvas.getByText('12s')).toBeVisible();
+		await expect(canvas.queryByText('Running checks')).toBeNull();
 	}}
 />
 
@@ -142,6 +143,79 @@
 			expect(canvas.getByRole('alert')).toHaveTextContent('Repository owner permission is required')
 		);
 		await expect(canvas.getByRole('button', { name: 'Ship commit' })).toBeEnabled();
+	}}
+/>
+
+<Story
+	name="Checks passed"
+	args={{
+		checks: {
+			action: 'handoff',
+			at: now,
+			results: [
+				{ name: 'typecheck', kind: 'run', status: 'passed', reused: false, output: '' },
+				{ name: 'tests', kind: 'run', status: 'passed', reused: true, output: '' }
+			]
+		}
+	}}
+	play={async ({ canvas }) => {
+		const list = canvas.getByRole('list', { name: 'Checks before handoff' });
+		await expect(list).toHaveTextContent('typecheck');
+		await expect(canvas.getAllByText('unchanged')).toHaveLength(1);
+	}}
+/>
+
+<Story
+	name="Checks failed"
+	args={{
+		checks: {
+			action: 'ship',
+			at: now,
+			results: [
+				{
+					name: 'typecheck',
+					kind: 'run',
+					status: 'failed',
+					reused: false,
+					output:
+						"src/members.ts(42,7): error TS2322: Type 'string' is not assignable to type 'number'.\nFound 1 error in src/members.ts:42"
+				},
+				{
+					name: 'Changelog updated',
+					kind: 'ask',
+					status: 'warned',
+					reused: true,
+					output: 'CHANGELOG.md has no entry for member pagination.'
+				}
+			]
+		}
+	}}
+	play={async ({ canvas, userEvent }) => {
+		await expect(canvas.getByRole('list', { name: 'Checks before ship' })).toBeVisible();
+		await expect(canvas.queryByText(/error TS2322/)).not.toBeVisible();
+		await userEvent.click(canvas.getByText('typecheck'));
+		await waitFor(() => expect(canvas.getByText(/error TS2322/)).toBeVisible());
+	}}
+/>
+
+<Story
+	name="Checking"
+	args={{
+		status: 'shipping',
+		now,
+		progress: {
+			stage: 'checking',
+			note: null,
+			branch: 'main',
+			since: now - 5_000,
+			started: now - 6_000
+		}
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('listitem', { current: 'step' })).toHaveTextContent(
+			'Running checks'
+		);
+		await expect(canvas.queryByRole('list', { name: /Checks before/ })).toBeNull();
 	}}
 />
 

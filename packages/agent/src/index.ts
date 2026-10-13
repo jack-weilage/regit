@@ -17,6 +17,7 @@ export { StepActivity } from './activity.ts';
 export {
 	mergeSkills,
 	browserSkill,
+	checksSkill,
 	servicesSkill,
 	skillTools,
 	threadsSkill,
@@ -26,6 +27,16 @@ export {
 	type Skill
 } from './skills.ts';
 export { askThreads, askThreadsTools } from './search.ts';
+export {
+	askRequest,
+	askVerdict,
+	blockingFailures,
+	checksNotice,
+	describeChecks,
+	dueChecks,
+	runChecks,
+	type Evidence
+} from './checks.ts';
 export { combineTools } from './tools.ts';
 export { modelRetries, runAgent, type AgentOutcome, type RetryPolicy } from './loop.ts';
 export { interruptedOutput, resumeStep } from './resume.ts';

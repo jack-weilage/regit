@@ -156,7 +156,12 @@ describe('shipping', () => {
 			`Trusted squash\n\nReGit-Ship: ${id}`
 		);
 
-		expect(await build(sourceSha)).toEqual({ sha, head: sha, shipped: true });
+		expect(await build(sourceSha)).toEqual({
+			sha,
+			tree: await git(remote, ['rev-parse', `${sha}^{tree}`]),
+			head: sha,
+			shipped: true
+		});
 		expect(await git(remote, ['rev-list', '--count', `${base}..main`])).toBe('2');
 	});
 

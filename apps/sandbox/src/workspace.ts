@@ -169,7 +169,7 @@ export async function buildShip(
 		`--grep=${shipTrailer}: ${id}`,
 		head
 	]);
-	if (shipped) return { sha: shipped, head, shipped: true };
+	if (shipped) return { sha: shipped, tree: await treeOf(root, shipped), head, shipped: true };
 	await git(root, ['reset', '--hard', sourceSha]);
 	await git(root, ['clean', '-fd']);
 	await git(root, ['merge-base', '--is-ancestor', base, sourceSha]);
@@ -196,7 +196,7 @@ export async function buildShip(
 	const sha = await git(root, ['rev-parse', 'HEAD']);
 	if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${head}`)
 		throw new Error('A ship must be exactly one commit');
-	return { sha, head, shipped: false };
+	return { sha, tree: await treeOf(root, sha), head, shipped: false };
 }
 
 // Pushes a built ship only if main is still where it was built; reports when main moved instead.
@@ -320,10 +320,12 @@ export async function headBranch(root: string, { remote }: HeadBranchRequest) {
 	return /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(refs)?.[1] ?? null;
 }
 
-export async function diff(root: string, { base }: DiffRequest) {
+const treeOf = (root: string, sha: string) => git(root, ['rev-parse', `${sha}^{tree}`]);
+
+export async function diff(root: string, { base, head = 'HEAD' }: DiffRequest) {
 	const result = await exec(
 		'git',
-		['diff', '--no-color', '--no-ext-diff', '--find-renames', base, 'HEAD'],
+		['diff', '--no-color', '--no-ext-diff', '--find-renames', base, head],
 		{
 			cwd: root
 		}

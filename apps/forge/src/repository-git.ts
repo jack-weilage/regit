@@ -33,7 +33,11 @@ export class RepositoryGit extends DurableObject<Env> {
 
 	// Squashes the thread onto main, pushes it and records provenance, reporting each stage.
 	// Safe to retry: a ship already on main is found, not repeated.
-	async ship(ship: Ship): Promise<{ sha: string; branch: string }> {
+	// With a checked tree, only that exact tree is pushed; if main moved since the checks ran, it says so instead.
+	async ship(
+		ship: Ship,
+		checked: string | null = null
+	): Promise<{ sha: string; branch: string } | { moved: true }> {
 		let branch: string | null = null;
 		const progress = (stage: ShipStage, note: string | null = null) =>
 			this.env.REPOS.getByName(ship.repo)
@@ -74,6 +78,7 @@ export class RepositoryGit extends DurableObject<Env> {
 						committer
 					});
 					if (built.shipped) sha = built.sha;
+					else if (checked && built.tree !== checked) return { moved: true as const };
 					else {
 						await progress('pushing', `${built.sha.slice(0, 7)} onto ${built.head.slice(0, 7)}`);
 						const { pushed } = await workspace.pushShip({

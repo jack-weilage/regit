@@ -6,8 +6,14 @@ import type {
 	PushShipResponse,
 	CloneRequest,
 	CloneResponse,
+	CandidateRequest,
+	CandidateResponse,
+	ChecksRequest,
+	ChecksResponse,
 	ClashesRequest,
 	ClashesResponse,
+	RunCheckRequest,
+	RunCheckResponse,
 	CompareRequest,
 	CompareResponse,
 	CommitRequest,
@@ -92,6 +98,15 @@ export function sandboxWorkspace(fetch: Fetch) {
 		},
 		compare(request: CompareRequest) {
 			return post<CompareResponse>(fetch, '/workspace/compare', JSON.stringify(request));
+		},
+		checks(request: ChecksRequest) {
+			return post<ChecksResponse>(fetch, '/workspace/checks', JSON.stringify(request));
+		},
+		runCheck(request: RunCheckRequest) {
+			return post<RunCheckResponse>(fetch, '/workspace/run-check', JSON.stringify(request));
+		},
+		candidate(request: CandidateRequest) {
+			return post<CandidateResponse>(fetch, '/workspace/candidate', JSON.stringify(request));
 		},
 		clashes(request: ClashesRequest) {
 			return post<ClashesResponse>(fetch, '/workspace/clashes', JSON.stringify(request));
