@@ -161,7 +161,13 @@ test('records a failed agent turn in the thread', async () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		entries = (await repo.thread(opened.id))!.entries;
 	}
-	expect(entries.at(-1)).toMatchObject({ type: 'event', text: 'The agent failed: No credits' });
+	expect(entries.at(-1)).toMatchObject({
+		type: 'failure',
+		title: 'The agent stopped',
+		error: 'No credits',
+		resumable: true
+	});
+	expect((await repo.thread(opened.id))!.summary.failure).toMatchObject({ error: 'No credits' });
 });
 
 test('steers a running attempt with messages read after the current step', async () => {
@@ -248,10 +254,7 @@ test('reports a sandbox that fails before asking the model', async () => {
 
 	await expect
 		.poll(async () => (await repo.thread(id))!.entries.at(-1), { timeout: 20_000 })
-		.toMatchObject({
-			type: 'event',
-			text: expect.stringMatching(/^The agent failed: /)
-		});
+		.toMatchObject({ type: 'failure', title: 'The agent stopped' });
 	const requests = (await modelRequests('missing')).filter(
 		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === id
 	);

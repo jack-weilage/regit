@@ -31,14 +31,14 @@ export class RepositoryGit extends DurableObject<Env> {
 
 	// Squashes the thread onto main, pushes it and records provenance, reporting each stage.
 	// Safe to retry: a ship already on main is found, not repeated.
-	async ship(ship: Ship, attempt = 1): Promise<{ sha: string; branch: string }> {
+	async ship(ship: Ship): Promise<{ sha: string; branch: string }> {
 		let branch: string | null = null;
 		const progress = (stage: ShipStage, note: string | null = null) =>
 			this.env.REPOS.getByName(ship.repo)
 				.shipProgress(ship, { stage, note, branch, since: Date.now() })
 				.catch((error: unknown) => console.warn('Could not report ship progress', error));
 		return this.#serial(async () => {
-			await progress('fetching', attempt > 1 ? `Retrying, attempt ${attempt}` : null);
+			await progress('fetching');
 			using source = await this.env.ARTIFACTS.get(ship.source.repository);
 			using canonical = await this.env.ARTIFACTS.get(ship.repo);
 			const sourceInfo = await source.info();

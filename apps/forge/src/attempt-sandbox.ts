@@ -11,6 +11,8 @@ import {
 	type DiffFile,
 	type Revision,
 	type Machine,
+	type Retry,
+	type RetryFailure,
 	type StartupStage,
 	type ThreadActivity,
 	type ThreadSummary
@@ -19,6 +21,14 @@ import type { AttemptUpdate } from './repo-coordinator.ts';
 import {
 	askThreads,
 	askThreadsTools,
+	backoff,
+	errorMessage,
+	isTransient,
+	ModelError,
+	modelRetries,
+	resumeStep,
+	SandboxUnavailableError,
+	sleep,
 	combineTools,
 	mergeSkills,
 	browserSkill,
@@ -43,12 +53,15 @@ import {
 	threadTools,
 	type AgentOutcome,
 	type Fetch,
+	type InflightStep,
+	type RetryPolicy,
 	type ServiceInfo,
 	type Skill,
 	type Mode,
 	type Step,
 	type ToolExecutor,
 	type ToolName,
+	type ToolResult,
 	type Toolchain,
 	type Turn
 } from '@regit/agent';
@@ -117,6 +130,9 @@ const idleTimeoutMs = 5 * 60 * 1000;
 const snapshotHeadroomBytes = 2e9;
 const snapshotRefreshMs = 24 * 60 * 60 * 1000;
 const maxStoredChanges = 1_500_000;
+const turnRetries: RetryPolicy = { limit: 5, baseMs: 15_000, maxMs: 5 * 60 * 1000 };
+const pushRetries: RetryPolicy = { limit: 4, baseMs: 1000, maxMs: 8000 };
+const reportRetries: RetryPolicy = { limit: 3, baseMs: 250, maxMs: 2000 };
 
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
@@ -131,6 +147,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	#published = 0;
 	#publishing?: ReturnType<typeof setTimeout>;
 	#capturing = false;
+	#wakeRetry?: () => void;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -249,6 +266,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async cancel() {
 		const attempt = this.#agent();
 		if (!attempt || !isActive(attempt.status)) return;
+		this.#forgetRetries();
 		await this.#finish(attempt, 'cancelled');
 		this.#controller?.abort();
 		await this.ctx.storage.deleteAlarm();
@@ -273,9 +291,27 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#sql.exec('DELETE FROM inbox');
 		const attempt = this.#agent();
 		if (!attempt || !isActive(attempt.status)) return;
+		this.#forgetRetries();
 		this.#setStatus('interrupted');
 		this.#controller?.abort();
 		await this.ctx.storage.deleteAlarm();
+		this.#clearActivity();
+	}
+
+	// Picks a failed turn back up: an interrupted step resumes, then the agent continues.
+	async resume() {
+		const attempt = this.#agent();
+		if (!attempt || isActive(attempt.status)) return;
+		if (attempt.status === 'failed' && attempt.error) this.#setMeta('retried', attempt.error);
+		this.#saveRetry(null);
+		this.#setStatus('queued');
+		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	async retryNow() {
+		if (this.#wakeRetry) return this.#wakeRetry();
+		if (this.#agent()?.status === 'queued' && this.#retry())
+			await this.ctx.storage.setAlarm(Date.now());
 	}
 
 	async destroy() {
@@ -367,11 +403,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 		const controller = (this.#controller = new AbortController());
 		const deadline = Date.now() + sliceMs;
+		const retry = this.#retry();
+		if (retry) this.#saveRetry({ ...retry, next: null });
 		this.#think('Starting');
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
+			const rebuilt = !!this.#meta('rebuilt');
 			if (!attempt.base) {
 				attempt.base = await this.#head(fetch);
 				this.#sql.exec('UPDATE agent SET base = ?', attempt.base);
@@ -385,12 +424,19 @@ export class AttemptSandbox extends DurableObject<Env> {
 			else await this.#reportBehind(attempt, fetch, fork, token);
 			const opening: Turn[] = [
 				...this.#rebuiltNotes(),
+				...this.#retriedNotes(),
 				...(synced ? [] : this.#conflictNotes()),
 				...pending,
 				...(synced ? [{ role: 'notification' as const, text: synced }] : [])
 			];
-			if (opening.length) this.#saveStep({ turns: opening });
-			if (syncing && !synced && !pending.length) {
+			const inflight = this.#inflight();
+			const resume = inflight ? resumeStep(inflight, rebuilt) : undefined;
+			// An interrupted step's results come before anything new, so these join after it.
+			const carried = resume ? opening : [];
+			if (opening.length && !resume) this.#saveStep({ turns: opening });
+			if (this.#retry()?.failures.at(-1)?.label !== 'Model request')
+				await this.#recovered(attempt.repo);
+			if (syncing && !synced && !pending.length && !resume) {
 				this.#clearActivity();
 				return await this.#finish(attempt, 'finished');
 			}
@@ -442,24 +488,45 @@ export class AttemptSandbox extends DurableObject<Env> {
 				instructions: withSkills(`${threadInstructions}\n\n${guidance.instructions}`, skills),
 				history: this.#history(),
 				signal: controller.signal,
-				steer: async () => [...this.#conflictNotes(), ...(await this.#drain(attempt.repo))]
+				resume,
+				retries: this.#scaled(modelRetries),
+				wait: (ms, signal) => this.#wait(ms, signal),
+				steer: async () => [
+					...carried.splice(0),
+					...this.#conflictNotes(),
+					...(await this.#drain(attempt.repo))
+				]
 			});
 
 			const step = new StepActivity();
 			this.#think();
 			let next = await run.next();
 			while (!next.done) {
-				if (next.value.type !== 'step') this.#stream(step, next.value);
-				else {
-					this.#saveStep(next.value);
+				const event = next.value;
+				if (event.type === 'retry') {
+					step.take();
+					this.#activity.text = '';
+					this.#activity.calls = [];
+					const { label, error, attempt: number, limit, delayMs } = event;
+					this.#failed(label, error, 'model request', number, limit, delayMs);
+				} else if (event.type === 'reply') {
+					const { reply, usage } = event;
+					this.#setMeta('inflight', JSON.stringify({ reply, usage, results: [] }));
+				} else if (event.type !== 'step') {
+					if (event.type === 'result') this.#keepResult(event.result);
+					this.#stream(step, event);
+				} else {
+					this.#sql.exec("DELETE FROM meta WHERE key = 'inflight'");
+					this.#saveStep(event);
+					await this.#recovered(attempt.repo);
 					const tools = step.take();
 					await this.#report(attempt.repo, {
 						type: 'step',
-						step: next.value,
+						step: event,
 						tools: controller.signal.aborted ? [] : tools
 					});
-					this.#stepped(next.value.turns);
-					if (next.value.checkpoint) await this.#recheckBehind(attempt, fetch, fork, token);
+					this.#stepped(event.turns);
+					if (event.checkpoint) await this.#recheckBehind(attempt, fetch, fork, token);
 					await this.#syncServices(fetch, attempt.repo);
 					if (Date.now() > deadline) {
 						await run.return('aborted');
@@ -478,8 +545,24 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			const status = this.#agent()?.status;
 			if (status !== 'running') return;
-			// TODO: retry transient model and sandbox failures instead of failing the attempt
-			await this.#finish(attempt, 'failed', error instanceof Error ? error.message : String(error));
+			const message = errorMessage(error);
+			const label = failureLabel(error);
+			const failures = Number(this.#meta('turn-failures') ?? 0) + 1;
+			const policy = this.#scaled(turnRetries);
+			if (isTransient(error) && failures < policy.limit) {
+				const delayMs = backoff(failures, policy.baseMs, policy.maxMs, error);
+				this.#failed(label, message, 'turn', failures + 1, policy.limit, delayMs);
+				this.#setMeta('turn-failures', String(failures));
+				this.#setStatus('queued');
+				await this.ctx.storage.setAlarm(Date.now() + delayMs);
+				return;
+			}
+			const earlier = this.#retry()?.failures ?? [];
+			this.#saveRetry(null);
+			await this.#finish(attempt, 'failed', message, [
+				...earlier,
+				{ at: Date.now(), label, error: message }
+			]);
 		} finally {
 			this.#controller = undefined;
 		}
@@ -582,6 +665,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 			{
 				role: 'notification',
 				text: "Your sandbox was rebuilt from this thread's branch since your last turn. Your checkpointed changes are intact, but files Git ignores (installed dependencies, build output, local databases), anything outside the workspace and processes you started are gone. The workspace was prepared again and saved services were restarted; recreate anything else you still need."
+			}
+		];
+	}
+
+	#retriedNotes(): Turn[] {
+		const error = this.#meta('retried');
+		if (!error) return [];
+		this.#sql.exec("DELETE FROM meta WHERE key = 'retried'");
+		return [
+			{
+				role: 'notification',
+				text: `Your last turn failed: ${error}\n\nA person asked you to try again. Continue where you left off.`
 			}
 		];
 	}
@@ -777,8 +872,89 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	#clearActivity() {
-		this.#activity = idle();
+		this.#activity = { ...idle(), retry: this.#retry() };
 		this.#publish(true);
+	}
+
+	#retry() {
+		return JSON.parse(this.#meta('retry') ?? 'null') as Retry | null;
+	}
+
+	#saveRetry(retry: Retry | null) {
+		if (retry) this.#setMeta('retry', JSON.stringify(retry));
+		else this.#sql.exec("DELETE FROM meta WHERE key IN ('retry', 'turn-failures')");
+		this.#activity.retry = retry;
+		this.#publish(true);
+	}
+
+	#forgetRetries() {
+		this.#wakeRetry?.();
+		this.#sql.exec(
+			"DELETE FROM meta WHERE key IN ('retry', 'turn-failures', 'inflight', 'retried')"
+		);
+		this.#activity.retry = null;
+	}
+
+	#failed(
+		label: string,
+		error: string,
+		what: string,
+		attempt: number,
+		limit: number,
+		delayMs: number
+	) {
+		const failures = [...(this.#retry()?.failures ?? []), { at: Date.now(), label, error }];
+		this.#saveRetry({ what, failures, attempt, limit, next: Date.now() + delayMs });
+	}
+
+	// Waits out a retry delay, cut short when a person asks to retry now or the turn stops.
+	async #wait(ms: number, signal?: AbortSignal) {
+		const wake = new AbortController();
+		this.#wakeRetry = () => wake.abort();
+		try {
+			await sleep(ms, signal ? AbortSignal.any([signal, wake.signal]) : wake.signal);
+		} finally {
+			this.#wakeRetry = undefined;
+		}
+		const retry = this.#retry();
+		if (retry && !signal?.aborted) this.#saveRetry({ ...retry, next: null });
+	}
+
+	async #recovered(repo: string) {
+		const retry = this.#retry();
+		if (!retry) return;
+		this.#saveRetry(null);
+		await this.#report(repo, { type: 'recovered', failures: retry.failures });
+	}
+
+	async #withRetries(label: string, what: string, policy: RetryPolicy, run: () => Promise<void>) {
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return await run();
+			} catch (error) {
+				const signal = this.#controller?.signal;
+				if (attempt >= policy.limit || !isTransient(error) || signal?.aborted) throw error;
+				const delayMs = backoff(attempt, policy.baseMs, policy.maxMs, error);
+				this.#failed(label, errorMessage(error), what, attempt + 1, policy.limit, delayMs);
+				await this.#wait(delayMs, signal);
+			}
+		}
+	}
+
+	#scaled(policy: RetryPolicy): RetryPolicy {
+		const scale = Number(this.env.RETRY_DELAY_SCALE || 1);
+		return { ...policy, baseMs: policy.baseMs * scale, maxMs: policy.maxMs * scale };
+	}
+
+	#inflight() {
+		return JSON.parse(this.#meta('inflight') ?? 'null') as InflightStep | null;
+	}
+
+	#keepResult(result: ToolResult) {
+		const inflight = this.#inflight();
+		if (!inflight) return;
+		inflight.results.push(result);
+		this.#setMeta('inflight', JSON.stringify(inflight));
 	}
 
 	async #stage<T>(
@@ -865,13 +1041,22 @@ export class AttemptSandbox extends DurableObject<Env> {
 			only,
 			this.env.SANDBOX_URL
 				? undefined
-				: async (args, signal) =>
-						containerRun(
-							this.ctx.container!,
-							args,
-							{ REGIT_PREVIEW_HOST: await this.#previewHost(this.#meta('repo')!) },
-							signal
-						)
+				: async (args, signal) => {
+						const container = this.ctx.container!;
+						try {
+							return await containerRun(
+								container,
+								args,
+								{ REGIT_PREVIEW_HOST: await this.#previewHost(this.#meta('repo')!) },
+								signal
+							);
+						} catch (error) {
+							if (signal?.aborted || container.running) throw error;
+							throw new SandboxUnavailableError(`The sandbox stopped: ${errorMessage(error)}`, {
+								cause: error
+							});
+						}
+					}
 		);
 		return this.#imageTools(tools, this.#meta('repo')!, this.#thread());
 	}
@@ -898,17 +1083,34 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return (typeof output === 'string' ? output : output.text).split('\n')[1]?.trim() || null;
 	}
 
-	async #finish(attempt: AgentRow, status: AttemptStatus, error: string | null = null) {
+	async #finish(
+		attempt: AgentRow,
+		status: AttemptStatus,
+		error: string | null = null,
+		failures?: RetryFailure[]
+	) {
 		if (['finished', 'stopped', 'failed'].includes(status)) this.#controller = undefined;
+		if (status === 'finished' || status === 'stopped') await this.#recovered(attempt.repo);
 		this.#setStatus(status, error);
-		await this.#report(attempt.repo, { type: 'status', status, error });
+		await this.#report(attempt.repo, {
+			type: 'status',
+			status,
+			error,
+			...(failures && { failures })
+		});
 	}
 
+	// Live activity is superseded by the next update, so only lasting updates are retried.
 	async #report(repo: string, update: AttemptUpdate) {
-		try {
-			await this.env.REPOS.getByName(repo).attemptUpdated(this.#thread(), update);
-		} catch (error) {
-			console.warn('Could not report the attempt to its repository', error);
+		const limit = update.type === 'activity' ? 1 : reportRetries.limit;
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return await this.env.REPOS.getByName(repo).attemptUpdated(this.#thread(), update);
+			} catch (error) {
+				if (attempt >= limit || !isTransient(error))
+					return console.warn('Could not report the attempt to its repository', error);
+				await scheduler.wait(backoff(attempt, reportRetries.baseMs, reportRetries.maxMs, error));
+			}
 		}
 	}
 
@@ -1011,12 +1213,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	async #push(fork: Fork, token: string, push: () => Promise<unknown>) {
-		await this.#allowGit(fork, token, true);
-		try {
-			await push();
-		} finally {
-			await this.#allowGit(fork, token, false);
-		}
+		await this.#withRetries('Push', 'push', this.#scaled(pushRetries), async () => {
+			await this.#allowGit(fork, token, true);
+			try {
+				await push();
+			} finally {
+				await this.#allowGit(fork, token, false);
+			}
+		});
 	}
 
 	async #sandbox(target: Target, token: string): Promise<Fetch> {
@@ -1215,7 +1419,14 @@ const publishIntervalMs = 250;
 const gitAsReGit = `git -c core.hooksPath=/dev/null -c user.name='${author.name}' -c user.email=${author.email}`;
 
 function idle(): ThreadActivity {
-	return { startup: null, status: null, text: '', calls: [] };
+	return { startup: null, status: null, text: '', calls: [], retry: null };
+}
+
+function failureLabel(error: unknown) {
+	if (error instanceof SandboxUnavailableError) return 'Sandbox';
+	if (error instanceof ModelError) return 'Model request';
+	if ((error as { name?: unknown } | null)?.name === 'ArtifactsError') return 'Git';
+	return /\bgit\b/.test(errorMessage(error)) ? 'Git' : 'Turn';
 }
 
 async function digest(value: unknown) {
@@ -1257,5 +1468,7 @@ async function waitUntilHealthy(fetch: Fetch) {
 	}
 	const reason =
 		lastError instanceof Error ? lastError.message : String(lastError ?? 'no response');
-	throw new Error(`The sandbox did not become healthy: ${reason}`, { cause: lastError });
+	throw new SandboxUnavailableError(`The sandbox did not become healthy: ${reason}`, {
+		cause: lastError
+	});
 }

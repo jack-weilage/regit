@@ -56,6 +56,8 @@ export default class FakeModels extends WorkerEntrypoint {
 				{ error: { message: 'The fake model ran out of replies' } },
 				{ status: 400 }
 			);
+		const outage = reply.find((event): event is { status: number } => 'status' in event);
+		if (outage) return Response.json({ error: { message: 'The model is overloaded' } }, outage);
 		const events = reply.some((event) => 'type' in event && event.type === 'response.failed')
 			? reply
 			: [...reply, completed];

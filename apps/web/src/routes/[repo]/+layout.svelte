@@ -4,12 +4,19 @@
 	import {
 		AppShell,
 		CloneDialog,
+		Toast,
 		type Mode,
 		type SimilarThread,
 		type ThreadListItem
 	} from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
-	import { defaultMachine, type LiveMessage, type Machine, type ThreadActivity } from '@regit/core';
+	import {
+		defaultMachine,
+		type LiveMessage,
+		type Machine,
+		type ThreadActivity,
+		type ThreadSummary
+	} from '@regit/core';
 	import { setLiveActivity } from '#lib/activity.ts';
 	import {
 		assessRequest,
@@ -46,12 +53,34 @@
 			status: thread.status,
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.id}`,
-			conflictsWith: thread.behind?.conflicts.length ? thread.behind.branch : undefined
+			conflictsWith: thread.behind?.conflicts.length ? thread.behind.branch : undefined,
+			failed: thread.failure?.title
 		}))
 	);
 
+	let alert = $state<{ thread: string; text: string } | null>(null);
+	const alerted = new Map<string, number>();
+
+	// A thread that fails while someone looks elsewhere gets a toast; the thread list keeps the mark.
+	function notice({ id, headline, failure }: ThreadSummary) {
+		if (!failure || alerted.get(id) === failure.at) return;
+		alerted.set(id, failure.at);
+		if (id === page.params.thread || Date.now() - failure.at > 60_000) return;
+		alert = { thread: id, text: `${headline || 'New thread'}: ${failure.title.toLowerCase()}` };
+	}
+
 	const live: Attachment = () => {
 		const source = new EventSource(`/${repo}/live`);
+		let opened = false;
+		// Updates sent while reconnecting are lost, so reload what they would have changed.
+		source.addEventListener('open', () => {
+			if (opened) {
+				for (const thread of Object.keys(activities)) delete activities[thread];
+				getThreads(repo).refresh();
+				if (page.params.thread) getThread({ repo, id: page.params.thread }).refresh();
+			}
+			opened = true;
+		});
 		source.addEventListener('message', (event) => {
 			const message = JSON.parse(event.data) as LiveMessage;
 			if (message.type === 'activity') {
@@ -59,7 +88,10 @@
 				return;
 			}
 			const thread = message.type === 'entry' ? message.thread : message.summary.id;
-			if (message.type === 'thread') getThreads(repo).refresh();
+			if (message.type === 'thread') {
+				notice(message.summary);
+				getThreads(repo).refresh();
+			}
 			if (thread === page.params.thread) getThread({ repo, id: thread }).refresh();
 		});
 		return () => source.close();
@@ -126,6 +158,13 @@
 	>
 		{@render children()}
 	</AppShell>
+	{#if alert}
+		{@const { thread } = alert}
+		<Toast
+			action={{ label: 'Open', onclick: () => goto(`/${repo}/${thread}`) }}
+			ondismiss={() => (alert = null)}>{alert.text}</Toast
+		>
+	{/if}
 	{#if access}
 		<CloneDialog
 			bind:open={cloning}

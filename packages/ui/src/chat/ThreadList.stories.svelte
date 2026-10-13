@@ -34,7 +34,8 @@
 			status: 'needs-you',
 			updatedAt: minutes(60),
 			href: '#sessions',
-			conflictsWith: 'main'
+			conflictsWith: 'main',
+			failed: 'The agent stopped'
 		},
 		{
 			id: 'invoices',
@@ -97,6 +98,11 @@
 		await expect(
 			within(canvas.getByRole('link', { name: /refresh expired sessions/ })).getByRole('img', {
 				name: 'Conflicts with main'
+			})
+		).toBeVisible();
+		await expect(
+			within(canvas.getByRole('link', { name: /refresh expired sessions/ })).getByRole('img', {
+				name: 'The agent stopped'
 			})
 		).toBeVisible();
 	}}

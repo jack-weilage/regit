@@ -1,4 +1,5 @@
 import type { DiffFile, DiffSummary } from './diff.ts';
+import type { Failure, Retry, RetryFailure } from './retries.ts';
 
 export type Mode = 'small' | 'medium' | 'large';
 
@@ -58,6 +59,7 @@ export interface ThreadActivity {
 	status: { label: string; since: number } | null;
 	text: string;
 	calls: ToolCallRecord[];
+	retry?: Retry | null;
 	ship?: import('./ships.ts').ShipProgress;
 }
 
@@ -83,6 +85,8 @@ export type Entry =
 	| { type: 'event'; id: string; at: number; text: string }
 	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[] }
 	| { type: 'startup'; id: string; at: number; stages: StartupStage[] }
+	| { type: 'recovered'; id: string; at: number; failures: RetryFailure[] }
+	| ({ type: 'failure'; id: string; at: number; resumable: boolean } & Failure)
 	| {
 			type: 'thread-message';
 			id: string;
@@ -106,6 +110,7 @@ export interface ThreadSummary {
 	parent: { id: string; headline: string } | null;
 	changes: DiffSummary | null;
 	shipped: { sha: string; by: string; at: number } | null;
+	failure: { at: number; title: string; error: string; resumable: boolean } | null;
 	behind: {
 		branch: string;
 		commits: number;
@@ -175,6 +180,8 @@ export interface RepoCoordinatorApi {
 	delete(thread: string, by: Author): Promise<void>;
 	restore(thread: string): void;
 	stop(thread: string, by: Author): Promise<void>;
+	resume(thread: string, by: Author): Promise<void>;
+	retryNow(thread: string): Promise<void>;
 	bringUpToDate(thread: string, by: Author): Promise<void>;
 	changes(thread: string): Promise<DiffFile[] | null>;
 	ship(thread: string, input: ShipInput): Promise<void>;

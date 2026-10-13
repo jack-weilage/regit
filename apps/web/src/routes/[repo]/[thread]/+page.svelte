@@ -6,6 +6,7 @@
 		ChatBehindMain,
 		ChatComposer,
 		ChatEvent,
+		ChatFailure,
 		ChatFooter,
 		ChatGroup,
 		ChatHeader,
@@ -13,6 +14,8 @@
 		ChatLog,
 		ChatMention,
 		ChatMessage,
+		ChatRecovered,
+		ChatRetry,
 		ChatStartup,
 		ChatThreadMessage,
 		ChatTools,
@@ -48,6 +51,8 @@
 		reopenThread,
 		reply,
 		restoreThread,
+		resumeThread,
+		retryThreadNow,
 		spinOff,
 		stopThread
 	} from '#lib/data.remote.ts';
@@ -114,6 +119,7 @@
 	let user = $derived(await getUser());
 	let threads = $derived(await getThreads(params.repo));
 
+	let latestFailure = $derived(detail?.entries.findLast((entry) => entry.type === 'failure')?.id);
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
 	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
 		const status = detail?.summary.status;
@@ -298,6 +304,21 @@
 						{/if}
 					{:else if block.type === 'startup'}
 						<ChatStartup stages={block.stages} finished />
+					{:else if block.type === 'recovered'}
+						<ChatRecovered failures={block.failures} />
+					{:else if block.type === 'failure'}
+						<ChatFailure
+							title={block.title}
+							error={block.error}
+							failures={block.failures}
+							time={new Date(block.at)}
+							onresume={block.id === latestFailure &&
+							block.resumable &&
+							summary.failure?.resumable &&
+							summary.status === 'needs-you'
+								? () => resumeThread(ref)
+								: undefined}
+						/>
 					{:else if block.type === 'thread-message'}
 						{@const other = threads.find((thread) => thread.id === block.thread)}
 						<ChatThreadMessage
@@ -347,6 +368,9 @@
 							<ChatTools calls={activity.calls.map(toolView)} />
 						{/if}
 					</ChatGroup>
+				{/if}
+				{#if activity?.retry}
+					<ChatRetry retry={activity.retry} onretrynow={() => retryThreadNow(ref)} />
 				{/if}
 				{#if activity?.status && !activity.startup}
 					<ChatActivity since={activity.status.since}>{activity.status.label}</ChatActivity>

@@ -23,7 +23,8 @@ export class ModelError extends Error {
 	constructor(
 		message: string,
 		readonly status?: number,
-		readonly code?: string
+		readonly code?: string,
+		readonly retryAfterMs?: number
 	) {
 		super(message);
 		this.name = 'ModelError';
@@ -39,7 +40,7 @@ export function openaiModel({
 	sessionId,
 	effort = 'medium',
 	metadata,
-	maxRetries,
+	maxRetries = 0,
 	resolveImage = async (url) => url
 }: OpenAIModelOptions): ModelClient {
 	if (sessionId.length > 64) throw new Error(`Session ids are at most 64 characters: ${sessionId}`);
@@ -73,21 +74,39 @@ export function openaiModel({
 					},
 					{ signal }
 				);
-				for await (const event of stream) yield* fromEvent(event);
+				let completed = false;
+				for await (const event of stream) {
+					if (event.type === 'response.completed') completed = true;
+					yield* fromEvent(event);
+				}
+				if (!completed)
+					throw new ModelError('The model stream ended early', undefined, 'stream_ended');
 			} catch (error) {
+				if (error instanceof OpenAI.APIUserAbortError) throw error;
+				if (error instanceof OpenAI.APIConnectionError) {
+					throw new ModelError(error.message, undefined, 'connection_error');
+				}
 				if (error instanceof OpenAI.APIError) {
 					const body = error.error as { message?: string } | string | undefined;
 					throw new ModelError(
 						(typeof body === 'object' && body.message) ||
 							`The model request failed with ${error.status}`,
 						error.status,
-						error.type ?? error.code ?? undefined
+						error.code ?? error.type ?? undefined,
+						retryAfter(error.headers)
 					);
 				}
 				throw error;
 			}
 		}
 	};
+}
+
+function retryAfter(headers: Headers | undefined) {
+	const ms = Number(headers?.get('retry-after-ms'));
+	if (ms > 0) return ms;
+	const seconds = Number(headers?.get('retry-after'));
+	return seconds > 0 ? seconds * 1000 : undefined;
 }
 
 function cached(text: string): ResponseInputText {

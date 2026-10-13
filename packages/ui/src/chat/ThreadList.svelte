@@ -9,6 +9,7 @@
 		updatedAt: number;
 		href: string;
 		conflictsWith?: string;
+		failed?: string;
 		preview?: Omit<ThreadPreviewProps, 'headline'>;
 	}
 
@@ -98,15 +99,15 @@
 					<a
 						href={thread.href}
 						aria-current={thread.id === current ? 'page' : undefined}
-						class={{ attention: thread.status === 'needs-you' }}
+						class={{ attention: thread.status === 'needs-you', failed: !!thread.failed }}
 						onpointerenter={(event) => show(thread, event.currentTarget)}
 						onpointerleave={leave}
 						onfocus={(event) => show(thread, event.currentTarget)}
 						onblur={hide}
 					>
 						<StatusIcon
-							state={statuses[thread.status].icon}
-							aria-label={statuses[thread.status].label}
+							state={thread.failed ? 'failed' : statuses[thread.status].icon}
+							aria-label={thread.failed ?? statuses[thread.status].label}
 							role="img"
 						/>
 						<span class="headline">{thread.headline}</span>
@@ -215,6 +216,10 @@
 		&:hover,
 		&[aria-current='page'] {
 			color: var(--color-fg);
+		}
+
+		&.failed > :global(.status) {
+			color: var(--color-danger-text);
 		}
 
 		&:hover,

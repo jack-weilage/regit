@@ -15,7 +15,8 @@
 		"AI_GATEWAY": "regit",
 		"SANDBOX_URL": "",
 		"PREVIEW_DOMAIN": "regit.run",
-		"GIT_HOST": "git.regit.dev"
+		"GIT_HOST": "git.regit.dev",
+		"RETRY_DELAY_SCALE": "1"
 	},
 	"ai": { "binding": "AI", "remote": true },
 	"services": [{ "binding": "MODELS", "service": "regit-forge", "entrypoint": "Models" }],

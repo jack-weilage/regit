@@ -102,12 +102,29 @@
 		status: 'shipping',
 		now,
 		progress: {
-			stage: 'fetching',
-			note: 'Retrying, attempt 2',
+			stage: 'pushing',
+			note: null,
 			branch: null,
 			since: now - 4_000,
-			started: now - 4_000
+			started: now - 30_000,
+			retry: {
+				what: 'ship',
+				failures: [
+					{
+						at: now - 4_000,
+						label: 'Push',
+						error: 'The requested URL returned error: 503'
+					}
+				],
+				attempt: 2,
+				limit: 4,
+				next: now + 6_000
+			}
 		}
+	}}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('status')).toHaveTextContent('Push failed · retrying in 6s');
+		await expect(canvas.getByText('Ship attempt 2 of 4')).toBeVisible();
 	}}
 />
 
