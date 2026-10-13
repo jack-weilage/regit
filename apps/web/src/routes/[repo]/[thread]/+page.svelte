@@ -386,21 +386,21 @@
 			changes={summary.changes}
 			live={detail.services.some((service) => service.status === 'running')}
 		>
-			{#snippet changesTab()}
+			{#snippet changesTab(close)}
 				{#await getChanges(ref) then files}
-					<ChangesPanel files={files ?? []} embedded />
+					<ChangesPanel files={files ?? []} onclose={close} />
 				{/await}
 			{/snippet}
-			{#snippet servicesTab()}
+			{#snippet servicesTab(close)}
 				<ServicesPanel
 					services={detail.services}
 					bind:selected={service}
 					{logs}
 					{busy}
 					error={failure}
-					embedded
 					onaction={act}
 					onlogs={showLogs}
+					onclose={close}
 				/>
 			{/snippet}
 		</ThreadSidebar>

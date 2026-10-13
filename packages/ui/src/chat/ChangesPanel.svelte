@@ -5,11 +5,10 @@
 
 	interface Props {
 		files: DiffFile[];
-		embedded?: boolean;
 		onclose?: () => void;
 	}
 
-	let { files, embedded = false, onclose }: Props = $props();
+	let { files, onclose }: Props = $props();
 
 	const id = $props.id();
 
@@ -18,15 +17,17 @@
 </script>
 
 <section class="panel" aria-labelledby="{id}-title">
-	<header class={{ hidden: embedded && !files.length }}>
+	<header>
 		<div class="title">
-			<h2 id="{id}-title" class={{ hidden: embedded }}>Changes</h2>
-			<p class="summary">
-				{files.length}
-				{files.length === 1 ? 'file' : 'files'}
-				<span class="added">+{additions}</span>
-				<span class="removed">−{deletions}</span>
-			</p>
+			<h2 id="{id}-title">Changes</h2>
+			{#if files.length}
+				<p class="summary">
+					{files.length}
+					{files.length === 1 ? 'file' : 'files'}
+					<span class="added">+{additions}</span>
+					<span class="removed">−{deletions}</span>
+				</p>
+			{/if}
 		</div>
 		{#if onclose}
 			<Button variant="ghost" size="sm" icon aria-label="Close changes" onclick={onclose}>
@@ -101,14 +102,6 @@
 
 	.removed {
 		color: var(--color-removed);
-	}
-
-	.hidden {
-		position: absolute;
-		inline-size: 1px;
-		block-size: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
 	}
 
 	.empty {

@@ -81,7 +81,8 @@
 						{/if}
 					</p>
 				{:else}
-					<div class="scroll">
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+					<div class="scroll" tabindex="0">
 						<table>
 							<tbody>
 								{#each file.hunks as hunk, hunkIndex (hunkIndex)}
@@ -264,6 +265,11 @@
 
 	.scroll {
 		overflow-x: auto;
+
+		&:focus-visible {
+			outline: 2px solid var(--color-accent);
+			outline-offset: -2px;
+		}
 	}
 
 	table {

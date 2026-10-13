@@ -33,11 +33,11 @@
 	<div class="page" style:inline-size={width}>
 		<div class="thread">The thread</div>
 		<ThreadSidebar {...args}>
-			{#snippet changesTab()}
-				<ChangesPanel files={diffFiles} embedded />
+			{#snippet changesTab(close)}
+				<ChangesPanel files={diffFiles} onclose={close} />
 			{/snippet}
-			{#snippet servicesTab()}
-				<ServicesPanel {services} embedded onaction={fn()} />
+			{#snippet servicesTab(close)}
+				<ServicesPanel {services} onaction={fn()} onclose={close} />
 			{/snippet}
 		</ThreadSidebar>
 	</div>
@@ -48,10 +48,13 @@
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: 'Services: running' }));
 		await waitFor(() => expect(canvas.getByTitle('Preview of storybook')).toBeVisible());
-		await userEvent.click(canvas.getByRole('tab', { name: /Changes/ }));
-		await expect(canvas.getByRole('region', { name: 'Changes' })).toBeVisible();
-		await userEvent.click(canvas.getByRole('button', { name: 'Collapse panel' }));
-		await waitFor(() => expect(canvas.queryByRole('tab')).toBeNull());
+		const changes = canvas.getByRole('button', { name: /^Changes/ });
+		await userEvent.click(changes);
+		await waitFor(() => expect(canvas.getByRole('region', { name: 'Changes' })).toBeVisible());
+		await expect(changes).toHaveAttribute('aria-pressed', 'true');
+		await userEvent.click(canvas.getByRole('button', { name: 'Close changes' }));
+		await waitFor(() => expect(canvas.queryByRole('region', { name: 'Changes' })).toBeNull());
+		await expect(changes).toHaveAttribute('aria-pressed', 'false');
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -71,6 +74,22 @@
 
 <Story name="Narrow" args={{ open: true, tab: 'services' }}>
 	{#snippet template(args)}{@render frame(args, '24rem')}{/snippet}
+</Story>
+
+<Story name="Overlay" args={{ open: true, tab: 'changes' }}>
+	{#snippet template(args)}{@render frame(args, '44rem')}{/snippet}
+</Story>
+
+<Story
+	name="Overlay dismissed"
+	args={{ open: true, tab: 'changes' }}
+	play={async ({ canvas, userEvent }) => {
+		await waitFor(() => expect(canvas.getByRole('region', { name: 'Changes' })).toBeVisible());
+		await userEvent.click(canvas.getByRole('button', { name: 'Close panel' }));
+		await waitFor(() => expect(canvas.queryByRole('region', { name: 'Changes' })).toBeNull());
+	}}
+>
+	{#snippet template(args)}{@render frame(args, '44rem')}{/snippet}
 </Story>
 
 <style>

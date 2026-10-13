@@ -21,7 +21,6 @@
 		logs?: string | null;
 		busy?: string | null;
 		error?: string | null;
-		embedded?: boolean;
 		onaction: (action: ServiceAction, name: string) => void;
 		onlogs?: (name: string) => void;
 		onclose?: () => void;
@@ -33,7 +32,6 @@
 		logs = null,
 		busy = null,
 		error = null,
-		embedded = false,
 		onaction,
 		onlogs,
 		onclose
@@ -58,7 +56,7 @@
 </script>
 
 <section class="panel" aria-labelledby="{id}-title">
-	<header class={{ hidden: embedded }}>
+	<header>
 		<h2 id="{id}-title">Services</h2>
 		{#if onclose}
 			<Button variant="ghost" size="sm" icon aria-label="Close services" onclick={onclose}>
@@ -191,14 +189,6 @@
 		margin: 0;
 		font-size: 0.9375rem;
 		font-weight: 600;
-	}
-
-	.hidden {
-		position: absolute;
-		inline-size: 1px;
-		block-size: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
 	}
 
 	.list {

@@ -4,15 +4,14 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import Button from '../Button.svelte';
 
 	interface Props {
 		open?: boolean;
 		tab?: SidebarTab;
 		changes?: { files: number; additions: number; deletions: number } | null;
 		live?: boolean;
-		changesTab: Snippet;
-		servicesTab: Snippet;
+		changesTab: Snippet<[close: () => void]>;
+		servicesTab: Snippet<[close: () => void]>;
 	}
 
 	let {
@@ -33,6 +32,8 @@
 			open = true;
 		}
 	}
+
+	const close = () => (open = false);
 </script>
 
 {#snippet changesIcon()}
@@ -81,40 +82,10 @@
 
 	{#if open}
 		<div class="panel" id="{id}-panel">
-			<div class="tabs">
-				<div role="tablist" aria-label="Panel">
-					<button
-						type="button"
-						role="tab"
-						aria-selected={tab === 'changes'}
-						onclick={() => (tab = 'changes')}
-					>
-						Changes
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={tab === 'services'}
-						onclick={() => (tab = 'services')}
-					>
-						Services
-						{#if live}<span class="live"></span>{/if}
-					</button>
-				</div>
-				<Button
-					variant="ghost"
-					size="sm"
-					icon
-					aria-label="Collapse panel"
-					onclick={() => (open = false)}
-				>
-					<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
-				</Button>
-			</div>
-			<div class="content" role="tabpanel">
-				{#if tab === 'changes'}{@render changesTab()}{:else}{@render servicesTab()}{/if}
-			</div>
+			{#if tab === 'changes'}{@render changesTab(close)}{:else}{@render servicesTab(close)}{/if}
 		</div>
+		<button type="button" class="scrim" tabindex="-1" aria-label="Close panel" onclick={close}
+		></button>
 	{/if}
 </aside>
 
@@ -164,6 +135,16 @@
 				color: var(--color-fg);
 			}
 
+			&.active::before {
+				content: '';
+				position: absolute;
+				inset-block: var(--space-3);
+				inset-inline-start: calc(-1 * var(--space-3));
+				inline-size: 2px;
+				border-radius: 1px;
+				background: var(--color-accent);
+			}
+
 			&:focus-visible {
 				outline: 2px solid var(--color-accent);
 				outline-offset: 1px;
@@ -207,54 +188,47 @@
 		background: var(--color-bg);
 	}
 
+	@media (prefers-reduced-motion: no-preference) {
+		.panel {
+			transition:
+				opacity 0.15s,
+				translate 0.15s;
+
+			@starting-style {
+				opacity: 0;
+				translate: 1rem 0;
+			}
+		}
+	}
+
+	.scrim {
+		display: none;
+	}
+
 	@container (width < 48rem) {
+		.sidebar {
+			--overlay: min(36rem, 100cqi - 3rem);
+		}
+
 		.panel {
 			position: absolute;
 			inset-block: 0;
 			inset-inline-end: 3rem;
 			z-index: 2;
-			inline-size: calc(100cqi - 3rem);
-		}
-	}
-
-	.tabs {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
-		border-block-end: 1px solid var(--color-border);
-
-		[role='tablist'] {
-			display: flex;
-			gap: var(--space-2);
+			inline-size: var(--overlay);
+			box-shadow: -0.5rem 0 1.5rem rgb(0 0 0 / 0.3);
 		}
 
-		[role='tab'] {
-			display: flex;
-			align-items: center;
-			gap: var(--space-3);
-			padding: var(--space-3) var(--space-5);
+		.scrim {
+			position: absolute;
+			inset-block: 0;
+			inset-inline: 0 calc(3rem + var(--overlay));
+			z-index: 2;
+			display: block;
+			padding: 0;
 			border: 0;
-			border-radius: var(--radius);
-			background: none;
-			color: var(--color-muted);
-			font: inherit;
-			cursor: pointer;
-
-			&[aria-selected='true'] {
-				background: var(--color-surface);
-				color: var(--color-fg);
-			}
-
-			&:focus-visible {
-				outline: 2px solid var(--color-accent);
-				outline-offset: -2px;
-			}
+			background: rgb(0 0 0 / 0.4);
+			cursor: default;
 		}
-	}
-
-	.content {
-		flex: 1;
-		min-block-size: 0;
 	}
 </style>
