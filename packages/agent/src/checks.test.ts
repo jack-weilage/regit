@@ -6,6 +6,7 @@ import {
 	checksNotice,
 	describeChecks,
 	evidenceKey,
+	missingIntent,
 	runChecks,
 	type Evidence
 } from './checks.ts';
@@ -114,6 +115,63 @@ describe('running checks', () => {
 		expect(broke).toContain('the commit is reverted instead');
 	});
 
+	test('gives {intent} rules the intent, rerunning them when it changes', async () => {
+		const evidence = memory();
+		const asked: (string | undefined)[] = [];
+		let lookups = 0;
+		const once = (intent: { headline: string; purpose: string; doneWhen: string[] } | null) =>
+			runChecks({
+				checks: [
+					check({ name: 'scope', run: undefined, ask: 'The change does what {intent} says' }),
+					check({ name: 'docs', run: undefined, ask: 'Docs are updated' }),
+					check({ name: 'focus', run: undefined, ask: 'Nothing outside {intent} changed' })
+				],
+				action: 'handoff',
+				environment: '',
+				evidence,
+				intent: async () => (lookups++, intent),
+				run: async () => ({ ok: true, output: '' }),
+				ask: async (_, context) => (asked.push(context), { ok: true, output: '' })
+			});
+		const intent = {
+			headline: 'fix: a',
+			purpose: 'Because.',
+			doneWhen: ['It works', 'Tests pass']
+		};
+
+		await once(intent);
+		expect(lookups).toBe(1);
+		expect(asked).toEqual([
+			'fix: a\n\nBecause.\n\nDone when:\n- It works\n- Tests pass',
+			undefined,
+			'fix: a\n\nBecause.\n\nDone when:\n- It works\n- Tests pass'
+		]);
+		expect((await once(intent)).every(({ reused }) => reused)).toBe(true);
+		await once({ ...intent, purpose: 'Changed.' });
+		expect(asked).toHaveLength(5);
+	});
+
+	test('fails or warns {intent} rules when the thread has no intent', async () => {
+		const results = await runChecks({
+			checks: [
+				check({ name: 'scope', run: undefined, ask: 'Matches {intent}', blocking: true }),
+				check({ name: 'focus', run: undefined, ask: 'Only {intent}', blocking: false })
+			],
+			action: 'handoff',
+			environment: '',
+			evidence: memory(),
+			intent: async () => null,
+			run: async () => ({ ok: true, output: '' }),
+			ask: async () => {
+				throw new Error('should not ask without an intent');
+			}
+		});
+		expect(results.map(({ status, output }) => [status, output])).toEqual([
+			['failed', missingIntent],
+			['warned', missingIntent]
+		]);
+	});
+
 	test('keys evidence by command, inputs and environment', async () => {
 		const key = await evidenceKey(check({}), 'env');
 		expect(key).toMatch(/^[0-9a-f]{64}$/);
@@ -136,5 +194,19 @@ describe('asking about a change', () => {
 			true
 		);
 		expect(askVerdict({ answers: {} }).ok).toBe(true);
+	});
+
+	test('refers {intent} to the intent, passed as data', () => {
+		const request = askRequest('The change does what {intent} says', 'diff', 'fix: a');
+		expect(request.state).toEqual({
+			change: 'diff',
+			check: 'The change does what `intent` says',
+			intent: 'fix: a'
+		});
+		expect(request.questions.holds!.instructions).toContain('`intent` is what the change');
+		expect(askRequest('Docs are updated', 'diff').state).toEqual({
+			change: 'diff',
+			check: 'Docs are updated'
+		});
 	});
 });

@@ -33,6 +33,17 @@ export interface Intent {
 	doneWhen: string[];
 }
 
+export type DoneWhenStatus = 'met' | 'unmet' | 'unverified';
+
+// What the agent found for one done-when check, on the thread's tree when it looked; stale once the tree changes.
+export interface DoneWhenResult {
+	status: DoneWhenStatus;
+	evidence: string;
+	at: number;
+	tree: string | null;
+	stale?: boolean;
+}
+
 export interface SimilarMatch {
 	thread: string;
 	relation: 'same' | 'overlap' | 'related';
@@ -99,7 +110,14 @@ export type Entry =
 			text: string;
 			steering?: { read: boolean };
 	  }
-	| { type: 'intent'; id: string; at: number; intent: Intent; similar?: SimilarMatch[] }
+	| {
+			type: 'intent';
+			id: string;
+			at: number;
+			intent: Intent;
+			similar?: SimilarMatch[];
+			results?: Record<string, DoneWhenResult>;
+	  }
 	| {
 			type: 'suggestion';
 			id: string;

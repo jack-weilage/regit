@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import type { ThreadDetail } from '@regit/core';
 import { setup, untilThread, writeNotes } from './support.ts';
 
-const { script, modelRequests, startedThread } = await setup();
+const { script, modelRequests, decisionRequests, startedThread } = await setup();
 
 const say = (delta: string) => [{ type: 'response.output_text.delta', delta }];
 const run = (command: string) => [
@@ -14,6 +14,12 @@ const run = (command: string) => [
 			name: 'run',
 			arguments: JSON.stringify({ command })
 		}
+	}
+];
+const call = (name: string, args: object) => [
+	{
+		type: 'response.output_item.done',
+		item: { type: 'function_call', call_id: name, name, arguments: JSON.stringify(args) }
 	}
 ];
 const titled = {
@@ -122,4 +128,68 @@ test('stopping the agent cancels running handoff checks and starts no further tu
 	expect(after.entries).toHaveLength(stopped.entries.length);
 	expect(Date.now() - started).toBeLessThan(30_000);
 	expect(await modelRequests('handoff-stop')).toHaveLength(2);
+});
+
+test('records done-when results, keeps them outdated after later changes and gives {intent} checks the intent', async () => {
+	const titleCheck = 'notes.md starts with a title';
+	const intent = {
+		headline: 'docs(notes): add a title',
+		purpose: 'The notes have no heading.',
+		doneWhen: [titleCheck]
+	};
+	const { repo, sam, id } = await startedThread(
+		'done-when',
+		[
+			call('update_intent', intent),
+			writeNotes('# Notes\\n'),
+			call('record_done_when', {
+				results: [{ check: 1, status: 'met', evidence: 'head -1 notes.md printed # Notes' }]
+			}),
+			say('Done.')
+		],
+		undefined,
+		{
+			'.agents/checks.yml': `checks:
+  - name: scope
+    ask: The change does what {intent} describes
+    before: [handoff]
+`
+		}
+	);
+	const latest = (detail: ThreadDetail) =>
+		detail.entries.findLast((entry) => entry.type === 'intent') as Extract<
+			ThreadDetail['entries'][number],
+			{ type: 'intent' }
+		>;
+	const done = await untilThread(repo, id, replied('Done.'));
+	expect(latest(done).results).toEqual({
+		[titleCheck]: {
+			status: 'met',
+			evidence: 'head -1 notes.md printed # Notes',
+			at: expect.any(Number),
+			tree: expect.stringMatching(/^[0-9a-f]{40}$/)
+		}
+	});
+	expect(done.summary.checks!.results).toMatchObject([
+		{ name: 'scope', kind: 'ask', status: 'passed' }
+	]);
+	const asked = (await decisionRequests('done-when')).find(
+		(request) => 'holds' in request.questions
+	)!;
+	expect(asked.state).toMatchObject({
+		check: 'The change does what `intent` describes',
+		intent: `${intent.headline}\n\n${intent.purpose}\n\nDone when:\n- ${titleCheck}`
+	});
+
+	await script('done-when', [
+		call('update_intent', { ...intent, doneWhen: [titleCheck, 'notes.md has a second line'] }),
+		writeNotes('# Notes\\nMore\\n'),
+		say('Updated.')
+	]);
+	await repo.reply(id, { author: sam, text: 'Add a second line.' });
+	const updated = await untilThread(repo, id, replied('Updated.'));
+	expect(latest(updated).intent.doneWhen).toHaveLength(2);
+	expect(latest(updated).results).toEqual({
+		[titleCheck]: expect.objectContaining({ status: 'met', stale: true })
+	});
 });
