@@ -118,7 +118,7 @@ export interface PublishProvenanceRequest {
 
 export interface CompareRequest {
 	remote: string;
-	forks: { id: string; remote: string; branch: string }[];
+	forks: { id: string; remote: string; branch: string; published?: string }[];
 }
 
 export interface CompareResponse {

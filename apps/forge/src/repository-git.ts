@@ -103,7 +103,10 @@ export class RepositoryGit extends DurableObject<Env> {
 		});
 	}
 
-	async compare(repo: string, forks: { id: string; repository: string; branch: string }[]) {
+	async compare(
+		repo: string,
+		forks: { id: string; repository: string; branch: string; published?: string }[]
+	) {
 		return this.#serial(async () => {
 			using canonical = await this.env.ARTIFACTS.get(repo);
 			const canonicalInfo = await canonical.info();
@@ -121,7 +124,12 @@ export class RepositoryGit extends DurableObject<Env> {
 				await this.#allow(targets);
 				return await sandboxWorkspace(await this.#sandbox()).compare({
 					remote: canonicalInfo.remote,
-					forks: sources.map(({ fork, remote }) => ({ id: fork.id, remote, branch: fork.branch }))
+					forks: sources.map(({ fork, remote }) => ({
+						id: fork.id,
+						remote,
+						branch: fork.branch,
+						published: fork.published
+					}))
 				});
 			} finally {
 				await this.#revoke(targets);

@@ -262,11 +262,8 @@ export async function compare(
 	const threads: CompareResponse['threads'] = [];
 	for (const fork of forks) {
 		safeRemote(fork.remote);
-		const fetched = await exec('git', ['fetch', '--no-tags', fork.remote, fork.branch], {
-			cwd: root
-		});
-		if (fetched.code !== 0) continue;
-		const head = await git(root, ['rev-parse', 'FETCH_HEAD']);
+		const head = await forkHead(root, fork);
+		if (!head) continue;
 		const behind = Number(await git(root, ['rev-list', '--count', `${head}..${main}`]));
 		if (!behind) {
 			threads.push({ id: fork.id, behind, conflicts: [] });
@@ -283,6 +280,15 @@ export async function compare(
 		threads.push({ id: fork.id, behind, conflicts: files.filter(Boolean) });
 	}
 	return { main, branch, headline, threads };
+}
+
+async function forkHead(root: string, { remote, branch, published }: CompareRequest['forks'][0]) {
+	if (published) {
+		const known = await exec('git', ['cat-file', '-e', `${published}^{commit}`], { cwd: root });
+		if (known.code === 0) return published;
+	}
+	const fetched = await exec('git', ['fetch', '--no-tags', remote, branch], { cwd: root });
+	return fetched.code === 0 ? await git(root, ['rev-parse', 'FETCH_HEAD']) : null;
 }
 
 export async function headBranch(root: string, { remote }: HeadBranchRequest) {

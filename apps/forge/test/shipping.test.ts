@@ -39,6 +39,22 @@ test('ships finished work as one commit on main', async () => {
 	expect(sh(join(dir, 'shipping.git'), 'show', 'main:notes.md')).toBe('# Notes');
 	expect((await git.requests()).some((headers) => headers.authorization)).toBe(false);
 
+	await repo.landed({
+		repo: 'shipping',
+		ref: 'refs/heads/main',
+		after: main,
+		headline: 'docs: add a title'
+	});
+	expect((await repo.thread(id))!.summary.behind).toBeNull();
+	const work = join(dir, 'shipping-work');
+	sh(work, 'fetch', '--quiet', join(dir, 'shipping.git'), 'main');
+	sh(work, 'reset', '--quiet', '--hard', 'FETCH_HEAD');
+	await commit(work, { 'other.md': 'Other\n' }, 'Other notes');
+	sh(work, 'push', '--quiet', join(dir, 'shipping.git'), 'main');
+	const moved = sh(join(dir, 'shipping.git'), 'rev-parse', 'main');
+	await repo.landed({ repo: 'shipping', ref: 'refs/heads/main', after: moved, headline: '' });
+	expect((await repo.thread(id))!.summary.behind).toMatchObject({ commits: 1, conflicts: [] });
+
 	await repo.reply(id, { author: sam, text: 'Where is the title?' });
 	const answered = await untilThread(
 		repo,

@@ -255,11 +255,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.ctx.container?.running) await this.ctx.container.destroy();
 	}
 
+	// A shipped thread's fork is rebased onto the published commit on its next turn; until then, compare that commit.
 	forkRef() {
 		const attempt = this.#agent();
-		return attempt?.fork && attempt.branch
-			? { repository: attempt.fork, branch: attempt.branch }
-			: null;
+		if (!attempt?.fork || !attempt.branch) return null;
+		const pending = this.#meta('rebase');
+		const published = pending ? (JSON.parse(pending) as { sha: string }).sha : undefined;
+		return { repository: attempt.fork, branch: attempt.branch, published };
 	}
 
 	published(publication: { sha: string; branch: string; from: string }) {
