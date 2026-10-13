@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, fn } from 'storybook/test';
+	import { expect, fn, waitFor } from 'storybook/test';
 	import ChangesPanel from './ChangesPanel.svelte';
 	import { diffFiles } from './fixtures.ts';
 
@@ -21,6 +21,21 @@
 		);
 		await userEvent.click(canvas.getByRole('button', { name: 'Close changes' }));
 		await expect(args.onclose).toHaveBeenCalledOnce();
+	}}
+>
+	{#snippet template(args)}
+		<div style="block-size: 100dvh"><ChangesPanel {...args} /></div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Scrolled"
+	play={async ({ canvas, canvasElement }) => {
+		const header = canvas.getByRole('heading', { name: /page\.server\.ts/ });
+		const body = canvasElement.querySelector<HTMLElement>('.body')!;
+		body.scrollTop = 120;
+		await waitFor(() => expect(body.scrollTop).toBe(120));
+		await expect(header.getBoundingClientRect().top).toBe(body.getBoundingClientRect().top);
 	}}
 >
 	{#snippet template(args)}
