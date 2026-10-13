@@ -15,6 +15,7 @@ import {
 	type RetryFailure,
 	type StartupStage,
 	type ThreadActivity,
+	type ThreadOverlap,
 	type ThreadSummary
 } from '@regit/core';
 import type { AttemptUpdate } from './repo-coordinator.ts';
@@ -427,6 +428,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				...this.#rebuiltNotes(),
 				...this.#retriedNotes(),
 				...(synced ? [] : this.#conflictNotes()),
+				...this.#overlapNotes(),
 				...pending,
 				...(synced ? [{ role: 'notification' as const, text: synced }] : [])
 			];
@@ -496,6 +498,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				steer: async () => [
 					...carried.splice(0),
 					...this.#conflictNotes(),
+					...this.#overlapNotes(),
 					...(await this.#drain(attempt.repo))
 				]
 			});
@@ -590,7 +593,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 				files = files.map((file) => ({ ...file, hunks: [], tooLarge: true }));
 			}
 			this.#setMeta('changes', JSON.stringify(files));
-			await this.#report(attempt.repo, { type: 'changes', summary: summarize(files) });
+			await this.#report(attempt.repo, {
+				type: 'changes',
+				summary: summarize(files),
+				paths: [
+					...new Set(files.flatMap(({ path, oldPath }) => (oldPath ? [oldPath, path] : [path])))
+				]
+			});
 		} catch (error) {
 			console.warn('Could not save the changes', error);
 		}
@@ -711,6 +720,41 @@ export class AttemptSandbox extends DurableObject<Env> {
 			{
 				role: 'notification',
 				text: `\`${behind.branch}\` has ${commits} (latest ${behind.sha.slice(0, 7)} "${behind.headline}") that conflict with this thread's changes in ${conflicts.join(', ')}. \`${behind.branch}\` has not been merged into your workspace, so your files are unchanged. Avoid deepening the conflict in those files where you can, and mention it in your reply; a person can bring the thread up to date.`
+			}
+		];
+	}
+
+	overlapping(overlaps: ThreadOverlap[]) {
+		if (this.#agent()) this.#setMeta('overlaps', JSON.stringify(overlaps));
+	}
+
+	// Tells the agent once about each file that would conflict with another live thread.
+	#overlapNotes(): Turn[] {
+		const overlaps = JSON.parse(this.#meta('overlaps') ?? '[]') as ThreadOverlap[];
+		const told = JSON.parse(this.#meta('overlaps-notified') ?? '[]') as string[];
+		const key = (thread: string, file: string) => `${thread} ${file}`;
+		this.#setMeta(
+			'overlaps-notified',
+			JSON.stringify(
+				overlaps.flatMap(({ thread, files }) => files.map((file) => key(thread, file)))
+			)
+		);
+		const fresh = overlaps
+			.map(({ files, ...overlap }) => ({
+				...overlap,
+				files: files.filter((file) => !told.includes(key(overlap.thread, file)))
+			}))
+			.filter(({ files }) => files.length);
+		if (!fresh.length) return [];
+		// TODO: consider a small-model summary of how the conflicting changes differ if agents struggle to reconcile them.
+		const lines = fresh.map(
+			({ thread, headline, purpose, files }) =>
+				`- Thread ${thread} ("${headline || 'New thread'}"): ${files.join(', ')}${purpose ? `\n  Its intent: ${purpose}` : ''}`
+		);
+		return [
+			{
+				role: 'notification',
+				text: `Other threads that haven't shipped have changes that would conflict with this thread's:\n${lines.join('\n')}\nTheir changes are not in your workspace; whichever thread ships second resolves the conflict. To see what they changed there and why, use ask_threads, which doesn't interrupt them. Use message_thread only if the two threads then need to agree on how the shared code should end up, and mention the conflict in your reply.`
 			}
 		];
 	}

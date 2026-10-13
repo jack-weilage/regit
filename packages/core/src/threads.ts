@@ -36,6 +36,13 @@ export interface SimilarMatch {
 	probability: number;
 }
 
+export interface ThreadOverlap {
+	thread: string;
+	headline: string;
+	purpose?: string;
+	files: string[];
+}
+
 export interface ToolCallRecord {
 	id: string;
 	tool: string;

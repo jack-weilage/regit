@@ -121,6 +121,15 @@ export interface CompareRequest {
 	forks: { id: string; remote: string; branch: string; published?: string }[];
 }
 
+export interface ClashesRequest {
+	fork: CompareRequest['forks'][number];
+	others: CompareRequest['forks'];
+}
+
+export interface ClashesResponse {
+	clashes: { id: string; files: string[] }[];
+}
+
 export interface CompareResponse {
 	main: string;
 	branch: string;

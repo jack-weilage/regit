@@ -6,6 +6,8 @@ import type {
 	PushShipResponse,
 	CloneRequest,
 	CloneResponse,
+	ClashesRequest,
+	ClashesResponse,
 	CompareRequest,
 	CompareResponse,
 	CommitRequest,
@@ -90,6 +92,9 @@ export function sandboxWorkspace(fetch: Fetch) {
 		},
 		compare(request: CompareRequest) {
 			return post<CompareResponse>(fetch, '/workspace/compare', JSON.stringify(request));
+		},
+		clashes(request: ClashesRequest) {
+			return post<ClashesResponse>(fetch, '/workspace/clashes', JSON.stringify(request));
 		},
 		async publishProvenance(request: PublishProvenanceRequest) {
 			await post(fetch, '/workspace/publish-provenance', JSON.stringify(request));
