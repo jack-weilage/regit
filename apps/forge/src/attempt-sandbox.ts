@@ -741,7 +741,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return [
 			{
 				role: 'notification',
-				text: `Other threads that haven't shipped have changes that would conflict with this thread's:\n${lines.join('\n')}\nTheir changes are not in your workspace; whichever thread ships second resolves the conflict. Use message_thread only if the two threads need to agree on how the shared code should end up, and mention the conflict in your reply.`
+				text: `Other threads that haven't shipped have changes that would conflict with this thread's:\n${lines.join('\n')}\nTheir changes are not in your workspace; whichever thread ships second resolves the conflict. To see what they changed there and why, use ask_threads, which doesn't interrupt them. Use message_thread only if the two threads then need to agree on how the shared code should end up, and mention the conflict in your reply.`
 			}
 		];
 	}
