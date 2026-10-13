@@ -8,8 +8,10 @@ export { GitProxy } from './git-proxy.ts';
 export { RepositoryGit, PublisherGitProxy } from './repository-git.ts';
 export { RepoCoordinator } from './repo-coordinator.ts';
 export { Models } from './models.ts';
+export { MainSandbox } from './main-sandbox.ts';
 export { RepoPushed } from './repo-pushed.ts';
 export { ShipThread } from './ship-thread.ts';
+export { RevertShip, VerifyMain } from './verify-main.ts';
 
 export default {
 	async fetch(request, env) {

@@ -102,6 +102,14 @@ export interface BuildShipResponse {
 	shipped: boolean;
 }
 
+export interface BuildRevertRequest {
+	sha: string;
+	remote: string;
+	branch: string;
+	message: string;
+	committer: Identity;
+}
+
 export interface PushShipRequest {
 	sha: string;
 	head: string;
@@ -200,13 +208,13 @@ export interface PlannedCheck extends CheckSpec {
 export interface ChecksRequest {
 	base: string;
 	commit: string;
-	config?: string;
 }
 
 export interface ChecksResponse {
 	checks: PlannedCheck[];
 	error?: string;
-	configChanged: boolean;
+	// Changed files that decide what deploys and how: the checks and the deploy script.
+	governing: string[];
 }
 
 export interface RunCheckRequest {
@@ -222,13 +230,23 @@ export interface RunCheckResponse {
 	log: string;
 }
 
-export interface CandidateRequest {
-	base: string;
-	onto: string;
-	source: string;
+export interface DeployRequest {
+	commit: string;
+	env: Record<string, string>;
+	timeoutSeconds?: number;
 }
 
-export type CandidateResponse = { sha: string; tree: string } | { conflicts: string[] };
+export type DeployResponse =
+	{ ran: false } | { ran: true; ok: boolean; output: string; log: string };
+
+export interface CommitsRequest {
+	from: string | null;
+	to: string;
+}
+
+export interface CommitsResponse {
+	commits: { sha: string; headline: string }[];
+}
 
 export interface DiffResponse {
 	diff: string;

@@ -6,8 +6,11 @@ import type {
 	PushShipResponse,
 	CloneRequest,
 	CloneResponse,
-	CandidateRequest,
-	CandidateResponse,
+	BuildRevertRequest,
+	CommitsRequest,
+	CommitsResponse,
+	DeployRequest,
+	DeployResponse,
 	ChecksRequest,
 	ChecksResponse,
 	ClashesRequest,
@@ -93,6 +96,9 @@ export function sandboxWorkspace(fetch: Fetch) {
 		buildShip(request: BuildShipRequest) {
 			return post<BuildShipResponse>(fetch, '/workspace/build-ship', JSON.stringify(request));
 		},
+		buildRevert(request: BuildRevertRequest) {
+			return post<BuildShipResponse>(fetch, '/workspace/build-revert', JSON.stringify(request));
+		},
 		pushShip(request: PushShipRequest) {
 			return post<PushShipResponse>(fetch, '/workspace/push-ship', JSON.stringify(request));
 		},
@@ -108,8 +114,11 @@ export function sandboxWorkspace(fetch: Fetch) {
 		async cancelChecks() {
 			await post(fetch, '/workspace/cancel-checks', '{}');
 		},
-		candidate(request: CandidateRequest) {
-			return post<CandidateResponse>(fetch, '/workspace/candidate', JSON.stringify(request));
+		deploy(request: DeployRequest) {
+			return post<DeployResponse>(fetch, '/workspace/deploy', JSON.stringify(request));
+		},
+		commits(request: CommitsRequest) {
+			return post<CommitsResponse>(fetch, '/workspace/commits', JSON.stringify(request));
 		},
 		clashes(request: ClashesRequest) {
 			return post<ClashesResponse>(fetch, '/workspace/clashes', JSON.stringify(request));

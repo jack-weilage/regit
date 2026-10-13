@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { parseChecks } from './checks.ts';
 import { git } from './exec.ts';
-import { author, dir, remote, root, useWorkspace, workspace } from './test-workspace.ts';
+import { root, useWorkspace, workspace } from './test-workspace.ts';
 
 useWorkspace();
 
@@ -17,38 +17,40 @@ async function commit(files: Record<string, string>, cwd = root) {
 	return git(cwd, ['rev-parse', 'HEAD']);
 }
 
+const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
 const config = `checks:
   - name: types
     run: test -f greeting.ts
-    before: [handoff, ship]
+    before: [handoff, deploy]
   - name: docs
     ask: Public changes come with docs
     when: ['src/**']
-    before: [ship]
+    before: [handoff]
   - name: lint
     run: exit 0
     inputs: greeting.ts
     blocking: false
     timeout: 30
-    before: ship
+    before: deploy
 `;
 
 describe('parsing checks', () => {
 	test('reads run and ask checks with their defaults', () => {
 		expect(parseChecks(config)).toEqual([
-			{ name: 'types', run: 'test -f greeting.ts', before: ['handoff', 'ship'], blocking: true },
+			{ name: 'types', run: 'test -f greeting.ts', before: ['handoff', 'deploy'], blocking: true },
 			{
 				name: 'docs',
 				ask: 'Public changes come with docs',
 				when: ['src/**'],
-				before: ['ship'],
+				before: ['handoff'],
 				blocking: false
 			},
 			{
 				name: 'lint',
 				run: 'exit 0',
 				inputs: ['greeting.ts'],
-				before: ['ship'],
+				before: ['deploy'],
 				blocking: false,
 				timeoutSeconds: 30
 			}
@@ -58,23 +60,27 @@ describe('parsing checks', () => {
 
 	test.each([
 		['checks: {}', 'expected a checks list'],
-		['checks:\n  - run: x\n    before: [ship]', 'check 1 needs a name'],
-		['checks:\n  - name: a\n    before: [ship]', 'a needs exactly one of run or ask'],
+		['checks:\n  - run: x\n    before: [deploy]', 'check 1 needs a name'],
+		['checks:\n  - name: a\n    before: [deploy]', 'a needs exactly one of run or ask'],
 		[
-			'checks:\n  - name: a\n    run: x\n    ask: y\n    before: [ship]',
+			'checks:\n  - name: a\n    run: x\n    ask: y\n    before: [deploy]',
 			'exactly one of run or ask'
 		],
 		[
 			'checks:\n  - name: a\n    run: x\n    before: [merge]',
-			'before must list handoff and/or ship'
+			'before must list handoff and/or deploy'
 		],
+		['checks:\n  - name: a\n    ask: x\n    before: [deploy]', 'only run before handoff'],
 		[
-			'checks:\n  - name: a\n    run: x\n    before: [ship]\n    befor: [ship]',
+			'checks:\n  - name: a\n    run: x\n    before: [deploy]\n    befor: [deploy]',
 			'unknown keys: befor'
 		],
-		['checks:\n  - name: a\n    ask: x\n    inputs: [a]\n    before: [ship]', 'inputs only apply'],
 		[
-			'checks:\n  - name: a\n    run: x\n    before: [ship]\n  - name: a\n    run: y\n    before: [ship]',
+			'checks:\n  - name: a\n    ask: x\n    inputs: [a]\n    before: [handoff]',
+			'inputs only apply'
+		],
+		[
+			'checks:\n  - name: a\n    run: x\n    before: [deploy]\n  - name: a\n    run: y\n    before: [deploy]',
 			'a is defined twice'
 		],
 		['checks: [', '.agents/checks.yml: ']
@@ -89,17 +95,17 @@ describe('planning checks', () => {
 		await commit({ 'greeting.ts': "export const greeting = 'hi';\n" });
 		expect(await workspace.checks({ base, commit: 'HEAD' })).toEqual({
 			checks: [],
-			configChanged: false
+			governing: []
 		});
 	});
 
 	test('reports an invalid checks file instead of skipping it', async () => {
 		const base = await git(root, ['rev-parse', 'HEAD']);
-		await commit({ '.agents/checks.yml': 'checks:\n  - name: a\n    before: [ship]\n' });
+		await commit({ '.agents/checks.yml': 'checks:\n  - name: a\n    before: [deploy]\n' });
 		expect(await workspace.checks({ base, commit: 'HEAD' })).toEqual({
 			checks: [],
 			error: '.agents/checks.yml: a needs exactly one of run or ask',
-			configChanged: true
+			governing: ['.agents/checks.yml']
 		});
 	});
 
@@ -127,20 +133,21 @@ describe('planning checks', () => {
 	});
 });
 
-describe('whose checks govern', () => {
-	test('reads the checks from another commit and reports when the change edits them', async () => {
+describe('what governs deploys', () => {
+	test('names changes to the checks and the deploy script, and plans everything from the empty tree', async () => {
 		await commit({ '.agents/checks.yml': config });
 		const main = await git(root, ['rev-parse', 'HEAD']);
-		await commit({
-			'.agents/checks.yml': 'checks:\n  - name: types\n    run: exit 0\n    before: [ship]\n',
-			'notes.md': 'Notes\n'
-		});
-		const own = await workspace.checks({ base: main, commit: 'HEAD' });
-		expect(own.checks.map(({ name }) => name)).toEqual(['types']);
-		const governed = await workspace.checks({ base: main, commit: 'HEAD', config: main });
-		expect(governed.configChanged).toBe(true);
-		expect(governed.checks.map(({ name }) => name)).toEqual(['types', 'docs', 'lint']);
-		expect(governed.checks[0]).toMatchObject({ run: 'test -f greeting.ts', applies: true });
+		await commit({ '.agents/deploy': 'echo deploying\n', 'notes.md': 'Notes\n' });
+		const changed = await workspace.checks({ base: main, commit: 'HEAD' });
+		expect(changed.governing).toEqual(['.agents/deploy']);
+		expect(changed.checks.map(({ name, applies }) => [name, applies])).toEqual([
+			['types', true],
+			['docs', false],
+			['lint', true]
+		]);
+		const everything = await workspace.checks({ base: emptyTree, commit: main });
+		expect(everything.governing).toEqual(['.agents/checks.yml']);
+		expect(everything.checks.every(({ name, applies }) => applies || name === 'docs')).toBe(true);
 	});
 });
 
@@ -247,39 +254,64 @@ describe('running checks', () => {
 		const failed = await workspace.runCheck({ name: 'deps', command: 'true', commit: broken });
 		expect(failed).toEqual({
 			ok: false,
-			output: '.agents/setup failed while preparing the ship checkout\nnope',
+			output: '.agents/setup failed while preparing the check checkout\nnope',
 			log: '.git/regit-checks/setup.log'
 		});
 	});
 });
 
-describe('ship candidates', () => {
-	test('match the commit a ship pushes after main moved, or name the conflicts', async () => {
-		const base = await git(root, ['rev-parse', 'HEAD']);
-		const source = await commit({ 'greeting.ts': "export const greeting = 'hi';\n" });
-		const elsewhere = join(dir, 'elsewhere');
-		await git(dir, ['clone', remote, elsewhere]);
-		const onto = await commit({ 'other.md': 'Other\n' }, elsewhere);
-		await git(elsewhere, ['push', 'origin', 'main']);
-		await git(root, ['fetch', 'origin', 'main']);
+describe('deploying', () => {
+	test('runs the deploy script at a commit with the secrets, keeping them out of its output', async () => {
+		const none = await git(root, ['rev-parse', 'HEAD']);
+		expect(await workspace.deploy({ commit: none, env: {} })).toEqual({ ran: false });
 
-		const built = await workspace.candidate({ base, onto, source });
-		const shipped = await workspace.buildShip({
-			id: 'b'.repeat(32),
-			sourceSha: source,
-			base,
-			remote,
-			branch: 'main',
-			message: 'Ship',
-			author,
-			committer: author
+		const ok = await commit({
+			'.agents/deploy': 'echo "deploying $(cat greeting.ts) with $API_TOKEN"\n'
 		});
-		expect(built).toEqual({ sha: expect.any(String), tree: shipped.tree });
+		await writeFile(join(root, 'greeting.ts'), 'uncommitted\n');
+		const deployed = await workspace.deploy({ commit: ok, env: { API_TOKEN: 'sekrit-value' } });
+		expect(deployed).toEqual({
+			ran: true,
+			ok: true,
+			output: "exit code 0\ndeploying export const greeting = 'hello'; with [secret]",
+			log: '.git/regit-checks/deploy.log'
+		});
+		const log = await readFile(join(root, '.git/regit-checks/deploy.log'), 'utf8');
+		expect(log).toContain('with [secret]');
+		expect(log).not.toContain('sekrit');
+		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe('uncommitted\n');
 
-		const clash = await commit({ 'greeting.ts': "export const greeting = 'hey';\n" }, elsewhere);
-		await git(root, ['fetch', elsewhere, 'main']);
-		expect(await workspace.candidate({ base, onto: clash, source })).toEqual({
-			conflicts: ['greeting.ts']
+		const broken = await commit({ '.agents/deploy': 'echo nope; exit 2\n' });
+		expect(await workspace.deploy({ commit: broken, env: {} })).toMatchObject({
+			ran: true,
+			ok: false,
+			output: 'exit code 2\nnope'
+		});
+	});
+
+	test('lists the first-parent commits in a range, oldest first', async () => {
+		const from = await git(root, ['rev-parse', 'HEAD']);
+		const one = await commit({ 'a.md': 'A\n' });
+		await writeFile(join(root, 'b.md'), 'B\n');
+		await git(root, ['add', '.']);
+		await git(root, [
+			'-c',
+			'user.name=Sam',
+			'-c',
+			'user.email=s@example.com',
+			'commit',
+			'-m',
+			'Add b\n\nWhy'
+		]);
+		const two = await git(root, ['rev-parse', 'HEAD']);
+		expect(await workspace.commits({ from, to: two })).toEqual({
+			commits: [
+				{ sha: one, headline: 'x' },
+				{ sha: two, headline: 'Add b' }
+			]
+		});
+		expect(await workspace.commits({ from: null, to: one })).toEqual({
+			commits: [{ sha: one, headline: 'x' }]
 		});
 	});
 });

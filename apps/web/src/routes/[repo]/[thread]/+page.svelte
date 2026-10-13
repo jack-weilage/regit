@@ -32,7 +32,13 @@
 		type IntentStatus,
 		type ThreadAction
 	} from '@regit/ui';
-	import { threadPurgeDelayMs, type Author, type Entry, type ToolCallRecord } from '@regit/core';
+	import {
+		threadPurgeDelayMs,
+		type Author,
+		type Entry,
+		type ToolCallRecord,
+		type Verdict
+	} from '@regit/core';
 	import { getLiveActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import {
@@ -75,6 +81,13 @@
 	const agent: Author = { name: 'ReGit', kind: 'agent' };
 
 	const modes = { small: 'Small', medium: 'Medium', large: 'Large' };
+	const verdicts: Record<Verdict, string> = {
+		landed: 'checking main',
+		passed: 'checks passed',
+		failed: 'broke main',
+		deployed: 'deployed',
+		reverted: 'reverted'
+	};
 	const tasks = { agent: 'Agent', search: 'Thread search' };
 
 	let { params } = $props();
@@ -124,8 +137,11 @@
 		const status = detail?.summary.status;
 		if (status === 'shipping') return { status: 'shipping', note: `Shipping to ${detail!.branch}` };
 		if (status === 'shipped') {
-			const sha = detail!.summary.shipped?.sha.slice(0, 7);
-			return { status: 'shipped', note: sha ? `Shipped in ${sha}` : 'Shipped' };
+			const shipped = detail!.summary.shipped;
+			const note = shipped
+				? `Shipped in ${shipped.sha.slice(0, 7)} · ${verdicts[shipped.verdict]}`
+				: 'Shipped';
+			return { status: 'shipped', note };
 		}
 		if (status === 'running') return { status: 'working', note: 'The agent is working' };
 		if (status === 'needs-you') return { status: 'needs-you' };

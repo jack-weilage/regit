@@ -1,16 +1,16 @@
 checks:
   - name: check
     run: bun run check
-    before: [handoff, ship]
+    before: [handoff, deploy]
   - name: test
     run: bun run test
     timeout: 1800
-    before: [ship]
+    before: [deploy]
   - name: migrations
     when: ['packages/db/src/schema.ts']
     run: bun run --filter @regit/db generate && test -z "$(git status --porcelain)"
-    before: [ship]
+    before: [deploy]
   - name: stories
     ask: Every new or changed component in packages/ui has a matching *.stories.svelte story
     when: ['packages/ui/src/**/*.svelte']
-    before: [ship]
+    before: [handoff]

@@ -2,7 +2,6 @@
 	import type { ShipStage } from '@regit/core';
 
 	const stages: { stage: ShipStage; label: (branch: string) => string }[] = [
-		{ stage: 'checking', label: () => 'Running checks' },
 		{ stage: 'fetching', label: () => "Fetching the thread's work" },
 		{ stage: 'building', label: (branch) => `Building one commit on ${branch}` },
 		{ stage: 'pushing', label: (branch) => `Pushing to ${branch}` },
@@ -52,13 +51,7 @@
 
 	const uid = $props.id();
 
-	let visible = $derived(
-		stages.filter(
-			({ stage }) =>
-				stage !== 'checking' || progress?.stage === 'checking' || checks?.action === 'ship'
-		)
-	);
-	let current = $derived(visible.findIndex(({ stage }) => stage === progress?.stage));
+	let current = $derived(stages.findIndex(({ stage }) => stage === progress?.stage));
 	let branch = $derived(progress?.branch ?? known);
 
 	let busy = $state(false);
@@ -118,7 +111,7 @@
 	</header>
 	{#if shipping}
 		<ol aria-label="Shipping progress">
-			{#each visible as { stage, label }, index (stage)}
+			{#each stages as { stage, label }, index (stage)}
 				{@const state = index < current ? 'passed' : index === current ? 'running' : 'pending'}
 				<li class={state} aria-current={index === current ? 'step' : undefined}>
 					<StatusIcon {state} />

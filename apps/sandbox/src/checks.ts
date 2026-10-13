@@ -2,34 +2,32 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
-	CandidateRequest,
-	CandidateResponse,
 	CheckAction,
 	CheckSpec,
 	ChecksRequest,
 	ChecksResponse,
+	CommitsRequest,
+	CommitsResponse,
+	DeployRequest,
+	DeployResponse,
 	RunCheckRequest,
 	RunCheckResponse
 } from '@regit/agent';
-import { exec, git, noHooks } from './exec.ts';
+import { exec, git } from './exec.ts';
 
 export const checksFile = '.agents/checks.yml';
+export const deployScript = '.agents/deploy';
 export const checkLogs = '.git/regit-checks';
-// Ship checks run in a separate worktree, so the agent's workspace never leaves its branch.
+// Checks of another commit run in a separate worktree, so the workspace never leaves its branch.
 export const checkout = '.git/regit-checkout';
 
-const actions: CheckAction[] = ['handoff', 'ship'];
+const actions: CheckAction[] = ['handoff', 'deploy'];
+const deployTimeoutSeconds = 30 * 60;
 const keys = ['name', 'run', 'ask', 'when', 'inputs', 'before', 'blocking', 'timeout'];
 const defaultTimeoutSeconds = 15 * 60;
 const setupTimeoutSeconds = 15 * 60;
 const tailLines = 40;
 const tailChars = 4_000;
-const candidateIdentity = {
-	GIT_AUTHOR_NAME: 'ReGit',
-	GIT_AUTHOR_EMAIL: 'agent@regit.dev',
-	GIT_COMMITTER_NAME: 'ReGit',
-	GIT_COMMITTER_EMAIL: 'agent@regit.dev'
-};
 
 // The sandbox runs on Bun; this keeps its YAML and glob APIs typed where Bun's globals aren't declared.
 const bun = (
@@ -80,6 +78,10 @@ export function parseChecks(text: string): CheckSpec[] {
 		const steps = globs(before, `${label}: before`);
 		if (!steps?.length || steps.some((step) => !actions.includes(step as CheckAction)))
 			throw new Error(`${label}: before must list ${actions.join(' and/or ')}`);
+		if (ask !== undefined && steps.includes('deploy'))
+			throw new Error(
+				`${label}: ask checks judge a thread's diff, so they only run before handoff`
+			);
 		return {
 			name,
 			...(run !== undefined && { run: (run as string).trim() }),
@@ -120,26 +122,20 @@ function commitRef(ref: string) {
 	return ref;
 }
 
-// Reads the checks defined at config (the commit itself by default), works out which apply to the commit's changes
-// since base, and what each one's result depends on.
+// Reads the checks defined at the commit, works out which apply to its changes since base (a commit, or the empty
+// tree for everything), and what each one's result depends on.
 export async function checks(
 	root: string,
-	{ base, commit, config = commit }: ChecksRequest
+	{ base, commit }: ChecksRequest
 ): Promise<ChecksResponse> {
 	commitRef(base);
 	commitRef(commit);
-	commitRef(config);
-	const configChanged = !!(await git(root, [
-		'diff',
-		'--name-only',
-		base,
-		commit,
-		'--',
-		checksFile
-	]));
-	const file = `${config}:${checksFile}`;
+	const governing = lines(
+		await git(root, ['diff', '--name-only', base, commit, '--', checksFile, deployScript])
+	);
+	const file = `${commit}:${checksFile}`;
 	if ((await exec('git', ['cat-file', '-e', file], { cwd: root })).code !== 0)
-		return { checks: [], configChanged };
+		return { checks: [], governing };
 	let specs: CheckSpec[];
 	try {
 		specs = parseChecks(await git(root, ['show', file]));
@@ -147,7 +143,7 @@ export async function checks(
 		return {
 			checks: [],
 			error: error instanceof Error ? error.message : String(error),
-			configChanged
+			governing
 		};
 	}
 	const changed = lines(await git(root, ['diff', '--name-only', '--no-renames', base, commit]));
@@ -164,7 +160,7 @@ export async function checks(
 				: tree;
 		return { ...spec, applies: changed.some(touches), inputsHash };
 	});
-	return { checks, configChanged };
+	return { checks, governing };
 }
 
 // The end of a check's output, where failures usually are; the whole output goes to its log.
@@ -235,7 +231,7 @@ async function prepareCheckout(root: string, commit: string, signal: AbortSignal
 			return {
 				failed: {
 					ok: false,
-					output: `.agents/setup failed while preparing the ship checkout\n${tail(result.output)}`,
+					output: `.agents/setup failed while preparing the check checkout\n${tail(result.output)}`,
 					log
 				}
 			};
@@ -289,35 +285,67 @@ export function runCheck(
 	});
 }
 
-// Builds the commit a ship would push: the thread's changes since base applied on top of onto.
-export async function candidate(
+// Runs .agents/deploy from the check worktree at the commit with the deploy secrets in its environment, keeping them
+// out of its output and log.
+export function deploy(
 	root: string,
-	{ base, onto, source }: CandidateRequest
-): Promise<CandidateResponse> {
-	for (const sha of [base, onto, source])
-		if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) throw new Error('Expected exact commit SHAs');
-	const merged = await exec(
-		'git',
-		[
-			'merge-tree',
-			'--write-tree',
-			'--name-only',
-			'--no-messages',
-			'--merge-base',
-			base,
-			onto,
-			source
-		],
-		{ cwd: root }
-	);
-	if (merged.code === 1)
-		return { conflicts: merged.stdout.trim().split('\n').slice(1).filter(Boolean) };
-	if (merged.code !== 0) throw new Error(`git merge-tree failed: ${merged.output.trim()}`);
-	const tree = merged.stdout.trim().split('\n')[0]!;
-	const sha = await git(
-		root,
-		['commit-tree', tree, '-p', onto, '-m', 'ReGit ship candidate'],
-		candidateIdentity
-	);
-	return { sha, tree };
+	{ commit, env, timeoutSeconds = deployTimeoutSeconds }: DeployRequest
+): Promise<DeployResponse> {
+	commitRef(commit);
+	return serial(root, async () => {
+		if ((await exec('git', ['cat-file', '-e', `${commit}:${deployScript}`], { cwd: root })).code)
+			return { ran: false };
+		const controller = new AbortController();
+		const active = running.get(root) ?? new Set();
+		running.set(root, active.add(controller));
+		try {
+			await mkdir(join(root, checkLogs), { recursive: true });
+			const prepared = await prepareCheckout(root, commit, controller.signal);
+			if (prepared.failed) return { ran: true, ...prepared.failed };
+			const result = await exec('bash', ['-e', deployScript], {
+				cwd: prepared.dir,
+				env,
+				timeout: timeoutSeconds * 1000,
+				signal: controller.signal
+			});
+			const output = redact(result.output, Object.values(env));
+			const status = result.timedOut
+				? `timed out after ${timeoutSeconds}s`
+				: `exit code ${result.code}`;
+			const log = logPath('deploy');
+			await writeFile(join(root, log), `$ ${deployScript}\n${output}\n${status}\n`);
+			return {
+				ran: true,
+				ok: result.code === 0 && !result.timedOut,
+				output: `${status}\n${tail(output)}`.trimEnd(),
+				log
+			};
+		} finally {
+			active.delete(controller);
+		}
+	});
+}
+
+function redact(text: string, secrets: string[]) {
+	return secrets
+		.filter((secret) => secret.length >= 4)
+		.sort((a, b) => b.length - a.length)
+		.reduce((text, secret) => text.replaceAll(secret, '[secret]'), text);
+}
+
+// The first-parent commits after from up to and including to, oldest first.
+export async function commits(
+	root: string,
+	{ from, to }: CommitsRequest
+): Promise<CommitsResponse> {
+	commitRef(to);
+	if (from) commitRef(from);
+	const range = from ? [`${from}..${to}`] : ['-1', to];
+	const log = await git(root, ['log', '--first-parent', '--reverse', '--format=%H %s', ...range]);
+	return {
+		commits: lines(log).map((line) => {
+			const [sha = '', ...headline] = line.split(' ');
+			return { sha, headline: headline.join(' ') };
+		})
+	};
 }

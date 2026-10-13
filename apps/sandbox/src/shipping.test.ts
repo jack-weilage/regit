@@ -244,6 +244,46 @@ describe('shipping', () => {
 		).rejects.toThrow('Invalid branch');
 	});
 
+	test('reverts a commit on main once, and names the files when later work conflicts', async () => {
+		const { sha } = await ship((await checkpoint("export const greeting = 'hi';\n", 'Source'))!);
+		const revert = () =>
+			workspace.buildRevert({
+				sha,
+				remote,
+				branch: 'main',
+				message: 'Revert "Trusted squash"',
+				committer: author
+			});
+		const built = await revert();
+		expect(built).toMatchObject({ head: sha, shipped: false });
+		expect(await workspace.pushShip({ ...built, remote, branch: 'main' })).toEqual({
+			pushed: true
+		});
+		expect(await git(remote, ['show', 'main:greeting.ts'])).toBe(
+			"export const greeting = 'hello';"
+		);
+		expect(await git(remote, ['log', '-1', '--format=%an|%B', 'main'])).toBe(
+			`ReGit|Revert "Trusted squash"\n\nReGit-Revert: ${sha}`
+		);
+		expect(await revert()).toMatchObject({ sha: built.sha, shipped: true });
+
+		const again = await ship(
+			(await checkpoint("export const greeting = 'hey';\n", 'Again'))!,
+			'c'.repeat(32)
+		);
+		await landOnMain("export const greeting = 'later';\n");
+		await expect(
+			workspace.buildRevert({
+				sha: again.sha,
+				remote,
+				branch: 'main',
+				message: 'Revert',
+				committer: author
+			})
+		).rejects.toThrow('Reverting conflicts with main in greeting.ts');
+		expect(await git(root, ['status', '--porcelain'])).toBe('');
+	});
+
 	test('explicitly synchronizes notes without losing another publisher notes', async () => {
 		const sourceSha = (await checkpoint("export const greeting = 'hi';\n", 'Source'))!;
 		const shipped = await ship(sourceSha);

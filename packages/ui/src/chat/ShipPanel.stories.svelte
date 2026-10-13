@@ -194,7 +194,7 @@
 	name="Checks failed"
 	args={{
 		checks: {
-			action: 'ship',
+			action: 'handoff',
 			at: now,
 			results: [
 				{
@@ -216,31 +216,10 @@
 		}
 	}}
 	play={async ({ canvas, userEvent }) => {
-		await expect(canvas.getByRole('list', { name: 'Checks before ship' })).toBeVisible();
+		await expect(canvas.getByRole('list', { name: 'Checks before handoff' })).toBeVisible();
 		await expect(canvas.queryByText(/error TS2322/)).not.toBeVisible();
 		await userEvent.click(canvas.getByText('typecheck'));
 		await waitFor(() => expect(canvas.getByText(/error TS2322/)).toBeVisible());
-	}}
-/>
-
-<Story
-	name="Checking"
-	args={{
-		status: 'shipping',
-		now,
-		progress: {
-			stage: 'checking',
-			note: null,
-			branch: 'main',
-			since: now - 5_000,
-			started: now - 6_000
-		}
-	}}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('listitem', { current: 'step' })).toHaveTextContent(
-			'Running checks'
-		);
-		await expect(canvas.queryByRole('list', { name: /Checks before/ })).toBeNull();
 	}}
 />
 

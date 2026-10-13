@@ -4,6 +4,7 @@
 	import {
 		AppShell,
 		CloneDialog,
+		DeploySecretsDialog,
 		Toast,
 		type Mode,
 		type SimilarThread,
@@ -14,6 +15,7 @@
 		defaultMachine,
 		type LiveMessage,
 		type Machine,
+		type MainStatus,
 		type ThreadActivity,
 		type ThreadSummary
 	} from '@regit/core';
@@ -21,13 +23,17 @@
 	import {
 		assessRequest,
 		createGitAccessToken,
+		deleteDeploySecret,
+		getDeploySecrets,
 		getGitAccess,
+		getMain,
 		getRepos,
 		revokeGitAccessToken,
 		getThread,
 		getThreads,
 		getUser,
-		openThread
+		openThread,
+		setDeploySecret
 	} from '#lib/data.remote.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import { createAndOpen } from '#lib/repos.ts';
@@ -45,7 +51,11 @@
 	let machine = $derived(
 		(known.find((known) => known.name === repo)?.machine as Machine | undefined) ?? defaultMachine
 	);
+	let owner = $derived(known.find((known) => known.name === repo)?.role === 'owner');
 	let summaries = $derived(await getThreads(repo));
+	let fetchedMain = $derived(await getMain(repo));
+	let liveMain = $state<{ repo: string; main: MainStatus } | null>(null);
+	let main = $derived(liveMain?.repo === repo ? liveMain.main : fetchedMain);
 	let threads = $derived<ThreadListItem[]>(
 		summaries.map((thread) => ({
 			id: thread.id,
@@ -54,7 +64,9 @@
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.id}`,
 			conflictsWith: thread.behind?.conflicts.length ? thread.behind.branch : undefined,
-			failed: thread.failure?.title
+			failed:
+				thread.failure?.title ??
+				(thread.shipped?.verdict === 'failed' ? `Broke ${main.branch ?? 'main'}` : undefined)
 		}))
 	);
 
@@ -76,6 +88,8 @@
 		source.addEventListener('open', () => {
 			if (opened) {
 				for (const thread of Object.keys(activities)) delete activities[thread];
+				liveMain = null;
+				getMain(repo).refresh();
 				getThreads(repo).refresh();
 				if (page.params.thread) getThread({ repo, id: page.params.thread }).refresh();
 			}
@@ -83,6 +97,10 @@
 		});
 		source.addEventListener('message', (event) => {
 			const message = JSON.parse(event.data) as LiveMessage;
+			if (message.type === 'main') {
+				liveMain = { repo, main: message.main };
+				return;
+			}
 			if (message.type === 'activity') {
 				activities[message.thread] = message.activity;
 				return;
@@ -96,6 +114,9 @@
 		});
 		return () => source.close();
 	};
+
+	let managingSecrets = $state(false);
+	let secrets = $derived(managingSecrets ? await getDeploySecrets(repo) : null);
 
 	let cloning = $state(false);
 	let created = $state<{ label: string; secret: string } | null>(null);
@@ -144,6 +165,8 @@
 		onstart={start}
 		{similar}
 		{size}
+		{main}
+		onsecrets={owner ? () => (managingSecrets = true) : undefined}
 		onclone={() => {
 			created = null;
 			cloning = true;
@@ -164,6 +187,15 @@
 			action={{ label: 'Open', onclick: () => goto(`/${repo}/${thread}`) }}
 			ondismiss={() => (alert = null)}>{alert.text}</Toast
 		>
+	{/if}
+	{#if secrets}
+		<DeploySecretsDialog
+			bind:open={managingSecrets}
+			{repo}
+			{secrets}
+			onsave={(secret) => setDeploySecret({ repo, ...secret })}
+			onremove={(name) => deleteDeploySecret({ repo, name })}
+		/>
 	{/if}
 	{#if access}
 		<CloneDialog

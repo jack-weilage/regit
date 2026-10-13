@@ -31,6 +31,7 @@ export {
 	askRequest,
 	askVerdict,
 	blockingFailures,
+	brokeMainNotice,
 	checksNotice,
 	describeChecks,
 	dueChecks,

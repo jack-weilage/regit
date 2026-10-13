@@ -33,11 +33,7 @@ export class RepositoryGit extends DurableObject<Env> {
 
 	// Squashes the thread onto main, pushes it and records provenance, reporting each stage.
 	// Safe to retry: a ship already on main is found, not repeated.
-	// With a checked tree, only that exact tree is pushed; if main moved since the checks ran, it says so instead.
-	async ship(
-		ship: Ship,
-		checked: string | null = null
-	): Promise<{ sha: string; branch: string } | { moved: true }> {
+	async ship(ship: Ship): Promise<{ sha: string; branch: string }> {
 		let branch: string | null = null;
 		const progress = (stage: ShipStage, note: string | null = null) =>
 			this.env.REPOS.getByName(ship.repo)
@@ -78,7 +74,6 @@ export class RepositoryGit extends DurableObject<Env> {
 						committer
 					});
 					if (built.shipped) sha = built.sha;
-					else if (checked && built.tree !== checked) return { moved: true as const };
 					else {
 						await progress('pushing', `${built.sha.slice(0, 7)} onto ${built.head.slice(0, 7)}`);
 						const { pushed } = await workspace.pushShip({
@@ -104,6 +99,30 @@ export class RepositoryGit extends DurableObject<Env> {
 					})
 				});
 				return { sha, branch: target };
+			} finally {
+				await this.#revoke(targets);
+			}
+		});
+	}
+
+	// Reverts a commit on main that broke its deploy checks. Safe to retry: a revert already on main is found.
+	async revert({ repo, sha, message }: { repo: string; sha: string; message: string }) {
+		return this.#serial(async () => {
+			using canonical = await this.env.ARTIFACTS.get(repo);
+			const { remote, defaultBranch } = await canonical.info();
+			const targets = [await this.#access(canonical, remote, true)];
+			try {
+				await this.#allow(targets);
+				const workspace = sandboxWorkspace(await this.#sandbox());
+				await workspace.clone({ remote });
+				const branch = (await workspace.headBranch({ remote })) ?? defaultBranch;
+				for (let moved = 0; moved < 5; moved++) {
+					const built = await workspace.buildRevert({ sha, remote, branch, message, committer });
+					if (built.shipped) return { sha: built.sha, branch };
+					const { pushed } = await workspace.pushShip({ ...built, remote, branch });
+					if (pushed) return { sha: built.sha, branch };
+				}
+				throw new Error(`${branch} kept moving while reverting`);
 			} finally {
 				await this.#revoke(targets);
 			}

@@ -1,7 +1,13 @@
 import { command, getRequestEvent, query } from '$app/server';
 import { error } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
-import { machines, repoNamePattern, type Machine } from '@regit/core';
+import {
+	deploySecretName,
+	machines,
+	maxDeploySecretBytes,
+	repoNamePattern,
+	type Machine
+} from '@regit/core';
 import { repos, repoMembers, type RepoRole } from '@regit/db';
 import { and, asc, eq } from 'drizzle-orm';
 import * as v from 'valibot';
@@ -29,7 +35,7 @@ export const getUser = query(async () => getRequestEvent().locals.user);
 
 export const getRepos = query(() =>
 	db()
-		.select({ name: repos.name, machine: repos.machine })
+		.select({ name: repos.name, machine: repos.machine, role: repoMembers.role })
 		.from(repos)
 		.innerJoin(repoMembers, eq(repoMembers.repo, repos.name))
 		.where(eq(repoMembers.principalId, getRequestEvent().locals.user.id))
@@ -40,6 +46,32 @@ export const getThreads = query(name, async (repo) => (await coordinator(repo)).
 
 export const getThread = query(thread, async ({ repo, id }) =>
 	(await coordinator(repo)).thread(id)
+);
+
+export const getMain = query(name, async (repo) => (await coordinator(repo)).main());
+
+export const getDeploySecrets = query(name, async (repo) =>
+	(await coordinator(repo, 'owner')).deploySecrets(author())
+);
+
+export const setDeploySecret = command(
+	v.object({
+		repo: name,
+		name: v.pipe(v.string(), v.trim(), v.regex(deploySecretName)),
+		value: v.pipe(v.string(), v.minLength(1), v.maxLength(maxDeploySecretBytes))
+	}),
+	async ({ repo, name, value }) => {
+		await (await coordinator(repo, 'owner')).setDeploySecret(name, value, author());
+		getDeploySecrets(repo).refresh();
+	}
+);
+
+export const deleteDeploySecret = command(
+	v.object({ repo: name, name: v.pipe(v.string(), v.regex(deploySecretName)) }),
+	async ({ repo, name }) => {
+		await (await coordinator(repo, 'owner')).deleteDeploySecret(name, author());
+		getDeploySecrets(repo).refresh();
+	}
 );
 
 export const createRepo = command(

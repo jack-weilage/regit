@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { createTestHarness } from 'wrangler';
 import { afterAll, beforeAll } from 'vitest';
 import type { GatewayRequest, JevRequest, JevResponse } from '@regit/agent';
-import type { Machine, Mode, ThreadDetail } from '@regit/core';
+import type { MainStatus, Machine, Mode, ThreadDetail } from '@regit/core';
 import type FakeModels from './fake-models.ts';
 import { startGitServer } from './git-process.ts';
 import { startSandbox } from './sandbox-process.ts';
@@ -13,9 +13,8 @@ import { startSandbox } from './sandbox-process.ts';
 export async function setup({ containers = false } = {}) {
 	const dir = await mkdtemp(join(tmpdir(), 'regit-forge-'));
 	const git = await startGitServer(dir);
-	const sandbox = containers
-		? null
-		: await startSandbox(await mkdtemp(join(tmpdir(), 'regit-sandbox-')));
+	const sandboxes = containers ? null : await mkdtemp(join(tmpdir(), 'regit-sandbox-'));
+	const sandbox = sandboxes ? await startSandbox(sandboxes) : null;
 	const host = containers ? 'host.docker.internal' : '127.0.0.1';
 
 	const server = createTestHarness({
@@ -168,6 +167,7 @@ export async function setup({ containers = false } = {}) {
 
 	return {
 		dir,
+		sandboxes,
 		git,
 		server,
 		worker,
@@ -199,6 +199,19 @@ export async function untilThread(
 	throw new Error(
 		`The thread never got there: ${detail.summary.status} ${JSON.stringify(detail.entries.slice(-4))}`
 	);
+}
+
+export async function untilMain(
+	repo: ReturnType<Env['REPOS']['getByName']>,
+	check: (main: MainStatus) => boolean,
+	timeoutMs = 120_000
+) {
+	for (let i = 0; i < timeoutMs / 200; i++) {
+		const main = (await repo.main()) as MainStatus;
+		if (check(main)) return main;
+		await new Promise((resolve) => setTimeout(resolve, 200));
+	}
+	throw new Error(`Main never got there: ${JSON.stringify(await repo.main())}`);
 }
 
 export const sleepCall = [

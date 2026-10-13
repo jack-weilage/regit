@@ -1,4 +1,5 @@
 import type { DiffFile, DiffSummary } from './diff.ts';
+import type { DeploySecret, MainStatus, Verdict } from './main.ts';
 import type { Failure, Retry, RetryFailure } from './retries.ts';
 
 export type Mode = 'small' | 'medium' | 'large';
@@ -54,7 +55,7 @@ export interface ThreadOverlap {
 	files: string[];
 }
 
-export type CheckAction = 'handoff' | 'ship';
+export type CheckAction = 'handoff' | 'deploy';
 
 export interface CheckResult {
 	name: string;
@@ -151,7 +152,7 @@ export interface ThreadSummary {
 	deleted: { at: number; by: string } | null;
 	parent: { id: string; headline: string } | null;
 	changes: DiffSummary | null;
-	shipped: { sha: string; by: string; at: number } | null;
+	shipped: { sha: string; by: string; at: number; verdict: Verdict } | null;
 	failure: { at: number; title: string; error: string; resumable: boolean } | null;
 	behind: {
 		branch: string;
@@ -204,6 +205,7 @@ export interface ThreadDetail {
 }
 
 export type LiveMessage =
+	| { type: 'main'; main: MainStatus }
 	| { type: 'entry'; thread: string; entry: Entry }
 	| { type: 'thread'; summary: ThreadSummary }
 	| { type: 'activity'; thread: string; activity: ThreadActivity | null };
@@ -236,4 +238,8 @@ export interface RepoCoordinatorApi {
 	forwardIntent(thread: string, to: string, by: Author): Promise<string>;
 	threads(): ThreadSummary[];
 	thread(id: string): Promise<ThreadDetail | null>;
+	main(): MainStatus;
+	deploySecrets(by: Author): Promise<DeploySecret[]>;
+	setDeploySecret(name: string, value: string, by: Author): Promise<void>;
+	deleteDeploySecret(name: string, by: Author): Promise<void>;
 }
