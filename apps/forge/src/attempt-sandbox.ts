@@ -379,7 +379,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const pending = await this.#drain(attempt.repo);
 			const syncing = !!this.#meta('sync');
 			const synced = syncing ? await this.#sync(attempt, fetch, fork, token) : null;
-			if (!synced) await this.#reportBehind(attempt, fetch, fork, token);
+			if (synced) await this.#recheckBehind(attempt, fetch, fork, token);
+			else await this.#reportBehind(attempt, fetch, fork, token);
 			const opening: Turn[] = [
 				...this.#rebuiltNotes(),
 				...(synced ? [] : this.#conflictNotes()),
@@ -456,7 +457,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						tools: controller.signal.aborted ? [] : tools
 					});
 					this.#stepped(next.value.turns);
-					if (next.value.checkpoint) await this.#reportBehind(attempt, fetch, fork, token);
+					if (next.value.checkpoint) await this.#recheckBehind(attempt, fetch, fork, token);
 					await this.#syncServices(fetch, attempt.repo);
 					if (Date.now() > deadline) {
 						await run.return('aborted');
@@ -469,7 +470,6 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#clearActivity();
 			if (this.#agent()?.status !== 'running') return;
 			await this.#saveChanges(attempt, fetch);
-			await this.#reportBehind(attempt, fetch, fork, token);
 			if (next.value === 'finished') await this.#settle(attempt);
 			else await this.#finish(attempt, outcomes[next.value]);
 		} catch (error) {
@@ -611,13 +611,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				)
 					.trim()
 					.split(' ');
-				const merged = await this.#shell(
-					fetch,
-					'git merge-tree --write-tree --name-only --no-messages HEAD FETCH_HEAD'
-				);
-				const conflicts = merged.ok
-					? []
-					: merged.output.trim().split('\n').slice(1).filter(Boolean);
+				const conflicts = await this.#conflictsWith(fetch, 'FETCH_HEAD');
 				behind = { branch, commits, sha, headline: subject.join(' '), conflicts };
 			}
 			this.#setMeta('behind', JSON.stringify(behind));
@@ -625,6 +619,33 @@ export class AttemptSandbox extends DurableObject<Env> {
 		} catch (error) {
 			console.warn('Could not compare the thread with its default branch', error);
 		}
+	}
+
+	// Landings report main's moves, so after the thread's own commits it only rechecks against the main it already knows.
+	async #recheckBehind(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+		const known = JSON.parse(this.#meta('behind') ?? 'null') as ThreadSummary['behind'];
+		if (!known) return;
+		try {
+			if (!(await this.#shell(fetch, `git cat-file -e ${known.sha}^{commit}`)).ok)
+				return await this.#reportBehind(attempt, fetch, fork, token);
+			const commits = Number(await this.#git(fetch, `git rev-list --count HEAD..${known.sha}`));
+			const behind = commits
+				? { ...known, commits, conflicts: await this.#conflictsWith(fetch, known.sha) }
+				: null;
+			if (JSON.stringify(behind) === JSON.stringify(known)) return;
+			this.#setMeta('behind', JSON.stringify(behind));
+			await this.#report(attempt.repo, { type: 'behind', behind, branch: known.branch });
+		} catch (error) {
+			console.warn('Could not compare the thread with its default branch', error);
+		}
+	}
+
+	async #conflictsWith(fetch: Fetch, ref: string) {
+		const merged = await this.#shell(
+			fetch,
+			`git merge-tree --write-tree --name-only --no-messages HEAD ${ref}`
+		);
+		return merged.ok ? [] : merged.output.trim().split('\n').slice(1).filter(Boolean);
 	}
 
 	async #fetchMain(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string, ref: string) {

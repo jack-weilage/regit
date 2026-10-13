@@ -18,6 +18,10 @@ export async function startGitServer(root: string) {
 			const response = await fetch(`http://127.0.0.1:${port}/_control/requests`);
 			return (await response.json()) as IncomingHttpHeaders[];
 		},
+		async paths() {
+			const response = await fetch(`http://127.0.0.1:${port}/_control/paths`);
+			return (await response.json()) as string[];
+		},
 		close() {
 			child.kill();
 		}
