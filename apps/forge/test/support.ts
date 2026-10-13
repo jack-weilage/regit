@@ -155,10 +155,14 @@ export async function setup({ containers = false } = {}) {
 		return { env, repo, sam, id };
 	}
 
-	beforeAll(async () => {
-		await server.listen();
-		await worker.applyD1Migrations('DB');
-	});
+	// Listening builds the sandbox image for container tests; rebuilding its toolchain layer from scratch takes minutes.
+	beforeAll(
+		async () => {
+			await server.listen();
+			await worker.applyD1Migrations('DB');
+		},
+		containers ? 15 * 60_000 : undefined
+	);
 	afterAll(async () => {
 		await server.close();
 		git.close();

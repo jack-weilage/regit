@@ -5,21 +5,28 @@ RUN bun build --compile --minify src/main.ts --outfile /regit-sandbox
 
 FROM debian:trixie-slim
 
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates git ripgrep sudo debianutils \
-	&& rm -rf /var/lib/apt/lists/*
+# Downloaded packages stay in BuildKit caches, so rebuilding a layer below doesn't fetch them again.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	rm -f /etc/apt/apt.conf.d/docker-clean \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates git ripgrep sudo debianutils
 
 COPY --from=jdxcode/mise:2026.10.0 /usr/local/bin/mise /usr/local/bin/mise
-COPY --from=server /regit-sandbox /usr/local/bin/regit-sandbox
-RUN ln -s /usr/local/bin/regit-sandbox /usr/local/bin/regit
 COPY mise-system.toml /etc/mise/config.toml
-COPY start.sh /usr/local/bin/regit-start
 
 ENV HOME=/root MISE_DATA_DIR=/opt/mise MISE_CACHE_DIR=/opt/mise/cache PATH=/opt/mise/shims:$PATH
-RUN echo 'export PATH="/opt/mise/shims:$PATH"' > /etc/profile.d/mise.sh \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	--mount=type=cache,target=/opt/mise/cache \
+	echo 'export PATH="/opt/mise/shims:$PATH"' > /etc/profile.d/mise.sh \
 	&& mise install \
-	&& agent-browser install --with-deps \
-	&& rm -rf /var/lib/apt/lists/*
+	&& agent-browser install --with-deps
+
+# The server changes most often, so it comes last: a change to it rebuilds only these layers.
+RUN ln -s /usr/local/bin/regit-sandbox /usr/local/bin/regit
+COPY start.sh /usr/local/bin/regit-start
+COPY --from=server /regit-sandbox /usr/local/bin/regit-sandbox
 
 ENV SANDBOX_ROOT=/workspace PORT=8080
 EXPOSE 8080
