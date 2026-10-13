@@ -35,11 +35,13 @@
 		{/if}
 	</header>
 	<div class="body">
-		{#if files.length}
-			<ChatDiff {files} />
-		{:else}
-			<p class="empty">No changes yet.</p>
-		{/if}
+		<div class="content">
+			{#if files.length}
+				<ChatDiff {files} />
+			{:else}
+				<p class="empty">No changes yet.</p>
+			{/if}
+		</div>
 	</div>
 </section>
 
@@ -117,7 +119,10 @@
 	.body {
 		flex: 1;
 		min-block-size: 0;
-		padding: var(--space-5) var(--space-6) var(--space-7);
 		overflow-y: auto;
+	}
+
+	.content {
+		padding: var(--space-5) var(--space-6) var(--space-7);
 	}
 </style>

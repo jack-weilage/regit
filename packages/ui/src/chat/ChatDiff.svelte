@@ -26,18 +26,8 @@
 
 	let { files }: Props = $props();
 
-	const id = $props.id();
 	const collapsed = new SvelteSet<string>();
 	const revealed = new SvelteSet<string>();
-
-	function jump(path: string) {
-		collapsed.delete(path);
-		document
-			.getElementById(`${id}-${files.findIndex((file) => file.path === path)}`)
-			?.scrollIntoView({
-				block: 'start'
-			});
-	}
 </script>
 
 {#snippet counts(file: DiffFile)}
@@ -57,25 +47,9 @@
 {/snippet}
 
 <div class="diff">
-	<nav aria-label="Changed files">
-		<ul class="files">
-			{#each files as file (file.path)}
-				<li>
-					<button type="button" onclick={() => jump(file.path)}>
-						<span class={['badge', file.change]} title={badges[file.change].label}
-							>{badges[file.change].letter}</span
-						>
-						{@render path(file)}
-						{@render counts(file)}
-					</button>
-				</li>
-			{/each}
-		</ul>
-	</nav>
-
-	{#each files as file, index (file.path)}
+	{#each files as file (file.path)}
 		{@const open = !collapsed.has(file.path)}
-		<section id="{id}-{index}" class="file" aria-label={file.path}>
+		<section class="file" aria-label={file.path}>
 			<h3>
 				<button
 					type="button"
@@ -153,43 +127,10 @@
 		font-size: var(--text-chat);
 	}
 
-	.files {
-		display: grid;
-		margin: 0;
-		padding: var(--space-2);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		list-style: none;
-
-		button {
-			display: flex;
-			align-items: center;
-			gap: var(--space-4);
-			inline-size: 100%;
-			padding: var(--space-3) var(--space-4);
-			border: 0;
-			border-radius: calc(var(--radius) - 2px);
-			background: none;
-			color: inherit;
-			font: inherit;
-			text-align: start;
-			cursor: pointer;
-
-			&:hover {
-				background: var(--color-surface);
-			}
-
-			&:focus-visible {
-				outline: 2px solid var(--color-accent);
-				outline-offset: -2px;
-			}
-		}
-	}
-
 	.file {
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
-		scroll-margin-block-start: var(--space-4);
+		overflow: clip;
 	}
 
 	h3 {
@@ -197,7 +138,6 @@
 		inset-block-start: 0;
 		z-index: 1;
 		margin: 0;
-		border-radius: var(--radius) var(--radius) 0 0;
 		background: var(--color-bg);
 		font: inherit;
 
@@ -209,7 +149,6 @@
 			padding: var(--space-4) var(--space-5);
 			border: 0;
 			border-block-end: 1px solid var(--color-border);
-			border-radius: inherit;
 			background: color-mix(in oklab, var(--color-surface) 60%, var(--color-bg));
 			color: inherit;
 			font: inherit;
@@ -218,7 +157,6 @@
 
 			&[aria-expanded='false'] {
 				border-block-end: 0;
-				border-radius: var(--radius);
 			}
 
 			&:focus-visible {
@@ -326,7 +264,6 @@
 
 	.scroll {
 		overflow-x: auto;
-		border-radius: 0 0 var(--radius) var(--radius);
 	}
 
 	table {
