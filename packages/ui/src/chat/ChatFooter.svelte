@@ -35,7 +35,10 @@
 
 	let footer: HTMLElement | undefined = $state();
 
-	let percent = $derived(Math.round((context.used / context.limit) * 100));
+	// The limit is where the thread compacts; one step can overshoot it before compaction runs.
+	let percent = $derived(
+		context.limit ? Math.min(100, Math.round((context.used / context.limit) * 100)) : 0
+	);
 	let total = $derived(
 		usage.reduce((sum, row) => ({ tokens: sum.tokens + row.tokens, cost: sum.cost + row.cost }), {
 			tokens: 0,
@@ -57,13 +60,13 @@
 		<div class="usage">
 			<div class="context">
 				<p class="summary">
-					<span>Context window</span>
+					<span>Context until compaction</span>
 					<span>{formatTokens(context.used)} / {formatTokens(context.limit)}</span>
 				</p>
 				<div
 					class={['bar', { parts: context.parts }]}
 					role="img"
-					aria-label="{percent}% of the context window used"
+					aria-label="{percent}% of the context before compaction"
 				>
 					{#each context.parts ?? [{ label: 'Used', tokens: context.used }] as part, index (part.label)}
 						<span

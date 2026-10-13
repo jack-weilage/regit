@@ -34,11 +34,29 @@
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: /24% context \$0\.84/ }));
 		await waitFor(() => expect(canvas.getByRole('cell', { name: 'kimi-k2.7-code' })).toBeVisible());
+		await expect(canvas.getByText('Context until compaction')).toBeVisible();
+		await expect(
+			canvas.getByRole('img', { name: '24% of the context before compaction' })
+		).toBeVisible();
 		await expect(canvas.getByRole('row', { name: /Total/ })).toHaveTextContent('$0.84');
 	}}
 />
 
-<Story name="Nearly full" args={{ mode: 'Large', context: { used: 182_000, limit: 200_000 } }} />
+<Story
+	name="Nearly full"
+	args={{ mode: 'Large', context: { used: 232_000, limit: 244_800 } }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('button', { name: /95% context/ })).toBeVisible();
+	}}
+/>
+
+<Story
+	name="Past the compaction point"
+	args={{ mode: 'Large', context: { used: 261_000, limit: 244_800 } }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByRole('button', { name: /100% context/ })).toBeVisible();
+	}}
+/>
 
 <Story
 	name="Fresh"

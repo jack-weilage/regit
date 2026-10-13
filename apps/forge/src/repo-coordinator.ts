@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
 	assessRequest,
+	compactThreshold,
 	maxSimilarCandidates,
 	type Assessment,
 	models,
@@ -1174,7 +1175,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			rows: [...rows.values()],
 			context: {
 				used: latest ? latest.input_tokens + latest.output_tokens : 0,
-				limit: models[model]?.contextWindow ?? 0
+				limit: compactThreshold(model) ?? models[model]?.contextWindow ?? 0
 			}
 		};
 	}
