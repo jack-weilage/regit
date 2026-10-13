@@ -2,6 +2,8 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	cost,
 	assessRequest,
+	blockingFailures,
+	brokeMainNotice,
 	describeChecks,
 	compactThreshold,
 	maxSimilarCandidates,
@@ -10,19 +12,24 @@ import {
 	modes,
 	type Intent,
 	type Step,
+	type DeployResponse,
 	type ServiceInfo,
 	type Suggestion,
 	type Usage
 } from '@regit/agent';
 import type {
 	Author,
+	CheckResult,
 	CheckRun,
+	Culprit,
+	DeploySecret,
 	Entry,
 	Failure,
 	RetryFailure,
 	DiffFile,
 	DiffSummary,
 	LiveMessage,
+	MainStatus,
 	Machine,
 	Mode,
 	ModeChoice,
@@ -39,15 +46,24 @@ import type {
 	ThreadSummary,
 	ThreadUsage,
 	ToolCallRecord,
-	UsageRow
+	UsageRow,
+	Verdict,
+	VerifyStage
 } from '@regit/core';
-import { defaultMachine, threadPurgeDelayMs } from '@regit/core';
+import {
+	defaultMachine,
+	deploySecretName,
+	maxDeploySecretBytes,
+	threadPurgeDelayMs
+} from '@regit/core';
 import { canAccessRepository } from '@regit/db';
 import { db } from './db.ts';
 import { retrying, RetriesExhausted } from './retrying.ts';
 import { Images } from './images.ts';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 import type { Landing } from './landing.ts';
+import { seal, type Sealed } from './secrets.ts';
+import type { Verified } from './verify-main.ts';
 
 export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string }; tools?: ToolCallRecord[] }
@@ -86,13 +102,21 @@ type ThreadRow = {
 	paths: string | null;
 	overlaps: string | null;
 	checks: string | null;
+	verdict: Verdict | null;
 	parent_headline?: string | null;
+};
+
+// Commits a thread shipped since it broke main, its fix attempts, and the latest fix still to be checked.
+type Fixing = {
+	commits: Omit<Culprit, 'thread'>[];
+	fixes: number;
+	fixed: string | null;
+	reverting: string | null;
 };
 
 const agent: Author = { name: 'ReGit', kind: 'agent' };
 const shipSteps: Record<ShipProgress['stage'], string> = {
 	starting: 'Ship',
-	checking: 'Checks',
 	fetching: 'Fetch',
 	building: 'Build',
 	pushing: 'Push',
@@ -100,6 +124,16 @@ const shipSteps: Record<ShipProgress['stage'], string> = {
 };
 const maxThreadMessages = 5;
 const maxHandBacks = 3;
+const maxFixes = 1;
+const emptyMain: MainStatus = {
+	branch: null,
+	verifying: null,
+	verified: null,
+	green: null,
+	deployed: null,
+	deployFailure: null,
+	failure: null
+};
 const similarTimeoutMs = 4000;
 const recentHistory = 12;
 const maxSearchHits = 30;
@@ -197,7 +231,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				failure TEXT,
 				paths TEXT,
 				overlaps TEXT,
-				checks TEXT
+				checks TEXT,
+				verdict TEXT
 			);
 			CREATE TABLE IF NOT EXISTS entries (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,10 +256,17 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS deploy_secrets (
+				name TEXT PRIMARY KEY,
+				iv TEXT NOT NULL,
+				value TEXT NOT NULL,
+				updated_at INTEGER NOT NULL,
+				updated_by TEXT NOT NULL
+			);
 			DROP TABLE IF EXISTS promotions;
 		`);
 		// TODO: remove once every repository's coordinator has these columns.
-		for (const column of ['failure', 'paths', 'overlaps', 'checks']) {
+		for (const column of ['failure', 'paths', 'overlaps', 'checks', 'verdict']) {
 			try {
 				this.#sql.exec(`ALTER TABLE threads ADD COLUMN ${column} TEXT`);
 			} catch {
@@ -792,15 +834,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setMeta('branch', branch);
 		await this.#agent(ship.thread).published({ sha, branch, from: ship.source.sha });
 		this.#sql.exec(
-			'UPDATE threads SET changes = NULL, paths = NULL, behind = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ? WHERE id = ?',
+			"UPDATE threads SET changes = NULL, paths = NULL, behind = NULL, shipped_sha = ?, shipped_at = ?, shipped_by = ?, verdict = 'landed' WHERE id = ?",
 			sha,
 			Date.now(),
 			ship.by.name,
 			ship.thread
 		);
+		const { by, email, title, body } = ship;
+		this.#setMeta(`ship-input:${ship.thread}`, JSON.stringify({ by, email, title, body }));
+		const fixing = this.#fixing(ship.thread);
+		if (fixing)
+			this.#saveFixing(ship.thread, {
+				...fixing,
+				commits: [...fixing.commits, { sha, headline: title }],
+				fixed: sha
+			});
 		this.#setStatus(ship.thread, 'shipped');
 		this.#add(ship.thread, { type: 'event', text: `Shipped ${sha.slice(0, 7)} to ${branch}` });
 		this.#checkOverlaps(ship.thread);
+		await this.#verify(sha);
 	}
 
 	async shipFailed(ship: Ship, message: string) {
@@ -808,11 +860,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const failures = this.#shipFailures(ship.thread);
 		this.#setShipProgress(ship.thread, undefined);
 		const summary = this.#summary(ship.thread)!;
-		const fixable =
-			message.startsWith('Ship conflicts with ') || message.startsWith('Checks failed: ');
+		const fixable = message.startsWith('Ship conflicts with ');
 		if (fixable && ship.handBacks < maxHandBacks && !summary.deleted)
 			return await this.#handBack(ship, message);
 		this.#stopShipping(ship.thread, message, failures);
+		await this.#revert(ship.thread, `the fix couldn't ship: ${message}`);
 	}
 
 	// The ship workflow reports once per ship; a ship this thread no longer waits on is ignored.
@@ -863,7 +915,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#fail(thread, { title: "Couldn't reach the agent", error: message, failures }, false);
 	}
 
-	// Conflicts with main: the thread's agent merges main, re-checks, and the thread ships again.
+	// Conflicts with main: the thread's agent merges main and the thread ships again.
 	async #handBack(ship: Ship, message: string) {
 		this.#setMeta(
 			`handback:${ship.thread}`,
@@ -883,7 +935,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			agent,
 			conflict
 				? `Shipping conflicted with ${conflict[1]}. Bring this thread up to date with it; it ships again once you finish.`
-				: 'Shipping stopped because checks failed. Fix them; it ships again once you finish.',
+				: 'Shipping stopped. Fix what stopped it; it ships again once you finish.',
 			entry,
 			!!conflict
 		);
@@ -900,7 +952,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	// Main moved: record how far behind each thread is and warn those that now conflict. Forks only take main when asked or handed back.
-	async landed({ after }: Landing) {
+	async landed({ ref, after }: Landing) {
+		if (ref === `refs/heads/${await this.#branch()}`) await this.#verify(after);
 		if (this.#meta('main') === after) return;
 		const forks = [];
 		for (const thread of this.threads()) {
@@ -920,6 +973,292 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#setBehind(id, behind);
 			await this.#agent(id).behindMain(behind);
 		}
+	}
+
+	// What main's checks and deploys are doing, as the repository's page shows it.
+	main(): MainStatus {
+		return { ...emptyMain, ...(JSON.parse(this.#meta('main-status') ?? '{}') as MainStatus) };
+	}
+
+	// The newest commit on main whose deploy checks passed, which new threads start from.
+	green() {
+		return this.main().green?.sha ?? null;
+	}
+
+	#setMain(update: Partial<MainStatus>) {
+		const main = { ...this.main(), ...update };
+		this.#setMeta('main-status', JSON.stringify(main));
+		this.#broadcast({ type: 'main', main });
+	}
+
+	// Checks a commit that landed on main. One verification runs at a time; of the commits that land meanwhile,
+	// only the newest is checked next.
+	async #verify(sha: string) {
+		if (this.#meta('verify-latest') === sha) return;
+		this.#setMeta('verify-latest', sha);
+		const running = this.#verification();
+		if (running && (await this.#stillVerifying(running.id)))
+			return this.#setMeta('verify-next', sha);
+		await this.#startVerifying(sha);
+	}
+
+	async #startVerifying(sha: string) {
+		this.#sql.exec("DELETE FROM meta WHERE key = 'verify-next'");
+		const id = crypto.randomUUID().replaceAll('-', '');
+		const now = Date.now();
+		this.#setMeta('verify', JSON.stringify({ id, sha }));
+		const verifying = { sha, stage: 'checking' as const, note: null, since: now, started: now };
+		this.#setMain({ branch: await this.#branch(), verifying });
+		try {
+			const params = { id, repo: this.#repo(), sha, green: this.green() };
+			await this.env.VERIFY_MAIN.create({ id, params });
+		} catch (error) {
+			this.#sql.exec("DELETE FROM meta WHERE key = 'verify'");
+			const message = error instanceof Error ? error.message : String(error);
+			this.#setMain({ verifying: null, failure: { sha, at: now, error: message } });
+		}
+	}
+
+	#verification() {
+		return JSON.parse(this.#meta('verify') ?? 'null') as { id: string; sha: string } | null;
+	}
+
+	// A verification whose workflow ended without reporting back no longer holds up the next one.
+	async #stillVerifying(id: string) {
+		const instance = await this.env.VERIFY_MAIN.get(id).then(
+			(instance) => instance.status(),
+			() => null
+		);
+		return !!instance && !['errored', 'terminated', 'complete'].includes(instance.status);
+	}
+
+	async #doneVerifying(id: string) {
+		if (this.#verification()?.id !== id) return;
+		this.#sql.exec("DELETE FROM meta WHERE key = 'verify'");
+		this.#setMain({ verifying: null });
+		const next = this.#meta('verify-next');
+		if (next) await this.#startVerifying(next);
+	}
+
+	verifyProgress(id: string, stage: VerifyStage, note: string | null) {
+		const verifying = this.main().verifying;
+		if (this.#verification()?.id !== id || !verifying) return;
+		this.#setMain({ verifying: { ...verifying, stage, note, since: Date.now() } });
+	}
+
+	// Records what main's checks found. Green commits deploy; a commit that broke main goes back to its thread.
+	async verified({ id, sha, results, commits, culprit }: Verified) {
+		if (this.#verification()?.id !== id) return { deploy: false };
+		const passed = !blockingFailures(results).length;
+		const at = Date.now();
+		const blamed = culprit && { ...culprit, thread: this.#shippedAs(culprit.sha) };
+		this.#setMain({
+			verified: { sha, at, passed, results, culprit: blamed },
+			failure: null,
+			...(passed && { green: { sha, at } })
+		});
+		const proven = passed ? commits : commits.slice(0, culprit ? commits.indexOf(culprit.sha) : 0);
+		for (const commit of proven) {
+			const thread = this.#shippedAs(commit);
+			if (!thread) continue;
+			this.#setVerdict(thread, 'passed', ['landed', 'failed']);
+			this.#sql.exec('DELETE FROM meta WHERE key = ?', `fixing:${thread}`);
+		}
+		if (passed) return { deploy: true };
+		await this.#doneVerifying(id);
+		if (blamed?.thread) await this.#broke(blamed.thread, blamed, results, commits);
+		return { deploy: false };
+	}
+
+	async deployFinished({
+		id,
+		sha,
+		deploy,
+		commits
+	}: {
+		id: string;
+		sha: string;
+		deploy: DeployResponse;
+		commits: string[];
+	}) {
+		if (this.#verification()?.id !== id) return;
+		const at = Date.now();
+		if (deploy.ran && deploy.ok) {
+			this.#setMain({ deployed: { sha, at }, deployFailure: null });
+			for (const commit of commits) {
+				const thread = this.#shippedAs(commit);
+				if (thread) this.#setVerdict(thread, 'deployed', ['landed', 'passed']);
+			}
+		} else if (deploy.ran) this.#setMain({ deployFailure: { sha, at, output: deploy.output } });
+		await this.#doneVerifying(id);
+	}
+
+	async verifyFailed(id: string, error: string) {
+		const verification = this.#verification();
+		if (verification?.id !== id) return;
+		this.#setMain({ failure: { sha: verification.sha, at: Date.now(), error } });
+		await this.#doneVerifying(id);
+	}
+
+	#shippedAs(sha: string) {
+		const [row] = this.#sql
+			.exec<{ id: string }>(
+				'SELECT id FROM threads WHERE shipped_sha = ? AND deleted_at IS NULL',
+				sha
+			)
+			.toArray();
+		return row?.id ?? null;
+	}
+
+	#setVerdict(thread: string, verdict: Verdict, from?: Verdict[]) {
+		const was = this.#summary(thread)?.shipped?.verdict;
+		if (!was || was === verdict || (from && !from.includes(was))) return;
+		this.#sql.exec('UPDATE threads SET verdict = ? WHERE id = ?', verdict, thread);
+		this.#touch(thread);
+	}
+
+	#fixing(thread: string) {
+		return JSON.parse(this.#meta(`fixing:${thread}`) ?? 'null') as Fixing | null;
+	}
+
+	#saveFixing(thread: string, fixing: Fixing) {
+		this.#setMeta(`fixing:${thread}`, JSON.stringify(fixing));
+	}
+
+	// A commit the thread shipped broke main's deploy checks. An idle thread's agent gets to fix it, and the fix ships
+	// when it finishes; when it can't, or its fix doesn't work, what the thread shipped since is reverted.
+	async #broke(thread: string, culprit: Culprit, results: CheckResult[], range: string[]) {
+		const fixing = this.#fixing(thread) ?? { commits: [], fixes: 0, fixed: null, reverting: null };
+		if (fixing.reverting) return;
+		const known = fixing.commits.some(({ sha }) => sha === culprit.sha);
+		if (known && !(fixing.fixed && range.includes(fixing.fixed))) return;
+		if (!known) fixing.commits.push({ sha: culprit.sha, headline: culprit.headline });
+		this.#saveFixing(thread, fixing);
+		this.#setVerdict(thread, 'failed');
+		const branch = await this.#branch();
+		const failed = blockingFailures(results).map(({ name }) => name);
+		const summary = this.#summary(thread);
+		const input = JSON.parse(this.#meta(`ship-input:${thread}`) ?? 'null') as ShipInput | null;
+		if (summary?.status !== 'shipped' || summary.deleted || fixing.fixes >= maxFixes || !input) {
+			const why = fixing.fixes ? 'the fix did not make them pass' : 'nobody was free to fix them';
+			return await this.#revert(thread, `Deploy checks failed (${failed.join(', ')}), and ${why}.`);
+		}
+		this.#saveFixing(thread, { ...fixing, fixes: fixing.fixes + 1 });
+		this.#setMeta(
+			`handback:${thread}`,
+			JSON.stringify({
+				input: {
+					...input,
+					title: `Fix ${branch} after "${input.title}"`,
+					body: `Deploy checks failed: ${failed.join(', ')}.`
+				},
+				handBacks: 0
+			})
+		);
+		const entry = this.#add(thread, {
+			type: 'event',
+			text: `Deploy checks failed on ${branch} after this shipped as ${culprit.sha.slice(0, 7)}: ${failed.join(', ')}. Handing it back to the agent to fix.`
+		});
+		this.#setStatus(thread, 'running');
+		await this.#converse(
+			thread,
+			agent,
+			brokeMainNotice({ branch, sha: culprit.sha, results }),
+			entry
+		);
+	}
+
+	async #revert(thread: string, reason: string) {
+		const fixing = this.#fixing(thread);
+		if (!fixing?.commits.length || fixing.reverting) return;
+		const id = crypto.randomUUID().replaceAll('-', '');
+		this.#saveFixing(thread, { ...fixing, reverting: id });
+		this.#setMeta(`revert:${id}`, thread);
+		const shas = fixing.commits.map(({ sha }) => sha.slice(0, 7)).join(', ');
+		this.#add(thread, {
+			type: 'event',
+			text: `Reverting ${shas} on ${await this.#branch()}: ${reason}`
+		});
+		const params = { id, repo: this.#repo(), thread, commits: fixing.commits, reason };
+		await this.env.REVERT_SHIP.create({ id, params }).catch((error: unknown) =>
+			this.revertFailed(id, error instanceof Error ? error.message : String(error))
+		);
+	}
+
+	async reverted(id: string, reverted: { sha: string; branch: string } | null) {
+		const thread = this.#meta(`revert:${id}`);
+		if (!thread) return;
+		this.#sql.exec('DELETE FROM meta WHERE key IN (?, ?)', `revert:${id}`, `fixing:${thread}`);
+		this.#setVerdict(thread, 'reverted');
+		const where = reverted ? ` in ${reverted.sha.slice(0, 7)}` : '';
+		this.#fail(
+			thread,
+			{
+				title: 'Reverted',
+				error: `What this thread shipped broke ${await this.#branch()}'s deploy checks, so it was reverted${where} and is no longer there.`,
+				failures: []
+			},
+			false
+		);
+		if (reverted) await this.#verify(reverted.sha);
+	}
+
+	revertFailed(id: string, error: string) {
+		const thread = this.#meta(`revert:${id}`);
+		if (!thread) return;
+		this.#sql.exec('DELETE FROM meta WHERE key = ?', `revert:${id}`);
+		const fixing = this.#fixing(thread);
+		if (fixing) this.#saveFixing(thread, { ...fixing, reverting: null });
+		this.#fail(thread, { title: "Couldn't revert", error, failures: [] }, false);
+	}
+
+	async deploySecrets(by: Author): Promise<DeploySecret[]> {
+		await this.#owner(by);
+		return this.#sql
+			.exec<{ name: string; updated_at: number; updated_by: string }>(
+				'SELECT name, updated_at, updated_by FROM deploy_secrets ORDER BY name'
+			)
+			.toArray()
+			.map(({ name, updated_at, updated_by }) => ({
+				name,
+				updatedAt: updated_at,
+				updatedBy: updated_by
+			}));
+	}
+
+	async setDeploySecret(name: string, value: string, by: Author) {
+		await this.#owner(by);
+		if (!deploySecretName.test(name))
+			throw new Error(
+				'Secret names use capital letters, digits and underscores, and start with a letter or underscore'
+			);
+		const size = new TextEncoder().encode(value).length;
+		if (!size || size > maxDeploySecretBytes)
+			throw new Error(`A secret needs a value of at most ${maxDeploySecretBytes / 1024} KiB`);
+		const sealed = await seal(this.env, this.#repo(), name, value);
+		this.#sql.exec(
+			'INSERT INTO deploy_secrets (name, iv, value, updated_at, updated_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET iv = excluded.iv, value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by',
+			name,
+			sealed.iv,
+			sealed.value,
+			Date.now(),
+			by.name
+		);
+	}
+
+	async deleteDeploySecret(name: string, by: Author) {
+		await this.#owner(by);
+		this.#sql.exec('DELETE FROM deploy_secrets WHERE name = ?', name);
+	}
+
+	// Only the main sandbox, which holds the key, opens these.
+	sealedDeploySecrets(): Sealed[] {
+		return this.#sql
+			.exec<{ name: string; iv: string; value: string }>(
+				'SELECT name, iv, value FROM deploy_secrets ORDER BY name'
+			)
+			.toArray()
+			.map(({ name, iv, value }) => ({ name, iv, value }));
 	}
 
 	#checkOverlaps(thread: string) {
@@ -1157,13 +1496,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 		if (!running) return;
 		const handBack = this.#takeHandBack(thread);
-		if (update.status === 'finished' && handBack)
-			await this.#startShip(thread, handBack.input, handBack.handBacks).catch((error: unknown) =>
-				this.#add(thread, {
-					type: 'event',
-					text: `Couldn't ship again: ${error instanceof Error ? error.message : String(error)}`
-				})
-			);
+		if (!handBack) return;
+		if (update.status !== 'finished')
+			return await this.#revert(thread, 'the agent stopped before fixing them');
+		try {
+			await this.#startShip(thread, handBack.input, handBack.handBacks);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.#add(thread, { type: 'event', text: `Couldn't ship again: ${message}` });
+			await this.#revert(thread, `the agent couldn't fix them (${message})`);
+		}
 	}
 
 	override async fetch(request: Request) {
@@ -1449,7 +1791,12 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		changes: row.changes ? (JSON.parse(row.changes) as DiffSummary) : null,
 		shipped:
 			row.shipped_sha && row.shipped_at
-				? { sha: row.shipped_sha, by: row.shipped_by ?? '', at: row.shipped_at }
+				? {
+						sha: row.shipped_sha,
+						by: row.shipped_by ?? '',
+						at: row.shipped_at,
+						verdict: row.verdict ?? 'landed'
+					}
 				: null,
 		behind: row.behind ? (JSON.parse(row.behind) as ThreadSummary['behind']) : null,
 		failure: row.failure ? (JSON.parse(row.failure) as ThreadSummary['failure']) : null,

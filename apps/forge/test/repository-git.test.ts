@@ -32,10 +32,7 @@ test('ships the pinned revision once, even when retried, and records provenance'
 	const publisher = env.REPOSITORY_GIT.getByName(`ship-${repo}`);
 
 	const canonical = join(harness.dir, `${repo}.git`);
-	expect(await publisher.ship(ship, 'f'.repeat(40))).toEqual({ moved: true });
-	expect(harness.sh(canonical, 'rev-list', '--count', 'main')).toBe('1');
-
-	const shipped = (await publisher.ship(ship)) as { sha: string; branch: string };
+	const shipped = await publisher.ship(ship);
 	expect(await publisher.ship(ship)).toEqual(shipped);
 	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(shipped.sha);
 	expect(shipped.branch).toBe('main');
@@ -48,4 +45,25 @@ test('ships the pinned revision once, even when retried, and records provenance'
 		intent: null,
 		shippedBy: ship.by
 	});
+});
+
+test('reverts a commit on main once, even when retried', async () => {
+	const repo = 'reverting';
+	const work = await harness.seed(repo, { 'file.txt': 'base\n' });
+	await harness.commit(work, { 'file.txt': 'broken\n' }, 'Break it');
+	const canonical = join(harness.dir, `${repo}.git`);
+	harness.sh(work, 'push', '--quiet', canonical, 'main');
+	const broken = harness.sh(canonical, 'rev-parse', 'main');
+	const env = await harness.worker.getEnv();
+	const publisher = env.REPOSITORY_GIT.getByName(`ship-${repo}`);
+
+	const input = { repo, sha: broken, message: 'Revert "Break it"\n\nDeploy checks failed.' };
+	const reverted = await publisher.revert(input);
+	expect(await publisher.revert(input)).toEqual(reverted);
+	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(reverted.sha);
+	expect(harness.sh(canonical, 'rev-parse', 'main^')).toBe(broken);
+	expect(harness.sh(canonical, 'show', 'main:file.txt')).toBe('base');
+	expect(harness.sh(canonical, 'log', '-1', '--format=%an|%s', 'main')).toBe(
+		'ReGit|Revert "Break it"'
+	);
 });

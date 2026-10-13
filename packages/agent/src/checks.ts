@@ -91,17 +91,14 @@ export const blockingFailures = (results: CheckResult[]) =>
 	results.filter((result) => result.status === 'failed');
 
 export function describeChecks(action: CheckAction, results: CheckResult[]) {
-	const label = action === 'ship' ? 'Ship checks' : 'Checks';
+	const label = action === 'deploy' ? 'Deploy checks' : 'Checks';
 	const parts = results.map(
 		({ name, status, reused }) => `${name} ${status}${reused ? ' (unchanged)' : ''}`
 	);
 	return `${label}: ${parts.join(', ')}`;
 }
 
-// What the agent is told when checks it must pass fail: every result, then the end of each failure's output and where its full log is.
-export function checksNotice(action: CheckAction, results: CheckResult[]) {
-	const failed = blockingFailures(results);
-	if (!failed.length) return null;
+function failureSections(results: CheckResult[]) {
 	const summary = results.map(
 		({ name, status, reused }) => `- ${name}: ${status}${reused ? ' (unchanged)' : ''}`
 	);
@@ -114,13 +111,24 @@ export function checksNotice(action: CheckAction, results: CheckResult[]) {
 				output
 			].join('\n')
 		);
-	const intro =
-		action === 'ship'
-			? 'Shipping stopped because checks from .agents/checks.yml failed on this thread merged with main.'
-			: 'Checks from .agents/checks.yml that must pass before you hand off failed.';
-	const next =
-		action === 'ship'
-			? 'Fix the failures; the thread ships again once you finish.'
-			: "Fix the failures, then reply with the outcome. If you stopped on purpose, to ask the person something or because the work isn't finished, reply without changing files and the thread hands off with these failures shown.";
-	return `${intro}\n${summary.join('\n')}\n\n${sections.join('\n\n')}\n\nRead or search a full log when its end isn't enough. ${next}`;
+	return `${summary.join('\n')}\n\n${sections.join('\n\n')}`;
+}
+
+// What the agent is told when handoff checks fail: every result, then the end of each failure's output and where its full log is.
+export function checksNotice(results: CheckResult[]) {
+	if (!blockingFailures(results).length) return null;
+	return `Checks from .agents/checks.yml that must pass before you hand off failed.\n${failureSections(results)}\n\nRead or search a full log when its end isn't enough. Fix the failures, then reply with the outcome. If you stopped on purpose, to ask the person something or because the work isn't finished, reply without changing files and the thread hands off with these failures shown.`;
+}
+
+// What a shipped thread's agent is told when main's deploy checks fail and the failure was traced to its commit.
+export function brokeMainNotice({
+	branch,
+	sha,
+	results
+}: {
+	branch: string;
+	sha: string;
+	results: CheckResult[];
+}) {
+	return `After this thread shipped as ${sha.slice(0, 7)}, the deploy checks from .agents/checks.yml failed on \`${branch}\`, and bisecting traced the failure to that commit. Nothing deploys until \`${branch}\` passes again.\n${failureSections(results)}\n\nThese logs are from ReGit's checkout of \`${branch}\`, not your workspace, so run the failing checks yourself to reproduce them. Fix the cause on top of what shipped, then reply with the outcome; the fix ships as soon as you finish. If you can't fix it, reply without changing files and the commit is reverted instead.`;
 }

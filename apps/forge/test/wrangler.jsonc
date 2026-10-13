@@ -9,7 +9,8 @@
 		"SANDBOX_URL": "",
 		"PREVIEW_DOMAIN": "regit.run",
 		"GIT_HOST": "git.regit.dev",
-		"RETRY_DELAY_SCALE": "0.001"
+		"RETRY_DELAY_SCALE": "0.001",
+		"DEPLOY_SECRETS_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 	},
 	"services": [{ "binding": "MODELS", "service": "fake-models" }],
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
@@ -25,16 +26,20 @@
 		"bindings": [
 			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
 			{ "name": "REPOSITORY_GIT", "class_name": "RepositoryGit" },
-			{ "name": "REPOS", "class_name": "RepoCoordinator" }
+			{ "name": "REPOS", "class_name": "RepoCoordinator" },
+			{ "name": "MAIN", "class_name": "MainSandbox" }
 		]
 	},
 	"workflows": [
 		{ "name": "regit-repo-pushed", "binding": "REPO_PUSHED", "class_name": "RepoPushed" },
-		{ "name": "regit-ship-thread", "binding": "SHIP_THREAD", "class_name": "ShipThread" }
+		{ "name": "regit-ship-thread", "binding": "SHIP_THREAD", "class_name": "ShipThread" },
+		{ "name": "regit-verify-main", "binding": "VERIFY_MAIN", "class_name": "VerifyMain" },
+		{ "name": "regit-revert-ship", "binding": "REVERT_SHIP", "class_name": "RevertShip" }
 	],
 	"exports": {
 		"AttemptSandbox": { "type": "durable-object", "storage": "sqlite" },
 		"RepositoryGit": { "type": "durable-object", "storage": "sqlite" },
-		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" }
+		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" },
+		"MainSandbox": { "type": "durable-object", "storage": "sqlite" }
 	}
 }

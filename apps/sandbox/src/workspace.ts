@@ -8,6 +8,7 @@ import type {
 	CommitRequest,
 	CompareRequest,
 	CompareResponse,
+	BuildRevertRequest,
 	BuildShipRequest,
 	BuildShipResponse,
 	PushShipRequest,
@@ -197,6 +198,49 @@ export async function buildShip(
 	if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${head}`)
 		throw new Error('A ship must be exactly one commit');
 	return { sha, tree: await treeOf(root, sha), head, shipped: false };
+}
+
+const revertTrailer = 'ReGit-Revert';
+
+// Reverts a commit on top of the branch, or finds the revert there when a retried one already landed.
+export async function buildRevert(
+	root: string,
+	{ sha, remote, branch, message, committer }: BuildRevertRequest
+): Promise<BuildShipResponse> {
+	exactSha(sha);
+	safeRemote(remote);
+	const ref = await branchRef(root, branch);
+	const head = await canonicalHead(root, remote, ref);
+	const reverted = await git(root, [
+		'log',
+		'-1',
+		'--format=%H',
+		'--fixed-strings',
+		`--grep=${revertTrailer}: ${sha}`,
+		head
+	]);
+	if (reverted) return { sha: reverted, tree: await treeOf(root, reverted), head, shipped: true };
+	await git(root, ['merge-base', '--is-ancestor', sha, head]);
+	await git(root, ['reset', '--hard', head]);
+	await git(root, ['clean', '-fd']);
+	const applied = await exec('git', [...noHooks, 'revert', '--no-commit', sha], { cwd: root });
+	if (applied.code !== 0) {
+		const conflicts = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
+			.split('\n')
+			.filter(Boolean);
+		await exec('git', [...noHooks, 'revert', '--abort'], { cwd: root });
+		await git(root, ['reset', '--hard', head]);
+		if (conflicts.length)
+			throw new Error(`Reverting conflicts with ${branch} in ${conflicts.join(', ')}`);
+		throw new Error(`Reverting failed: ${applied.output.trim()}`);
+	}
+	if (!(await git(root, ['diff', '--cached', '--name-only']))) throw new Error('Nothing to revert');
+	await git(root, ['commit', '--message', `${message}\n\n${revertTrailer}: ${sha}`], {
+		...identity('AUTHOR', committer),
+		...identity('COMMITTER', committer)
+	});
+	const commit = await git(root, ['rev-parse', 'HEAD']);
+	return { sha: commit, tree: await treeOf(root, commit), head, shipped: false };
 }
 
 // Pushes a built ship only if main is still where it was built; reports when main moved instead.

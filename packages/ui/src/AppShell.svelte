@@ -2,9 +2,10 @@
 	import type { Snippet } from 'svelte';
 	import Avatar from './Avatar.svelte';
 	import Button from './Button.svelte';
+	import MainStatusView from './MainStatus.svelte';
 	import Menu from './Menu.svelte';
 	import NewRepoPalette, { type NewRepo } from './NewRepoPalette.svelte';
-	import type { Machine } from '@regit/core';
+	import type { MainStatus, Machine } from '@regit/core';
 	import NewThreadPalette, { type Mode } from './chat/NewThreadPalette.svelte';
 	import ThreadIcon from './chat/ThreadIcon.svelte';
 	import ThreadList, { type ThreadListItem } from './chat/ThreadList.svelte';
@@ -20,10 +21,12 @@
 		machine?: Machine;
 		similar?: SimilarThread[];
 		size?: Exclude<Mode, 'auto'>;
+		main?: MainStatus | null;
 		now?: number;
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onclone?: () => void;
+		onsecrets?: () => void;
 		onquery?: (text: string) => void;
 		onstart: (thread: { text: string; mode: Mode; machine: Machine }) => void;
 		onopenthread?: (thread: Mentionable) => void;
@@ -40,10 +43,12 @@
 		machine = $bindable('standard-1'),
 		similar,
 		size,
+		main,
 		now,
 		onswitchrepo,
 		oncreaterepo,
 		onclone,
+		onsecrets,
 		onquery,
 		onstart,
 		onopenthread,
@@ -53,6 +58,11 @@
 	const id = $props.id();
 
 	let open = $state(false);
+	let culprit = $derived(
+		main?.verified?.culprit?.thread
+			? threads.find((thread) => thread.id === main.verified!.culprit!.thread)?.href
+			: undefined
+	);
 </script>
 
 <div class={['shell', { open }]}>
@@ -68,11 +78,14 @@
 						onselect: () => onswitchrepo?.(name)
 					})),
 					...(onclone ? [{ label: 'Clone…', separated: true, onselect: onclone }] : []),
+					...(onsecrets
+						? [{ label: 'Deploy secrets…', separated: !onclone, onselect: onsecrets }]
+						: []),
 					...(oncreaterepo
 						? [
 								{
 									label: 'New repository…',
-									separated: !onclone,
+									separated: !onclone && !onsecrets,
 									onselect: () => document.getElementById(`${id}-new-repo`)?.showPopover()
 								}
 							]
@@ -98,6 +111,10 @@
 		>
 			<ThreadList {threads} {current} {now} newThread="{id}-new-thread" />
 		</div>
+
+		{#if main}
+			<MainStatusView {main} culpritHref={culprit} {now} />
+		{/if}
 
 		{#if account}
 			<div class="account">
@@ -161,7 +178,7 @@
 
 	.sidebar {
 		display: grid;
-		grid-template-rows: auto minmax(0, 1fr) auto;
+		grid-template-rows: auto minmax(0, 1fr) auto auto;
 		grid-template-columns: minmax(0, 1fr);
 		min-inline-size: 0;
 		border-inline-end: 1px solid var(--color-border);

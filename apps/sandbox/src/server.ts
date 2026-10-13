@@ -3,6 +3,7 @@ import { discoverSkills } from './skills.ts';
 import { isTool, ToolError, tools } from './tools.ts';
 import { trustInterception } from './trust.ts';
 import {
+	buildRevert,
 	buildShip,
 	clashes,
 	clone,
@@ -16,7 +17,7 @@ import {
 	pushShip,
 	toolchain
 } from './workspace.ts';
-import { cancelChecks, candidate, checks, runCheck } from './checks.ts';
+import { cancelChecks, checks, commits, deploy, runCheck } from './checks.ts';
 
 export interface SandboxOptions {
 	mise?: string;
@@ -39,6 +40,7 @@ export function createSandbox(
 	};
 	const workspace: Record<string, (body: never) => Promise<object>> = {
 		'build-ship': (body) => buildShip(root, body),
+		'build-revert': (body) => buildRevert(root, body),
 		'push-ship': (body) => pushShip(root, body),
 		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
 		clone: (body) => services.pausedDuring(() => clone(root, body)),
@@ -47,7 +49,8 @@ export function createSandbox(
 		checks: (body) => checks(root, body),
 		'run-check': (body) => runCheck(root, body),
 		'cancel-checks': async () => (cancelChecks(root), {}),
-		candidate: (body) => candidate(root, body),
+		deploy: (body) => deploy(root, body),
+		commits: (body) => commits(root, body),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),
 		diff: async (body) => ({ diff: await diff(root, body) }),

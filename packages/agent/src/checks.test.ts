@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	askRequest,
 	askVerdict,
+	brokeMainNotice,
 	checksNotice,
 	describeChecks,
 	evidenceKey,
@@ -13,7 +14,7 @@ import type { PlannedCheck } from './sandbox/protocol.ts';
 const check = (overrides: Partial<PlannedCheck>): PlannedCheck => ({
 	name: 'tests',
 	run: 'bun test',
-	before: ['handoff', 'ship'],
+	before: ['handoff', 'deploy'],
 	blocking: true,
 	applies: true,
 	inputsHash: 'tree-1',
@@ -31,7 +32,7 @@ describe('running checks', () => {
 		const results = await runChecks({
 			checks: [
 				check({ name: 'types' }),
-				check({ name: 'ship-only', before: ['ship'] }),
+				check({ name: 'deploy-only', before: ['deploy'] }),
 				check({ name: 'untouched', applies: false })
 			],
 			action: 'handoff',
@@ -52,7 +53,7 @@ describe('running checks', () => {
 		const once = (overrides: Partial<PlannedCheck>, environment = 'bun 1.4', ok = true) =>
 			runChecks({
 				checks: [check(overrides)],
-				action: 'ship',
+				action: 'deploy',
 				environment,
 				evidence,
 				run: async () => (calls++, { ok, output: ok ? 'exit code 0' : 'exit code 1' }),
@@ -77,7 +78,7 @@ describe('running checks', () => {
 				check({ name: 'lint', blocking: false }),
 				check({ name: 'docs', run: undefined, ask: 'Docs are updated', blocking: false })
 			],
-			action: 'ship',
+			action: 'handoff',
 			environment: '',
 			evidence: memory(),
 			run: async ({ name }) => ({
@@ -92,10 +93,11 @@ describe('running checks', () => {
 			['lint', 'run', 'warned'],
 			['docs', 'ask', 'warned']
 		]);
-		expect(describeChecks('ship', results)).toBe(
-			'Ship checks: tests failed, lint warned, docs warned'
+		expect(describeChecks('handoff', results)).toBe(
+			'Checks: tests failed, lint warned, docs warned'
 		);
-		const notice = checksNotice('ship', results)!;
+		expect(describeChecks('deploy', results.slice(0, 1))).toBe('Deploy checks: tests failed');
+		const notice = checksNotice(results)!;
 		expect(notice).toContain('- tests: failed\n- lint: warned\n- docs: warned\n');
 		expect(notice).toContain(
 			'## tests (failed)\nFull log: .git/regit-checks/tests.log\nexit code 1'
@@ -103,8 +105,13 @@ describe('running checks', () => {
 		expect(notice).toContain(
 			'## docs (warning, not blocking)\n90% likely that the change breaks this check'
 		);
-		expect(notice).toContain('ships again once you finish');
-		expect(checksNotice('handoff', results.slice(1))).toBeNull();
+		expect(notice).toContain('reply without changing files and the thread hands off');
+		expect(checksNotice(results.slice(1))).toBeNull();
+
+		const broke = brokeMainNotice({ branch: 'main', sha: 'a'.repeat(40), results });
+		expect(broke).toContain('After this thread shipped as aaaaaaa, the deploy checks');
+		expect(broke).toContain('## tests (failed)\nFull log: .git/regit-checks/tests.log');
+		expect(broke).toContain('the commit is reverted instead');
 	});
 
 	test('keys evidence by command, inputs and environment', async () => {

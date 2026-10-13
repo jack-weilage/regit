@@ -32,7 +32,9 @@
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"workflows": [
 		{ "name": "regit-repo-pushed", "binding": "REPO_PUSHED", "class_name": "RepoPushed" },
-		{ "name": "regit-ship-thread", "binding": "SHIP_THREAD", "class_name": "ShipThread" }
+		{ "name": "regit-ship-thread", "binding": "SHIP_THREAD", "class_name": "ShipThread" },
+		{ "name": "regit-verify-main", "binding": "VERIFY_MAIN", "class_name": "VerifyMain" },
+		{ "name": "regit-revert-ship", "binding": "REVERT_SHIP", "class_name": "RevertShip" }
 	],
 	"triggers": {
 		"events": [
@@ -47,7 +49,8 @@
 		"bindings": [
 			{ "name": "ATTEMPTS", "class_name": "AttemptSandbox" },
 			{ "name": "REPOSITORY_GIT", "class_name": "RepositoryGit" },
-			{ "name": "REPOS", "class_name": "RepoCoordinator" }
+			{ "name": "REPOS", "class_name": "RepoCoordinator" },
+			{ "name": "MAIN", "class_name": "MainSandbox" }
 		]
 	},
 	"exports": {
@@ -57,7 +60,8 @@
 			"storage": "sqlite",
 			"container": "repository-git"
 		},
-		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" }
+		"RepoCoordinator": { "type": "durable-object", "storage": "sqlite" },
+		"MainSandbox": { "type": "durable-object", "storage": "sqlite", "container": "main-sandbox" }
 	},
 	"containers": [
 		{
@@ -67,6 +71,11 @@
 		},
 		{
 			"name": "repository-git",
+			"scheduling_policy": "durable_object",
+			"images": { "sandbox": { "dockerfile": "../sandbox/Dockerfile" } }
+		},
+		{
+			"name": "main-sandbox",
 			"scheduling_policy": "durable_object",
 			"images": { "sandbox": { "dockerfile": "../sandbox/Dockerfile" } }
 		}
