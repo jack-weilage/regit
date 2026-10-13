@@ -11,7 +11,8 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true,
 				experimental: { async: true }
 			},
-			experimental: { remoteFunctions: true }
+			experimental: { remoteFunctions: true },
+			version: { pollInterval: 60_000 }
 		})
 	]
 });
