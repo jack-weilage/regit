@@ -87,7 +87,10 @@ describe('planning checks', () => {
 	test('has nothing to plan without a checks file', async () => {
 		const base = await git(root, ['rev-parse', 'HEAD']);
 		await commit({ 'greeting.ts': "export const greeting = 'hi';\n" });
-		expect(await workspace.checks({ base, commit: 'HEAD' })).toEqual({ checks: [] });
+		expect(await workspace.checks({ base, commit: 'HEAD' })).toEqual({
+			checks: [],
+			configChanged: false
+		});
 	});
 
 	test('reports an invalid checks file instead of skipping it', async () => {
@@ -95,7 +98,8 @@ describe('planning checks', () => {
 		await commit({ '.agents/checks.yml': 'checks:\n  - name: a\n    before: [ship]\n' });
 		expect(await workspace.checks({ base, commit: 'HEAD' })).toEqual({
 			checks: [],
-			error: '.agents/checks.yml: a needs exactly one of run or ask'
+			error: '.agents/checks.yml: a needs exactly one of run or ask',
+			configChanged: true
 		});
 	});
 
@@ -120,6 +124,23 @@ describe('planning checks', () => {
 		await commit({ 'greeting.ts': "export const greeting = 'hi';\n" });
 		const third = await workspace.checks({ base, commit: 'HEAD' });
 		expect(third.checks[2]!.inputsHash).not.toBe(second.checks[2]!.inputsHash);
+	});
+});
+
+describe('whose checks govern', () => {
+	test('reads the checks from another commit and reports when the change edits them', async () => {
+		await commit({ '.agents/checks.yml': config });
+		const main = await git(root, ['rev-parse', 'HEAD']);
+		await commit({
+			'.agents/checks.yml': 'checks:\n  - name: types\n    run: exit 0\n    before: [ship]\n',
+			'notes.md': 'Notes\n'
+		});
+		const own = await workspace.checks({ base: main, commit: 'HEAD' });
+		expect(own.checks.map(({ name }) => name)).toEqual(['types']);
+		const governed = await workspace.checks({ base: main, commit: 'HEAD', config: main });
+		expect(governed.configChanged).toBe(true);
+		expect(governed.checks.map(({ name }) => name)).toEqual(['types', 'docs', 'lint']);
+		expect(governed.checks[0]).toMatchObject({ run: 'test -f greeting.ts', applies: true });
 	});
 });
 
@@ -154,12 +175,37 @@ describe('running checks', () => {
 		expect(await git(root, ['status', '--porcelain'])).toBe('');
 	});
 
-	test('runs at another commit and returns the workspace to its branch', async () => {
+	test('removes what a check leaves in a clean workspace, but not work in progress', async () => {
+		await workspace.runCheck({
+			name: 'generate',
+			command:
+				'mkdir -p coverage && echo report > coverage/index.html && echo changed > greeting.ts'
+		});
+		expect(await git(root, ['status', '--porcelain'])).toBe('');
+
+		await writeFile(join(root, 'draft.md'), 'Draft\n');
+		await workspace.runCheck({ name: 'generate', command: 'echo report > report.txt' });
+		expect(await git(root, ['status', '--porcelain', '--untracked-files=all'])).toBe(
+			'?? draft.md\n?? report.txt'
+		);
+	});
+
+	test('can be cancelled', async () => {
+		const started = Date.now();
+		const run = workspace.runCheck({ name: 'hang', command: 'sleep 30' });
+		await Bun.sleep(300);
+		await workspace.cancelChecks();
+		expect(await run).toMatchObject({ ok: false, output: 'cancelled' });
+		expect(Date.now() - started).toBeLessThan(10_000);
+	});
+
+	test('checks another commit in its own worktree, leaving the workspace untouched', async () => {
 		const old = await git(root, ['rev-parse', 'HEAD']);
 		await commit({ 'greeting.ts': "export const greeting = 'hi';\n" });
+		await writeFile(join(root, 'greeting.ts'), 'uncommitted\n');
 		const result = await workspace.runCheck({
 			name: 'old',
-			command: 'cat greeting.ts; echo dirty > greeting.ts',
+			command: 'cat greeting.ts; echo generated > generated.txt',
 			commit: old
 		});
 		expect(result).toMatchObject({
@@ -167,14 +213,43 @@ describe('running checks', () => {
 			output: "exit code 0\nexport const greeting = 'hello';"
 		});
 		expect(await git(root, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
-		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe(
-			"export const greeting = 'hi';\n"
+		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe('uncommitted\n');
+		expect(await git(root, ['status', '--porcelain', '--untracked-files=all'])).toBe(
+			'M greeting.ts'
 		);
 
-		await writeFile(join(root, 'greeting.ts'), 'uncommitted\n');
-		expect(workspace.runCheck({ name: 'old', command: 'true', commit: old })).rejects.toThrow(
-			'uncommitted changes'
-		);
+		const again = await workspace.runCheck({ name: 'again', command: 'ls', commit: old });
+		expect(again.output).not.toContain('generated.txt');
+	});
+
+	test('prepares the worktree with the setup hook only when dependency files change', async () => {
+		const first = await commit({
+			'.agents/setup':
+				'echo ran >> "$(git rev-parse --git-common-dir)/setup-runs"\nmkdir -p deps\n',
+			'package.json': '{}\n',
+			'.gitignore': 'deps/\n'
+		});
+		const runs = () =>
+			readFile(join(root, '.git/setup-runs'), 'utf8').then((text) => text.split('\n').length - 1);
+		expect(
+			await workspace.runCheck({ name: 'deps', command: 'test -d deps', commit: first })
+		).toMatchObject({
+			ok: true
+		});
+		const second = await commit({ 'notes.md': 'Notes\n' });
+		await workspace.runCheck({ name: 'deps', command: 'test -d deps', commit: second });
+		expect(await runs()).toBe(1);
+		const third = await commit({ 'package.json': '{ "name": "x" }\n' });
+		await workspace.runCheck({ name: 'deps', command: 'test -d deps', commit: third });
+		expect(await runs()).toBe(2);
+
+		const broken = await commit({ '.agents/setup': 'echo nope; exit 4\n' });
+		const failed = await workspace.runCheck({ name: 'deps', command: 'true', commit: broken });
+		expect(failed).toEqual({
+			ok: false,
+			output: '.agents/setup failed while preparing the ship checkout\nnope',
+			log: '.git/regit-checks/setup.log'
+		});
 	});
 });
 

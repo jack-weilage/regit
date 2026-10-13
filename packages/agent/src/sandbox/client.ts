@@ -105,6 +105,9 @@ export function sandboxWorkspace(fetch: Fetch) {
 		runCheck(request: RunCheckRequest) {
 			return post<RunCheckResponse>(fetch, '/workspace/run-check', JSON.stringify(request));
 		},
+		async cancelChecks() {
+			await post(fetch, '/workspace/cancel-checks', '{}');
+		},
 		candidate(request: CandidateRequest) {
 			return post<CandidateResponse>(fetch, '/workspace/candidate', JSON.stringify(request));
 		},

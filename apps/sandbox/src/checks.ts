@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
 	CandidateRequest,
@@ -15,10 +15,13 @@ import { exec, git, noHooks } from './exec.ts';
 
 export const checksFile = '.agents/checks.yml';
 export const checkLogs = '.git/regit-checks';
+// Ship checks run in a separate worktree, so the agent's workspace never leaves its branch.
+export const checkout = '.git/regit-checkout';
 
 const actions: CheckAction[] = ['handoff', 'ship'];
 const keys = ['name', 'run', 'ask', 'when', 'inputs', 'before', 'blocking', 'timeout'];
 const defaultTimeoutSeconds = 15 * 60;
+const setupTimeoutSeconds = 15 * 60;
 const tailLines = 40;
 const tailChars = 4_000;
 const candidateIdentity = {
@@ -117,21 +120,35 @@ function commitRef(ref: string) {
 	return ref;
 }
 
-// Reads the checks at a commit and works out which apply to its changes since base and what each one's result depends on.
+// Reads the checks defined at config (the commit itself by default), works out which apply to the commit's changes
+// since base, and what each one's result depends on.
 export async function checks(
 	root: string,
-	{ base, commit }: ChecksRequest
+	{ base, commit, config = commit }: ChecksRequest
 ): Promise<ChecksResponse> {
 	commitRef(base);
 	commitRef(commit);
-	const file = `${commit}:${checksFile}`;
+	commitRef(config);
+	const configChanged = !!(await git(root, [
+		'diff',
+		'--name-only',
+		base,
+		commit,
+		'--',
+		checksFile
+	]));
+	const file = `${config}:${checksFile}`;
 	if ((await exec('git', ['cat-file', '-e', file], { cwd: root })).code !== 0)
-		return { checks: [] };
+		return { checks: [], configChanged };
 	let specs: CheckSpec[];
 	try {
 		specs = parseChecks(await git(root, ['show', file]));
 	} catch (error) {
-		return { checks: [], error: error instanceof Error ? error.message : String(error) };
+		return {
+			checks: [],
+			error: error instanceof Error ? error.message : String(error),
+			configChanged
+		};
 	}
 	const changed = lines(await git(root, ['diff', '--name-only', '--no-renames', base, commit]));
 	const files = lines((await exec('git', ['ls-tree', '-r', commit], { cwd: root })).stdout);
@@ -147,7 +164,7 @@ export async function checks(
 				: tree;
 		return { ...spec, applies: changed.some(touches), inputsHash };
 	});
-	return { checks };
+	return { checks, configChanged };
 }
 
 // The end of a check's output, where failures usually are; the whole output goes to its log.
@@ -158,40 +175,118 @@ function tail(output: string) {
 	return text.length < output.trimEnd().length ? `… (end of the log)\n${text}` : text;
 }
 
-// Runs a check command in the workspace, at another commit when given, and puts the workspace back afterwards.
-// The full output is written to a log under .git, which checkpoints don't commit.
-export async function runCheck(
+const running = new Map<string, Set<AbortController>>();
+const queues = new Map<string, Promise<unknown>>();
+
+// Checks run one at a time per workspace.
+function serial<T>(root: string, run: () => Promise<T>): Promise<T> {
+	const next = (queues.get(root) ?? Promise.resolve()).then(run);
+	queues.set(
+		root,
+		next.catch(() => {})
+	);
+	return next;
+}
+
+export function cancelChecks(root: string) {
+	for (const controller of running.get(root) ?? []) controller.abort();
+}
+
+const logPath = (name: string) => `${checkLogs}/${name.replace(/[^\w.-]+/g, '-')}.log`;
+
+async function exists(path: string) {
+	return stat(path).then(
+		() => true,
+		() => false
+	);
+}
+
+const dependencyFile =
+	/(?:^|\/)(?:package\.json|bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.(?:toml|lock)|go\.(?:mod|sum)|pyproject\.toml|poetry\.lock|uv\.lock|requirements[^/]*\.txt|Gemfile(?:\.lock)?|composer\.(?:json|lock)|mise\.toml|\.tool-versions|\.node-version|\.nvmrc|\.python-version)$|^\.agents\/setup$/;
+
+// Moves the check worktree to the commit and, when its dependency files changed, prepares it with .agents/setup.
+async function prepareCheckout(root: string, commit: string, signal: AbortSignal) {
+	const dir = join(root, checkout);
+	if (await exists(join(dir, '.git'))) {
+		await git(dir, ['checkout', '--quiet', '--force', '--detach', commit]);
+		await git(dir, ['clean', '-fdq']);
+	} else {
+		await git(root, ['worktree', 'prune']);
+		await git(root, ['worktree', 'add', '--quiet', '--force', '--detach', checkout, commit]);
+	}
+	const entries = lines((await exec('git', ['ls-tree', '-r', commit], { cwd: root })).stdout);
+	const dependencies = sha256(
+		entries.filter((line) => dependencyFile.test(line.slice(line.indexOf('\t') + 1))).join('\n')
+	);
+	const stamp = join(root, checkLogs, 'checkout.setup');
+	if ((await readFile(stamp, 'utf8').catch(() => null)) === dependencies) return { dir };
+	if (await exists(join(dir, '.agents/setup'))) {
+		const result = await exec('bash', ['-e', '.agents/setup'], {
+			cwd: dir,
+			timeout: setupTimeoutSeconds * 1000,
+			signal
+		});
+		const log = logPath('setup');
+		await writeFile(
+			join(root, log),
+			`$ .agents/setup\n${result.output}\nexit code ${result.code}\n`
+		);
+		if (result.timedOut || result.code !== 0)
+			return {
+				failed: {
+					ok: false,
+					output: `.agents/setup failed while preparing the ship checkout\n${tail(result.output)}`,
+					log
+				}
+			};
+	}
+	await writeFile(stamp, dependencies);
+	return { dir };
+}
+
+// Runs a check command and writes its full output to a log under .git, which checkpoints don't commit.
+// At HEAD it runs in the workspace and removes files it leaves behind; at another commit it runs in the check worktree.
+export function runCheck(
 	root: string,
 	{ name, command, commit, timeoutSeconds = defaultTimeoutSeconds }: RunCheckRequest
 ): Promise<RunCheckResponse> {
-	const log = `${checkLogs}/${name.replace(/[^\w.-]+/g, '-')}.log`;
-	const run = async () => {
-		const { code, output, timedOut } = await exec('bash', ['-lc', command], {
-			cwd: root,
-			timeout: timeoutSeconds * 1000
-		});
-		const status = timedOut ? `timed out after ${timeoutSeconds}s` : `exit code ${code}`;
-		await mkdir(join(root, checkLogs), { recursive: true });
-		await writeFile(join(root, log), `$ ${command}\n${output}\n${status}\n`);
-		return {
-			ok: code === 0 && !timedOut,
-			output: `${status}\n${tail(output)}`.trimEnd(),
-			log
-		};
-	};
-	if (!commit || commit === 'HEAD') return run();
-	commitRef(commit);
-	if (await git(root, ['status', '--porcelain', '--untracked-files=no']))
-		throw new Error('The workspace has uncommitted changes, so it cannot check another commit');
-	const branch = await exec('git', ['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: root });
-	const previous = branch.stdout.trim() || (await git(root, ['rev-parse', 'HEAD']));
-	await git(root, ['checkout', '--quiet', '--detach', commit]);
-	try {
-		return await run();
-	} finally {
-		await exec('git', [...noHooks, 'reset', '--quiet', '--hard'], { cwd: root });
-		await git(root, ['checkout', '--quiet', previous]);
-	}
+	return serial(root, async () => {
+		const controller = new AbortController();
+		const active = running.get(root) ?? new Set();
+		running.set(root, active.add(controller));
+		try {
+			await mkdir(join(root, checkLogs), { recursive: true });
+			let cwd = root;
+			let tidy = false;
+			if (commit && commit !== 'HEAD') {
+				commitRef(commit);
+				const prepared = await prepareCheckout(root, commit, controller.signal);
+				if (prepared.failed) return prepared.failed;
+				cwd = prepared.dir;
+			} else {
+				tidy = !(await git(root, ['status', '--porcelain']));
+			}
+			const log = logPath(name);
+			const { code, output, timedOut } = await exec('bash', ['-lc', command], {
+				cwd,
+				timeout: timeoutSeconds * 1000,
+				signal: controller.signal
+			});
+			if (tidy) {
+				await git(root, ['reset', '--quiet', '--hard']);
+				await git(root, ['clean', '-fdq']);
+			}
+			const status = controller.signal.aborted
+				? 'cancelled'
+				: timedOut
+					? `timed out after ${timeoutSeconds}s`
+					: `exit code ${code}`;
+			await writeFile(join(root, log), `$ ${command}\n${output}\n${status}\n`);
+			return { ok: code === 0 && !timedOut, output: `${status}\n${tail(output)}`.trimEnd(), log };
+		} finally {
+			active.delete(controller);
+		}
+	});
 }
 
 // Builds the commit a ship would push: the thread's changes since base applied on top of onto.

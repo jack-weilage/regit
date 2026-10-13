@@ -96,3 +96,80 @@ test('checks the thread merged with the main it ships onto, and advisory warning
 	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
 	expect(sh(canonical, 'show', 'main:main.md')).toBe('Main');
 });
+
+test("ships are checked against main's checks even when the thread weakens them", async () => {
+	const { repo, sam, id } = await startedThread(
+		'ship-governed',
+		[
+			writeNotes('No title\\n'),
+			[
+				{
+					type: 'response.output_item.done',
+					item: {
+						type: 'function_call',
+						call_id: 'weaken',
+						name: 'run',
+						arguments: JSON.stringify({ command: "printf 'checks: []\\n' > .agents/checks.yml" })
+					}
+				}
+			],
+			say('Done.')
+		],
+		undefined,
+		{
+			'.agents/checks.yml': `checks:
+  - name: title
+    run: grep -q '^# ' notes.md
+    before: [ship]
+`
+		}
+	);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await script('ship-governed', [writeNotes('# Notes\\n'), say('Fixed the title.')]);
+	await repo.ship(id, shipInput(sam));
+	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
+	expect(events(shipped)).toEqual(
+		expect.arrayContaining([
+			'Ship checks: title failed, checks.yml warned',
+			'Ship checks: title passed, checks.yml warned'
+		])
+	);
+	expect(sh(join(dir, 'ship-governed.git'), 'show', 'main:notes.md')).toBe('# Notes');
+});
+
+test('a repeated check of the same ship joins the one in progress', async () => {
+	const { env, repo, sam, id } = await startedThread(
+		'ship-join',
+		[writeNotes('# Notes\\n'), say('Done.')],
+		undefined,
+		{
+			'.agents/checks.yml': `checks:
+  - name: docs
+    ask: Notes changes are described
+    before: [ship]
+  - name: slow
+    run: sleep 2
+    before: [ship]
+`
+		}
+	);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const attempt = env.ATTEMPTS.getByName(id);
+	const source = (await attempt.revision())!;
+	const ship = {
+		id: 'c'.repeat(32),
+		repo: 'ship-join',
+		thread: id,
+		source,
+		intent: null,
+		by: sam,
+		email: 'sam@example.com',
+		title: 'Notes',
+		body: '',
+		handBacks: 0
+	};
+	const [first, second] = await Promise.all([attempt.verifyShip(ship), attempt.verifyShip(ship)]);
+	expect(second).toEqual(first);
+	expect(first).toMatchObject({ tree: expect.any(String) });
+	expect(await decisionRequests('ship-join')).toHaveLength(1);
+});

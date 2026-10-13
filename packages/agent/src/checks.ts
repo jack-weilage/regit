@@ -17,6 +17,7 @@ export interface CheckOutcome {
 export interface RunChecksInput {
 	checks: PlannedCheck[];
 	action: CheckAction;
+	signal?: AbortSignal;
 	environment: string;
 	evidence: Evidence;
 	run(check: PlannedCheck): Promise<CheckOutcome>;
@@ -37,6 +38,7 @@ export async function evidenceKey(check: PlannedCheck, environment: string) {
 export async function runChecks({
 	checks,
 	action,
+	signal,
 	environment,
 	evidence,
 	run,
@@ -44,6 +46,7 @@ export async function runChecks({
 }: RunChecksInput): Promise<CheckResult[]> {
 	const results: CheckResult[] = [];
 	for (const check of dueChecks(checks, action)) {
+		if (signal?.aborted) break;
 		const kind = check.run ? 'run' : 'ask';
 		const key = await evidenceKey(check, environment);
 		if (evidence.passed(key)) {
@@ -118,6 +121,6 @@ export function checksNotice(action: CheckAction, results: CheckResult[]) {
 	const next =
 		action === 'ship'
 			? 'Fix the failures; the thread ships again once you finish.'
-			: 'Fix the failures, then reply with the outcome.';
+			: "Fix the failures, then reply with the outcome. If you stopped on purpose, to ask the person something or because the work isn't finished, reply without changing files and the thread hands off with these failures shown.";
 	return `${intro}\n${summary.join('\n')}\n\n${sections.join('\n\n')}\n\nRead or search a full log when its end isn't enough. ${next}`;
 }

@@ -16,7 +16,7 @@ import {
 	pushShip,
 	toolchain
 } from './workspace.ts';
-import { candidate, checks, runCheck } from './checks.ts';
+import { cancelChecks, candidate, checks, runCheck } from './checks.ts';
 
 export interface SandboxOptions {
 	mise?: string;
@@ -46,6 +46,7 @@ export function createSandbox(
 		clashes: (body) => clashes(root, body),
 		checks: (body) => checks(root, body),
 		'run-check': (body) => runCheck(root, body),
+		'cancel-checks': async () => (cancelChecks(root), {}),
 		candidate: (body) => candidate(root, body),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),

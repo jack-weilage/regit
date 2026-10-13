@@ -200,11 +200,13 @@ export interface PlannedCheck extends CheckSpec {
 export interface ChecksRequest {
 	base: string;
 	commit: string;
+	config?: string;
 }
 
 export interface ChecksResponse {
 	checks: PlannedCheck[];
 	error?: string;
+	configChanged: boolean;
 }
 
 export interface RunCheckRequest {

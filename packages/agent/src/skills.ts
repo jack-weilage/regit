@@ -52,7 +52,8 @@ checks:
     before: [ship]
 \`\`\`
 
-- before: handoff runs when an agent finishes a turn; failures go back to the agent up to three times. ship runs on the thread merged with the current main, and failures hand the thread back before anything is pushed.
+- before: handoff runs in the workspace when an agent finishes a turn that changed files; failures go back to the agent up to three times, and files a check leaves behind are removed. ship runs the checks defined on main against the thread merged with the current main, in a separate checkout prepared by .agents/setup when its dependency files change; failures hand the thread back before anything is pushed. Changes to .agents/checks.yml apply to ships once they reach main.
+- A check that needs dependencies in a repository without .agents/setup installs them itself, for example \`bun install --frozen-lockfile && bun run test\`.
 - run is a shell command that passes with exit code 0. A pass is reused while the files it depends on and the toolchain are unchanged; inputs narrows those files (globs or directories, default: everything). timeout is in seconds (default 900).
 - ask is a yes/no rule a decision model judges against the diff. It only warns unless blocking: true.
 - when limits a check to changes touching those paths. blocking: false makes a run check a warning.

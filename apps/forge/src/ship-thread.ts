@@ -23,7 +23,7 @@ export class ShipThread extends WorkflowEntrypoint<Env, Ship> {
 				const again = round > 1 ? ` (round ${round})` : '';
 				const verified = await step.do(
 					`check the thread${again}`,
-					{ retries: { limit: 10, delay: '15 seconds', backoff: 'constant' }, timeout: '1 hour' },
+					{ retries: { limit: 10, delay: '15 seconds', backoff: 'constant' }, timeout: '6 hours' },
 					async () =>
 						plain<ShipVerification>(await this.env.ATTEMPTS.getByName(ship.thread).verifyShip(ship))
 				);
