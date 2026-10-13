@@ -8,6 +8,7 @@ import {
 	type Assessment,
 	models,
 	modes,
+	type DoneWhenReport,
 	type Intent,
 	type Step,
 	type ServiceInfo,
@@ -56,7 +57,7 @@ export type AttemptUpdate =
 	| { type: 'activity'; activity: ThreadActivity }
 	| { type: 'startup'; stages: StartupStage[] }
 	| { type: 'read'; entries: string[] }
-	| { type: 'changes'; summary: DiffSummary; paths: string[] }
+	| { type: 'changes'; tree: string | null; summary: DiffSummary; paths: string[] }
 	| { type: 'services'; services: ServiceInfo[]; preview: string }
 	| { type: 'usage'; task: UsageRow['task']; model: string; usage: Usage[] }
 	| { type: 'behind'; behind: ThreadSummary['behind']; branch: string }
@@ -476,7 +477,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const lines = [`${id} · ${summary.status} · ${summary.headline || 'New thread'}`];
 		if (intent?.type === 'intent') {
 			lines.push(`Intent: ${intent.intent.purpose}`, 'Done when:');
-			for (const check of intent.intent.doneWhen) lines.push(`- ${check}`);
+			for (const check of intent.intent.doneWhen) {
+				const result = intent.results?.[check];
+				const status = result
+					? `${result.status}${result.stale ? ', files changed since' : ''}`
+					: '';
+				lines.push(`- ${check}${status && ` (${status}: ${result!.evidence})`}`);
+			}
 		}
 		if (summary.shipped) {
 			lines.push(`Shipped in ${summary.shipped.sha.slice(0, 7)} by ${summary.shipped.by}`);
@@ -567,7 +574,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#summary(thread);
 		if (!summary || summary.deleted) return;
 		if (summary.status === 'discarded') return;
-		const id = this.#add(thread, { type: 'intent', intent });
+		const previous = this.#latestIntentEntry(thread)?.results ?? {};
+		const results = Object.fromEntries(
+			intent.doneWhen.flatMap((check) => (previous[check] ? [[check, previous[check]]] : []))
+		);
+		const id = this.#add(thread, {
+			type: 'intent',
+			intent,
+			...(Object.keys(results).length && { results })
+		});
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
 		const assessment = await this.#assess(describeIntent(intent), thread);
@@ -579,6 +594,36 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#sql.exec('UPDATE threads SET mode = ? WHERE id = ?', size, thread);
 			this.#touch(thread);
 		}
+	}
+
+	doneWhenRecorded(thread: string, reports: DoneWhenReport[], tree: string | null) {
+		const entry = this.#latestIntentEntry(thread);
+		if (!entry) return 'Error: Record the intent with update_intent first.';
+		const { doneWhen } = entry.intent;
+		const unknown = reports.filter(({ check }) => !doneWhen[check - 1]).map(({ check }) => check);
+		if (unknown.length)
+			return `Error: The intent has ${doneWhen.length} done-when checks, numbered from 1; there is no check ${unknown.join(', ')}.`;
+		const results = { ...entry.results };
+		for (const { check, status, evidence } of reports)
+			results[doneWhen[check - 1]!] = { status, evidence, at: Date.now(), tree };
+		this.#update(thread, { ...entry, results });
+		return 'Recorded.';
+	}
+
+	intent(thread: string) {
+		return this.#latestIntent(thread) ?? null;
+	}
+
+	#staleResults(thread: string, tree: string | null) {
+		const entry = this.#latestIntentEntry(thread);
+		if (!entry?.results) return;
+		const changed = Object.entries(entry.results).filter(
+			([, result]) => !result.stale && (!tree || result.tree !== tree)
+		);
+		if (!changed.length) return;
+		const results = { ...entry.results };
+		for (const [check, result] of changed) results[check] = { ...result, stale: true };
+		this.#update(thread, { ...entry, results });
 	}
 
 	async assess(text: string) {
@@ -1063,6 +1108,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			);
 			this.#touch(thread);
 			this.#checkOverlaps(thread);
+			this.#staleResults(thread, update.tree);
 			return;
 		}
 		if (update.type === 'checks') {
@@ -1420,8 +1466,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	#latestIntent(thread: string) {
-		const intent = this.#entries(thread).findLast((entry) => entry.type === 'intent');
-		return intent?.type === 'intent' ? intent.intent : undefined;
+		return this.#latestIntentEntry(thread)?.intent;
+	}
+
+	#latestIntentEntry(thread: string) {
+		return this.#entries(thread).findLast(
+			(entry): entry is Extract<Entry, { type: 'intent' }> => entry.type === 'intent'
+		);
 	}
 }
 

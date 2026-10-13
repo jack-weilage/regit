@@ -120,7 +120,6 @@
 	let threads = $derived(await getThreads(params.repo));
 
 	let latestFailure = $derived(detail?.entries.findLast((entry) => entry.type === 'failure')?.id);
-	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
 	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
 		const status = detail?.summary.status;
 		if (status === 'shipping') return { status: 'shipping', note: `Shipping to ${detail!.branch}` };
@@ -133,11 +132,12 @@
 		return {};
 	});
 	let ref = $derived({ repo: params.repo, id: params.thread });
-	let intent = $derived(
+	let intentEntry = $derived(
 		detail?.entries.findLast(
 			(entry): entry is Extract<Entry, { type: 'intent' }> => entry.type === 'intent'
-		)?.intent
+		)
 	);
+	let latestIntent = $derived(intentEntry?.id);
 
 	async function act(action: 'start' | 'stop' | 'restart', name: string) {
 		busy = name;
@@ -266,6 +266,7 @@
 					{:else if block.type === 'intent'}
 						<ChatIntent
 							{...block.intent}
+							results={block.results}
 							superseded={block.id !== latestIntent}
 							sticky={block.id === latestIntent}
 							{...block.id === latestIntent ? progress : {}}
@@ -349,7 +350,8 @@
 				{/if}
 				{#if summary.status === 'shipping' || (summary.status !== 'discarded' && summary.changes?.files)}
 					<ShipPanel
-						{intent}
+						intent={intentEntry?.intent}
+						results={intentEntry?.results}
 						status={summary.status}
 						progress={activity?.ship}
 						checks={summary.checks}
