@@ -11,12 +11,10 @@ import type {
 	HookRequest,
 	HookResponse,
 	Identity,
-	PrepareCandidateRequest,
-	PrepareCandidateResponse,
-	PromoteCandidateRequest,
-	PromoteCandidateResponse,
 	PublishProvenanceRequest,
 	PushRequest,
+	ShipRequest,
+	ShipResponse,
 	SquashRequest,
 	Toolchain
 } from '@regit/agent';
@@ -146,55 +144,69 @@ async function canonicalHead(root: string, remote: string, ref: string) {
 	return git(root, ['rev-parse', '--verify', 'FETCH_HEAD^{commit}']);
 }
 
-export async function prepareCandidate(
+const shipTrailer = 'ReGit-Ship';
+
+// Squashes the thread's work onto main and pushes it, rebuilding whenever main moves first.
+// A retried ship finds its own commit on main by its trailer instead of shipping twice.
+export async function ship(
 	root: string,
-	{ sourceSha, base, remote, branch, message, author, committer }: PrepareCandidateRequest
-): Promise<PrepareCandidateResponse> {
+	{ id, sourceSha, base, remote, branch, message, author, committer }: ShipRequest
+): Promise<ShipResponse> {
+	if (!/^[0-9a-f]{32}$/.test(id)) throw new Error('Invalid ship id');
 	exactSha(sourceSha);
 	exactSha(base);
 	safeRemote(remote);
 	const ref = await branchRef(root, branch);
-	await git(root, ['reset', '--hard', sourceSha]);
-	await git(root, ['clean', '-fd']);
-	await git(root, ['merge-base', '--is-ancestor', base, sourceSha]);
-	const sha = await squash(root, { base, message, author, committer });
-	if (!sha) throw new Error('Candidate has no changes');
-	const expectedHead = await canonicalHead(root, remote, ref);
-	const result = await exec(
-		'git',
-		[...noHooks, 'rebase', '--empty=stop', '--onto', expectedHead, base],
-		{
-			cwd: root,
-			env: identity('COMMITTER', committer)
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const head = await canonicalHead(root, remote, ref);
+		const shipped = await git(root, [
+			'log',
+			'-1',
+			'--format=%H',
+			'--fixed-strings',
+			`--grep=${shipTrailer}: ${id}`,
+			head
+		]);
+		if (shipped) return { sha: shipped };
+		await git(root, ['reset', '--hard', sourceSha]);
+		await git(root, ['clean', '-fd']);
+		await git(root, ['merge-base', '--is-ancestor', base, sourceSha]);
+		const squashed = await squash(root, {
+			base,
+			message: `${message}\n\n${shipTrailer}: ${id}`,
+			author,
+			committer
+		});
+		if (!squashed) throw new Error('Nothing to ship');
+		const rebased = await exec(
+			'git',
+			[...noHooks, 'rebase', '--empty=stop', '--onto', head, base],
+			{
+				cwd: root,
+				env: identity('COMMITTER', committer)
+			}
+		);
+		if (rebased.code !== 0) {
+			const conflicts = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
+				.split('\n')
+				.filter(Boolean);
+			await abortRebase(root);
+			if (conflicts.length) throw new Error(`Ship conflicts with main in ${conflicts.join(', ')}`);
+			throw new Error(`Ship rebase failed: ${rebased.output.trim()}`);
 		}
-	);
-	if (result.code !== 0) {
-		await abortRebase(root);
-		throw new Error(`Candidate rebase failed: ${result.output.trim()}`);
+		const sha = await git(root, ['rev-parse', 'HEAD']);
+		if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${head}`)
+			throw new Error('A ship must be exactly one commit');
+		const pushed = await exec(
+			'git',
+			[...noHooks, 'push', `--force-with-lease=${ref}:${head}`, remote, `${sha}:${ref}`],
+			{ cwd: root }
+		);
+		if (pushed.code === 0) return { sha };
+		if ((await canonicalHead(root, remote, ref)) === head)
+			throw new Error(`Pushing to main failed: ${pushed.output.trim()}`);
 	}
-	const candidate = await git(root, ['rev-parse', 'HEAD']);
-	if (
-		(await git(root, ['rev-list', '--parents', '-1', candidate])) !== `${candidate} ${expectedHead}`
-	)
-		throw new Error('Candidate must contain exactly one commit');
-	return { sha: candidate, expectedHead };
-}
-
-export async function promoteCandidate(
-	root: string,
-	{ sha, expectedHead, remote, branch }: PromoteCandidateRequest
-): Promise<PromoteCandidateResponse> {
-	exactSha(sha);
-	exactSha(expectedHead);
-	safeRemote(remote);
-	const ref = await branchRef(root, branch);
-	if ((await git(root, ['rev-list', '--parents', '-1', sha])) !== `${sha} ${expectedHead}`)
-		throw new Error('Candidate parent does not match expected head');
-	const head = await canonicalHead(root, remote, ref);
-	if (head === sha) return { sha };
-	if (head !== expectedHead) throw new Error('Stale candidate: canonical head changed');
-	await git(root, ['push', `--force-with-lease=${ref}:${expectedHead}`, remote, `${sha}:${ref}`]);
-	return { sha };
+	throw new Error('Main kept moving while shipping');
 }
 
 export async function publishProvenance(

@@ -83,15 +83,6 @@ export const reply = command(v.object({ ...thread.entries, text }), async ({ rep
 	getThreads(repo).refresh();
 });
 
-export const approveThreadPromotion = command(
-	v.object({ ...thread.entries, promotion: v.pipe(v.string(), v.minLength(1)) }),
-	async ({ repo, id, promotion }) => {
-		await (await coordinator(repo, 'owner')).approvePromotion(id, promotion, author());
-		getThread({ repo, id }).refresh();
-		getThreads(repo).refresh();
-	}
-);
-
 export const discardThread = command(thread, async ({ repo, id }) => {
 	await (await coordinator(repo, 'editor')).discard(id, author());
 	getThread({ repo, id }).refresh();

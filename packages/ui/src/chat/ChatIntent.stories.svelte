@@ -115,26 +115,11 @@
 />
 
 <Story
-	name="Ready"
-	args={{
-		...progress,
-		status: 'ready',
-		note: 'Exact candidate awaits owner approval',
-		changes: { files: 4, additions: 23, deletions: 8 },
-		onchanges: fn()
-	}}
-	play={async ({ args, canvas, userEvent }) => {
-		await userEvent.click(canvas.getByRole('button', { name: /View changes: 4 files/ }));
-		await expect(args.onchanges).toHaveBeenCalledOnce();
-	}}
-/>
-
-<Story
 	name="Shipping"
 	args={{
 		...progress,
 		status: 'shipping',
-		note: 'Preparing candidate or publishing approved SHA',
+		note: 'Shipping to main',
 		changes: { files: 4, additions: 23, deletions: 8 }
 	}}
 />
@@ -219,9 +204,4 @@
 		await userEvent.click(canvas.getByRole('button', { name: /Message feat\(api\)/ }));
 		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[1]);
 	}}
-/>
-
-<Story
-	name="Awaiting approval"
-	args={{ ...progress, status: 'ready', note: 'Exact candidate awaits owner approval' }}
 />

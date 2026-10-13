@@ -1,9 +1,10 @@
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import type { ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
-const { dir, worker, seed, commit, sh, idle, script, modelRequests } = await setup();
+const { dir, worker, seed, commit, sh, idle, script } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
 const intent = {
 	headline: 'docs: add a title',
@@ -69,32 +70,15 @@ async function finishedThread(name: string) {
 	return { env, repo, id, detail, work, canonical, original };
 }
 
-async function candidate(name: string) {
-	const run = await finishedThread(name);
-	await run.repo.ship(run.id, {
-		by: owner,
-		email: 'sam@example.com',
-		title: intent.headline,
-		body: intent.purpose
-	});
-	const detail = await until(
-		run.repo,
-		run.id,
-		(detail) => detail.promotions.at(-1)?.status === 'ready'
-	);
-	const promotion = detail.promotions.at(-1)!;
-	expect(sh(run.canonical, 'rev-parse', 'main')).toBe(run.original);
-	return { ...run, ready: detail, promotion };
-}
+const input = {
+	by: owner,
+	email: 'sam@example.com',
+	title: intent.headline,
+	body: intent.purpose
+};
 
-test('only an owner can queue and approve the exact isolated candidate', async () => {
-	const { repo, id, canonical, original } = await finishedThread('publish-exact');
-	const input = {
-		by: owner,
-		email: 'sam@example.com',
-		title: intent.headline,
-		body: intent.purpose
-	};
+test('only an owner can ship, and shipping squashes the thread onto main with provenance', async () => {
+	const { repo, id, canonical, original } = await finishedThread('ship-exact');
 	for (const by of [
 		{ name: 'Sam', kind: 'person' as const },
 		{ ...owner, id: 'editor' },
@@ -103,155 +87,81 @@ test('only an owner can queue and approve the exact isolated candidate', async (
 	]) {
 		await expect(repo.ship(id, { ...input, by })).rejects.toThrow();
 	}
-	expect((await repo.thread(id))!.promotions).toEqual([]);
+	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
+
 	await repo.ship(id, input);
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
-	const ready = await until(repo, id, (detail) => detail.promotions.at(-1)?.status === 'ready');
-	const promotion = ready.promotions.at(-1)!;
-	const candidate = promotion.candidate!;
-	const revision = promotion.source;
-	expect(revision).toMatchObject({ proposal: id, repository: `publish-exact--${id}` });
-	expect(promotion.intent).toEqual(intent);
-	expect(candidate.expectedHead).toBe(original);
-	expect(candidate.repository).not.toBe(revision.repository);
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
-	const fork = join(dir, `${candidate.repository}.git`);
-	expect(sh(fork, 'show', `${candidate.sha}:notes.md`)).toBe('# Notes');
-	expect(sh(fork, 'log', '-1', '--format=%an|%ae|%cn|%ce|%s', candidate.sha)).toBe(
+	const shipped = await until(repo, id, (detail) => detail.summary.status === 'shipped');
+	const sha = sh(canonical, 'rev-parse', 'main');
+	expect(shipped.summary).toMatchObject({ changes: null, shipped: { sha, by: 'Sam' } });
+	expect(shipped.entries.at(-1)).toMatchObject({
+		type: 'event',
+		text: `Shipped ${sha.slice(0, 7)} to main`
+	});
+	expect(sh(canonical, 'rev-parse', 'main^')).toBe(original);
+	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
+	expect(sh(canonical, 'log', '-1', '--format=%an|%ae|%cn|%ce|%s', 'main')).toBe(
 		'Sam|sam@example.com|ReGit|agent@regit.dev|docs: add a title'
 	);
-	expect(sh(fork, 'log', '-1', '--format=%b', candidate.sha)).toBe(
-		`${intent.purpose}\n\nCo-authored-by: ReGit <agent@regit.dev>`
+	const body = sh(canonical, 'log', '-1', '--format=%b', 'main');
+	const shipId = /ReGit-Ship: ([0-9a-f]{32})$/.exec(body)![1];
+	expect(body).toBe(
+		`${intent.purpose}\n\nCo-authored-by: ReGit <agent@regit.dev>\n\nReGit-Ship: ${shipId}`
 	);
-	await expect(repo.approvePromotion(id, 'not-this-candidate', owner)).rejects.toThrow();
-	await expect(
-		repo.approvePromotion(id, promotion.id, { ...owner, id: 'editor' })
-	).rejects.toThrow();
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
-	await repo.approvePromotion(id, promotion.id, owner);
-	const shipped = await until(
-		repo,
-		id,
-		(detail) => detail.promotions.at(-1)?.notesPublished === true
-	);
-	expect(shipped.summary).toMatchObject({
-		status: 'shipped',
-		changes: null,
-		shipped: { sha: candidate.sha, by: 'Sam' }
-	});
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(candidate.sha);
-	expect(sh(canonical, 'rev-list', '--count', 'main')).toBe('2');
-	const note = JSON.parse(sh(canonical, 'notes', '--ref=regit', 'show', candidate.sha));
-	expect(note).toMatchObject({
-		schema: 1,
-		promotion: promotion.id,
-		source: revision,
+	expect(JSON.parse(sh(canonical, 'notes', '--ref=regit', 'show', sha))).toEqual({
+		schema: 2,
+		ship: shipId,
+		source: expect.objectContaining({ proposal: id, repository: `ship-exact--${id}` }),
 		intent,
-		authorizedBy: owner
+		shippedBy: owner
 	});
+	expect(readdirSync(dir).filter((name) => name.includes('--candidate-'))).toEqual([]);
 });
 
-test('discarding a thread with a pending candidate cancels it and reopens as needing you', async () => {
-	const { repo, id } = await finishedThread('discard-pending');
-	await repo.ship(id, {
-		by: owner,
-		email: 'sam@example.com',
-		title: intent.headline,
-		body: intent.purpose
-	});
+test('a shipping thread cannot be discarded until it finishes', async () => {
+	const { repo, id } = await finishedThread('ship-discard');
+	await repo.ship(id, input);
+	await expect(repo.discard(id, owner)).rejects.toThrow();
+	expect(((await repo.thread(id)) as ThreadDetail).summary.status).toBe('shipping');
+	await until(repo, id, (detail) => detail.summary.status === 'shipped');
 	await repo.discard(id, owner);
-	await repo.reopen(id, owner);
-	const detail = (await repo.thread(id)) as ThreadDetail;
-	expect(detail.summary.status).toBe('needs-you');
-	expect(detail.promotions.at(-1)!.status).toBe('cancelled');
+	expect(((await repo.thread(id)) as ThreadDetail).summary.status).toBe('discarded');
 });
 
-test('work after a candidate is prepared lands on the published commit afterwards', async () => {
-	const { repo, id, promotion, canonical } = await candidate('publish-later');
+test('ships onto main as it is when shipping, even after main moved', async () => {
+	const { repo, id, canonical, work } = await finishedThread('ship-moved');
+	await commit(work, { 'external.md': 'External work\n' }, 'External advance');
+	sh(work, 'push', '--quiet', canonical, 'main');
+	const external = sh(canonical, 'rev-parse', 'main');
+
+	await repo.ship(id, input);
+	await until(repo, id, (detail) => detail.summary.status === 'shipped');
+	expect(sh(canonical, 'rev-parse', 'main^')).toBe(external);
+	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
+	expect(sh(canonical, 'show', 'main:external.md')).toBe('External work');
+});
+
+test('work after shipping builds on the shipped commit', async () => {
+	const { repo, id, canonical } = await finishedThread('ship-later');
+	await repo.ship(id, input);
+	await until(repo, id, (detail) => detail.summary.status === 'shipped');
+	const published = sh(canonical, 'rev-parse', 'main');
+
 	await idle();
 	await script([
 		tool('write_file', { path: 'footer.md', content: 'A footer\n' }),
 		say('Added a footer.')
 	]);
 	await repo.reply(id, { author: owner, text: 'Add a footer too.' });
-	await until(
+	const later = await until(
 		repo,
 		id,
 		(detail) =>
 			detail.summary.status === 'needs-you' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Added a footer.')
 	);
-	await repo.approvePromotion(id, promotion.id, owner);
-	await until(repo, id, (detail) => detail.summary.status === 'shipped');
-	const published = promotion.candidate!.sha;
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(published);
-	expect(() => sh(canonical, 'show', 'main:footer.md')).toThrow();
-
-	await script([say('Rebased.')]);
-	await repo.reply(id, { author: owner, text: 'Carry on.' });
-	const rebased = await until(
-		repo,
-		id,
-		(detail) =>
-			detail.summary.status === 'needs-you' &&
-			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Rebased.')
-	);
-	const fork = join(dir, `publish-later--${id}.git`);
+	const fork = join(dir, `ship-later--${id}.git`);
 	expect(sh(fork, 'rev-parse', 'main^')).toBe(published);
 	expect(sh(fork, 'show', 'main:footer.md')).toBe('A footer');
-	expect(rebased.summary.changes).toEqual({ files: 1, additions: 1, deletions: 0 });
-});
-
-test('hands a stale candidate back to its thread, which merges main and prepares it again', async () => {
-	const { repo, id, promotion, canonical, work } = await candidate('publish-stale');
-	const pinned = promotion.candidate!;
-	await commit(work, { 'external.md': 'External work\n' }, 'External advance');
-	sh(work, 'push', '--quiet', canonical, 'main');
-	const external = sh(canonical, 'rev-parse', 'main');
-	await idle();
-	await script([say('Merged main; the checks pass.')]);
-	await repo.approvePromotion(id, promotion.id, owner);
-	const again = await until(
-		repo,
-		id,
-		(detail) => detail.promotions.length === 2 && detail.promotions[1]!.status === 'ready'
-	);
-
-	expect(again.promotions[0]).toMatchObject({
-		id: promotion.id,
-		status: 'failed',
-		candidate: pinned,
-		notesPublished: false,
-		error: expect.stringContaining('Stale candidate:')
-	});
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(external);
-	expect(sh(join(dir, `${pinned.repository}.git`), 'rev-parse', 'main')).toBe(pinned.sha);
-	expect(() => sh(canonical, 'notes', '--ref=regit', 'show', pinned.sha)).toThrow();
-	expect(again.entries).toContainEqual(
-		expect.objectContaining({
-			type: 'event',
-			text: 'Main moved before this candidate was published. Handing it back to the agent to bring up to date.'
-		})
-	);
-	const handedBack = JSON.stringify((await modelRequests()).at(-1)!.query);
-	expect(handedBack).toContain('Main moved before this candidate was published.');
-	expect(handedBack).toContain('it merged into this thread cleanly');
-	expect(handedBack).toContain('External advance');
-	const fork = join(dir, `publish-stale--${id}.git`);
-	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(external);
-
-	const next = again.promotions[1]!;
-	expect(next).toMatchObject({
-		handBacks: 1,
-		title: intent.headline,
-		requestedBy: owner,
-		approvedBy: null
-	});
-	expect(next.candidate!.expectedHead).toBe(external);
-	await repo.approvePromotion(id, next.id, owner);
-	await until(repo, id, (detail) => detail.summary.status === 'shipped');
-	expect(sh(canonical, 'rev-parse', 'main')).toBe(next.candidate!.sha);
-	expect(sh(canonical, 'rev-parse', 'main^')).toBe(external);
-	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
-	expect(sh(canonical, 'show', 'main:external.md')).toBe('External work');
+	expect(later.summary.changes).toEqual({ files: 1, additions: 1, deletions: 0 });
+	expect(sh(canonical, 'rev-parse', 'main')).toBe(published);
 });

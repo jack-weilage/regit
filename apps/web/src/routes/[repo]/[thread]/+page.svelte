@@ -17,7 +17,7 @@
 		ChatThreadMessage,
 		ChatTools,
 		DeletedThread,
-		PublishPanel,
+		ShipPanel,
 		Markdown,
 		DeleteThreadDialog,
 		statuses,
@@ -33,7 +33,6 @@
 	import { getLiveActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import {
-		approveThreadPromotion,
 		bringThreadUpToDate,
 		shipThread,
 		deleteThread,
@@ -118,10 +117,7 @@
 	let latestIntent = $derived(detail?.entries.findLast((entry) => entry.type === 'intent')?.id);
 	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
 		const status = detail?.summary.status;
-		if (detail?.promotions.some((promotion) => promotion.status === 'ready'))
-			return { status: 'ready', note: 'Exact candidate awaits owner approval' };
-		if (status === 'shipping')
-			return { status: 'shipping', note: 'Preparing candidate or publishing approved SHA' };
+		if (status === 'shipping') return { status: 'shipping', note: 'Shipping to main' };
 		if (status === 'shipped') {
 			const sha = detail!.summary.shipped?.sha.slice(0, 7);
 			return { status: 'shipped', note: sha ? `Shipped in ${sha}` : 'Shipped' };
@@ -330,14 +326,11 @@
 						onupdate={() => bringUpToDate(behind.sha)}
 					/>
 				{/if}
-				{#if summary.status !== 'discarded' && (summary.changes?.files || detail.promotions.length)}
-					<PublishPanel
-						promotions={detail.promotions}
+				{#if summary.status === 'shipping' || (summary.status !== 'discarded' && summary.changes?.files)}
+					<ShipPanel
 						{intent}
 						status={summary.status}
-						hasChanges={!!summary.changes?.files}
-						onprepare={(commit) => shipThread({ ...ref, ...commit })}
-						onapprove={(promotion) => approveThreadPromotion({ ...ref, promotion })}
+						onship={(commit) => shipThread({ ...ref, ...commit })}
 					/>
 				{/if}
 				{#if activity?.startup}

@@ -81,7 +81,8 @@ export interface Identity {
 	email: string;
 }
 
-export interface PrepareCandidateRequest {
+export interface ShipRequest {
+	id: string;
 	sourceSha: string;
 	base: string;
 	remote: string;
@@ -91,19 +92,7 @@ export interface PrepareCandidateRequest {
 	committer: Identity;
 }
 
-export interface PrepareCandidateResponse {
-	sha: string;
-	expectedHead: string;
-}
-
-export interface PromoteCandidateRequest {
-	sha: string;
-	expectedHead: string;
-	remote: string;
-	branch: string;
-}
-
-export interface PromoteCandidateResponse {
+export interface ShipResponse {
 	sha: string;
 }
 

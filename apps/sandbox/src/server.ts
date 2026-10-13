@@ -9,10 +9,9 @@ import {
 	diff,
 	headBranch,
 	hook,
-	prepareCandidate,
-	promoteCandidate,
 	publishProvenance,
 	push,
+	ship,
 	toolchain
 } from './workspace.ts';
 
@@ -36,8 +35,7 @@ export function createSandbox(
 		})
 	};
 	const workspace: Record<string, (body: never) => Promise<object>> = {
-		'prepare-candidate': (body) => prepareCandidate(root, body),
-		'promote-candidate': (body) => promoteCandidate(root, body),
+		ship: (body) => ship(root, body),
 		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
 		clone: (body) => services.pausedDuring(() => clone(root, body)),
 		compare: (body) => compare(root, body),

@@ -1,12 +1,11 @@
 <script module lang="ts">
 	import type { StatusIconState } from './status.ts';
 
-	export type IntentStatus = 'working' | 'needs-you' | 'ready' | 'shipping' | 'shipped';
+	export type IntentStatus = 'working' | 'needs-you' | 'shipping' | 'shipped';
 
 	const icons: Record<IntentStatus, StatusIconState> = {
 		working: 'running',
 		'needs-you': 'attention',
-		ready: 'passed',
 		shipping: 'shipping',
 		shipped: 'passed'
 	};

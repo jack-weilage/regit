@@ -19,7 +19,7 @@ export interface Landing {
 	headline: string;
 }
 
-// Thread and candidate forks share the namespace; their names always contain a double hyphen.
+// Thread forks share the namespace; their names always contain a double hyphen.
 export function canonicalPush(event: unknown): Landing | null {
 	const { type, source, payload } = (event ?? {}) as Partial<ArtifactsPush>;
 	if (

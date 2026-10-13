@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import type { Revision, Promotion } from '@regit/core';
+import type { Ship } from '@regit/core';
 import { setup } from './support.ts';
 
 const harness = await setup();
 
-test('prepares the pinned revision, publishes exactly it, and writes independent notes', async () => {
+test('ships the pinned revision once, even when retried, and records provenance', async () => {
 	const repo = 'publisher';
 	const work = await harness.seed(repo, { 'file.txt': 'base\n' });
 	const base = harness.sh(work, 'rev-parse', 'HEAD');
@@ -16,46 +16,33 @@ test('prepares the pinned revision, publishes exactly it, and writes independent
 	harness.sh(work, 'push', join(harness.dir, `${source}.git`), 'HEAD:main');
 	await harness.commit(work, { 'file.txt': 'later\n' }, 'later');
 	harness.sh(work, 'push', join(harness.dir, `${source}.git`), 'HEAD:main');
-	const revision: Revision = {
-		proposal: 'proposal',
-		repository: source,
-		branch: 'main',
-		base,
-		sha,
-		at: 1
-	};
-	const promotion: Promotion = {
-		id: 'publish',
-		proposal: 'proposal',
-		source: revision,
+	const ship: Ship = {
+		id: 'b'.repeat(32),
+		repo,
+		thread: 'thread',
+		source: { proposal: 'thread', repository: source, branch: 'main', base, sha, at: 1 },
 		intent: null,
-		requestedBy: { name: 'Sam', kind: 'person' },
-		approvedBy: null,
+		by: { name: 'Sam', kind: 'person' },
 		email: 'sam@example.com',
 		title: 'Ship pinned',
 		body: '',
-		status: 'preparing',
-		candidate: null,
-		error: null,
-		notesPublished: false,
-		handBacks: 0,
-		at: 1
+		handBacks: 0
 	};
 	const env = await harness.worker.getEnv();
-	const publisher = env.REPOSITORY_GIT.getByName(`promotion-${promotion.id}`);
-	const candidate = await publisher.prepare(repo, revision, promotion);
-	expect(candidate.repository).toBe(`${repo}--candidate-publish`);
-	expect(candidate.expectedHead).toBe(base);
-	const fork = join(harness.dir, `${candidate.repository}.git`);
-	expect(harness.sh(fork, 'show', `${candidate.sha}:file.txt`)).toBe('pinned');
-	expect(await publisher.prepare(repo, { ...revision, sha: base }, promotion)).toEqual(candidate);
-	await publisher.promote(repo, candidate);
-	await publisher.promote(repo, candidate);
+	const publisher = env.REPOSITORY_GIT.getByName(`ship-${repo}`);
+
+	const shipped = await publisher.ship(ship);
+	expect(await publisher.ship(ship)).toEqual(shipped);
 	const canonical = join(harness.dir, `${repo}.git`);
-	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(candidate.sha);
-	await expect(publisher.notes(repo, candidate, 'invalid JSON')).rejects.toThrow();
-	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(candidate.sha);
-	const note = JSON.stringify({ source: revision });
-	await publisher.notes(repo, candidate, note);
-	expect(harness.sh(canonical, 'notes', '--ref=regit', 'show', candidate.sha)).toBe(note);
+	expect(harness.sh(canonical, 'rev-parse', 'main')).toBe(shipped.sha);
+	expect(shipped.branch).toBe('main');
+	expect(harness.sh(canonical, 'rev-list', '--count', 'main')).toBe('2');
+	expect(harness.sh(canonical, 'show', 'main:file.txt')).toBe('pinned');
+	expect(JSON.parse(harness.sh(canonical, 'notes', '--ref=regit', 'show', shipped.sha))).toEqual({
+		schema: 2,
+		ship: ship.id,
+		source: ship.source,
+		intent: null,
+		shippedBy: ship.by
+	});
 });

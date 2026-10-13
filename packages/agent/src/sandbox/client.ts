@@ -14,15 +14,13 @@ import type {
 	HeadBranchResponse,
 	HookRequest,
 	HookResponse,
-	PrepareCandidateRequest,
-	PrepareCandidateResponse,
-	PromoteCandidateRequest,
-	PromoteCandidateResponse,
 	PublishProvenanceRequest,
 	PushRequest,
 	PushResponse,
 	ServiceInfo,
 	ServicesResponse,
+	ShipRequest,
+	ShipResponse,
 	SkillsResponse,
 	ToolchainResponse,
 	ToolArguments,
@@ -69,19 +67,8 @@ export function sandboxTools(
 
 export function sandboxWorkspace(fetch: Fetch) {
 	return {
-		prepareCandidate(request: PrepareCandidateRequest) {
-			return post<PrepareCandidateResponse>(
-				fetch,
-				'/workspace/prepare-candidate',
-				JSON.stringify(request)
-			);
-		},
-		promoteCandidate(request: PromoteCandidateRequest) {
-			return post<PromoteCandidateResponse>(
-				fetch,
-				'/workspace/promote-candidate',
-				JSON.stringify(request)
-			);
+		ship(request: ShipRequest) {
+			return post<ShipResponse>(fetch, '/workspace/ship', JSON.stringify(request));
 		},
 		compare(request: CompareRequest) {
 			return post<CompareResponse>(fetch, '/workspace/compare', JSON.stringify(request));

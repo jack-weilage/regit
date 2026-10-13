@@ -9,6 +9,7 @@ export { RepositoryGit, PublisherGitProxy } from './repository-git.ts';
 export { RepoCoordinator } from './repo-coordinator.ts';
 export { Models } from './models.ts';
 export { RepoPushed } from './repo-pushed.ts';
+export { ShipThread } from './ship-thread.ts';
 
 export default {
 	async fetch(request, env) {

@@ -30,7 +30,8 @@
 	],
 	"artifacts": [{ "binding": "ARTIFACTS", "namespace": "regit" }],
 	"workflows": [
-		{ "name": "regit-repo-pushed", "binding": "REPO_PUSHED", "class_name": "RepoPushed" }
+		{ "name": "regit-repo-pushed", "binding": "REPO_PUSHED", "class_name": "RepoPushed" },
+		{ "name": "regit-ship-thread", "binding": "SHIP_THREAD", "class_name": "ShipThread" }
 	],
 	"triggers": {
 		"events": [

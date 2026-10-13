@@ -145,7 +145,6 @@ export interface ThreadDetail {
 	usage: ThreadUsage;
 	services: ThreadService[];
 	activity: ThreadActivity | null;
-	promotions: import('./promotions.ts').Promotion[];
 }
 
 export type LiveMessage =
@@ -163,7 +162,6 @@ export interface RepoCoordinatorApi {
 		machine: Machine;
 	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
-	approvePromotion(thread: string, promotion: string, by: Author): Promise<void>;
 	discard(thread: string, by: Author): Promise<void>;
 	reopen(thread: string, by: Author): void;
 	delete(thread: string, by: Author): Promise<void>;

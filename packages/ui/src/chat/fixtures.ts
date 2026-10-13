@@ -1,40 +1,10 @@
 import type { DiffFile, DiffHunk, Mentionable, SimilarThread } from './types.ts';
-import type { Intent, Promotion } from '@regit/core';
+import type { Intent } from '@regit/core';
 
 export const intent: Intent = {
 	headline: 'perf(settings): load members lazily',
 	purpose: 'Large organizations should not wait for every member before settings render.',
 	doneWhen: ['Settings render before member loading completes.', 'Members load as you scroll.']
-};
-
-export const readyPromotion: Promotion = {
-	id: 'promotion-1',
-	proposal: 'paginate-members',
-	source: {
-		proposal: 'paginate-members',
-		repository: 'regit--paginate-members',
-		branch: 'main',
-		base: '0123456789abcdef0123456789abcdef01234567',
-		sha: 'fedcba9876543210fedcba9876543210fedcba98',
-		at: 3
-	},
-	intent,
-	requestedBy: { id: 'sam', name: 'Sam Rivera', kind: 'person' },
-	approvedBy: null,
-	email: 'sam@example.com',
-	title: intent.headline,
-	body: intent.purpose,
-	status: 'ready',
-	candidate: {
-		repository: 'regit--candidate-1',
-		branch: 'main',
-		sha: 'a1b2c3d4e5f678901234567890abcdef1234567890',
-		expectedHead: '9876543210abcdef9876543210abcdef98765432'
-	},
-	error: null,
-	notesPublished: false,
-	handBacks: 0,
-	at: 3
 };
 
 export const people: Mentionable[] = [

@@ -1,6 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { sandboxWorkspace, type Fetch } from '@regit/agent';
-import { defaultMachine, type Candidate, type Revision, type Promotion } from '@regit/core';
+import { defaultMachine, type Ship } from '@regit/core';
 import { proxyGit, type GitAccess } from './git-access.ts';
 
 export class PublisherGitProxy extends WorkerEntrypoint<Env, { targets: GitAccess[] }> {
@@ -29,49 +29,49 @@ export class RepositoryGit extends DurableObject<Env> {
 		return next;
 	}
 
-	async prepare(repo: string, revision: Revision, promotion: Promotion): Promise<Candidate> {
+	// Squashes the thread onto main, pushes it and records provenance. Safe to retry: a ship already on main is found, not repeated.
+	async ship(ship: Ship): Promise<{ sha: string; branch: string }> {
 		return this.#serial(async () => {
-			const key = `candidate:${promotion.id}`;
-			const saved = await this.ctx.storage.get<Candidate>(key);
-			if (saved) return saved;
-			using source = await this.env.ARTIFACTS.get(revision.repository);
-			using canonical = await this.env.ARTIFACTS.get(repo);
+			using source = await this.env.ARTIFACTS.get(ship.source.repository);
+			using canonical = await this.env.ARTIFACTS.get(ship.repo);
 			const sourceInfo = await source.info();
 			const canonicalInfo = await canonical.info();
-			const name = `${repo}--candidate-${promotion.id}`;
-			const fork = await canonical.fork(name).catch(async (error) => {
-				if ((error as ArtifactsError).code !== 'ALREADY_EXISTS') throw error;
-				using existing = await this.env.ARTIFACTS.get(name);
-				return existing.info();
-			});
-			using candidateRepo = await this.env.ARTIFACTS.get(name);
 			const targets = [
 				await this.#access(source, sourceInfo.remote),
-				await this.#access(canonical, canonicalInfo.remote),
-				await this.#access(candidateRepo, fork.remote, true)
+				await this.#access(canonical, canonicalInfo.remote, true)
 			];
 			try {
-				await this.#allow(targets);
+				await this.#allow(targets.map((target) => ({ ...target, push: false })));
 				const workspace = sandboxWorkspace(await this.#sandbox());
-				await workspace.clone({ remote: sourceInfo.remote, branch: revision.branch });
+				await workspace.clone({ remote: sourceInfo.remote, branch: ship.source.branch });
 				const branch =
 					(await workspace.headBranch({ remote: canonicalInfo.remote })) ??
 					canonicalInfo.defaultBranch;
-				const prepared = await workspace.prepareCandidate({
-					sourceSha: revision.sha,
-					base: revision.base,
+				await this.#allow(targets);
+				const { sha } = await workspace.ship({
+					id: ship.id,
+					sourceSha: ship.source.sha,
+					base: ship.source.base,
 					remote: canonicalInfo.remote,
 					branch,
-					message: [promotion.title, promotion.body, 'Co-authored-by: ReGit <agent@regit.dev>']
+					message: [ship.title, ship.body, 'Co-authored-by: ReGit <agent@regit.dev>']
 						.filter(Boolean)
 						.join('\n\n'),
-					author: { name: promotion.requestedBy.name, email: promotion.email },
+					author: { name: ship.by.name, email: ship.email },
 					committer
 				});
-				await workspace.push({ remote: fork.remote, ref: branch, force: true });
-				const result: Candidate = { repository: name, branch, ...prepared };
-				await this.ctx.storage.put(key, result);
-				return result;
+				await workspace.publishProvenance({
+					sha,
+					remote: canonicalInfo.remote,
+					note: JSON.stringify({
+						schema: 2,
+						ship: ship.id,
+						source: ship.source,
+						intent: ship.intent,
+						shippedBy: ship.by
+					})
+				});
+				return { sha, branch };
 			} finally {
 				await this.#revoke(targets);
 			}
@@ -98,49 +98,6 @@ export class RepositoryGit extends DurableObject<Env> {
 					remote: canonicalInfo.remote,
 					forks: sources.map(({ fork, remote }) => ({ id: fork.id, remote, branch: fork.branch }))
 				});
-			} finally {
-				await this.#revoke(targets);
-			}
-		});
-	}
-
-	async promote(repo: string, candidate: Candidate): Promise<void> {
-		return this.#publish(repo, candidate, async (workspace, remote) => {
-			await workspace.promoteCandidate({
-				sha: candidate.sha,
-				expectedHead: candidate.expectedHead,
-				branch: candidate.branch,
-				remote
-			});
-		});
-	}
-
-	async notes(repo: string, candidate: Candidate, note: string): Promise<void> {
-		return this.#publish(repo, candidate, async (workspace, remote) => {
-			await workspace.publishProvenance({ sha: candidate.sha, note, remote });
-		});
-	}
-
-	#publish(
-		repo: string,
-		candidate: Candidate,
-		run: (workspace: ReturnType<typeof sandboxWorkspace>, remote: string) => Promise<void>
-	): Promise<void> {
-		return this.#serial(async () => {
-			using source = await this.env.ARTIFACTS.get(candidate.repository);
-			using canonical = await this.env.ARTIFACTS.get(repo);
-			const sourceInfo = await source.info();
-			const canonicalInfo = await canonical.info();
-			const targets = [
-				await this.#access(source, sourceInfo.remote),
-				await this.#access(canonical, canonicalInfo.remote, true)
-			];
-			try {
-				await this.#allow(targets.map((target) => ({ ...target, push: false })));
-				const workspace = sandboxWorkspace(await this.#sandbox());
-				await workspace.clone({ remote: sourceInfo.remote, branch: candidate.branch });
-				await this.#allow(targets);
-				await run(workspace, canonicalInfo.remote);
 			} finally {
 				await this.#revoke(targets);
 			}

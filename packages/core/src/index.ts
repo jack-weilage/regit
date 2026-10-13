@@ -1,6 +1,6 @@
 export * from './diff.ts';
 export * from './threads.ts';
-export * from './promotions.ts';
+export * from './ships.ts';
 
 export const repoNamePattern = /^(?!.*--)[A-Za-z0-9._-]+$/;
 export const repoNameRule =

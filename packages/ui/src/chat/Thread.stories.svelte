@@ -11,9 +11,9 @@
 	import ChatLog from './ChatLog.svelte';
 	import ChatMention from './ChatMention.svelte';
 	import ChatMessage from './ChatMessage.svelte';
-	import PublishPanel from './PublishPanel.svelte';
-	import { intent as members, readyPromotion, mentionables, similarThreads } from './fixtures.ts';
-	import type { Promotion, ThreadStatus } from '@regit/core';
+	import ShipPanel from './ShipPanel.svelte';
+	import { intent as members, mentionables, similarThreads } from './fixtures.ts';
+	import type { ThreadStatus } from '@regit/core';
 	import type { Author, Mentionable, SimilarThread } from './types.ts';
 
 	interface Intent {
@@ -94,7 +94,6 @@
 	]);
 	let started = $state(false);
 	let status = $state<ThreadStatus>('needs-you');
-	let promotions = $state<Promotion[]>([]);
 	let intent = $derived(entries.findLast((entry) => entry.type === 'intent')!.intent);
 
 	let latestIntent = $derived(entries.findLast((entry) => entry.type === 'intent')?.id);
@@ -178,16 +177,10 @@
 						superseded={block.id !== latestIntent}
 						status={status === 'shipped'
 							? 'shipped'
-							: promotions.length
-								? 'ready'
-								: status === 'running'
-									? 'working'
-									: 'needs-you'}
-						note={status === 'shipped'
-							? 'Shipped in a1b2c3d'
-							: promotions.length
-								? 'Exact candidate awaits owner approval'
-								: undefined}
+							: status === 'running'
+								? 'working'
+								: 'needs-you'}
+						note={status === 'shipped' ? 'Shipped in a1b2c3d' : undefined}
 					/>
 				{:else if block.type === 'handoff'}
 					{#if block.outcome === 'dismissed'}
@@ -212,17 +205,11 @@
 					<ChatEvent>{block.text}</ChatEvent>
 				{/if}
 			{/each}
-			{#if started || promotions.length}
-				<PublishPanel
-					{promotions}
+			{#if started && status !== 'shipped'}
+				<ShipPanel
 					{intent}
 					{status}
-					hasChanges={started && status !== 'shipped'}
-					onprepare={async (commit) => {
-						promotions = [{ ...readyPromotion, ...commit }];
-					}}
-					onapprove={async () => {
-						promotions = [{ ...promotions[0]!, status: 'shipped', notesPublished: true }];
+					onship={async () => {
 						status = 'shipped';
 					}}
 				/>
@@ -272,22 +259,17 @@
 </Story>
 
 <Story
-	name="Prepare and publish"
+	name="Ship"
 	asChild
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.type(canvas.getByRole('textbox', { name: 'Message' }), 'Go ahead.{Enter}');
-		await userEvent.click(await canvas.findByRole('button', { name: 'Prepare candidate' }));
+		await userEvent.click(await canvas.findByRole('button', { name: 'Ship' }));
 		await expect(canvas.getByRole('textbox', { name: 'Commit title' })).toHaveValue(
 			revisions[0]!.headline
 		);
-		await userEvent.click(canvas.getByRole('button', { name: 'Prepare candidate' }));
-		await waitFor(() =>
-			expect(canvas.getByText('Exact candidate awaits owner approval')).toBeVisible()
-		);
-		await expect(canvas.queryByText('Published', { exact: true })).toBeNull();
-		await userEvent.click(canvas.getByRole('button', { name: 'Approve and publish a1b2c3d4e5f6' }));
-		await waitFor(() => expect(canvas.getByText('Published', { exact: true })).toBeVisible());
-		await expect(canvas.queryByRole('button', { name: /^Approve and publish/ })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: 'Ship to main' }));
+		await waitFor(() => expect(canvas.getByText('Shipped in a1b2c3d')).toBeVisible());
+		await expect(canvas.queryByRole('region', { name: 'Ship' })).toBeNull();
 	}}>{@render thread()}</Story
 >
 

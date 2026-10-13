@@ -278,7 +278,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async destroy() {
 		await this.cancel();
-		// TODO: garbage collect the thread's fork once no promotion references it.
+		// TODO: garbage collect the thread's fork once the thread is purged.
 		await this.ctx.storage.deleteAlarm();
 		await this.ctx.storage.deleteAll();
 	}
@@ -534,7 +534,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'rebase'");
 	}
 
-	// Merges main into the thread so its agent can bring a stale or conflicting candidate up to date.
+	// Merges main into the thread so its agent can bring it up to date, as asked or after a conflicting ship.
 	async #sync(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'sync'");
 		await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
@@ -948,7 +948,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (attempt.fork && attempt.remote && attempt.branch) {
 			return { name: attempt.fork, remote: attempt.remote, branch: attempt.branch };
 		}
-		// TODO: move thread and candidate forks to their own namespace so pushes to them stop starting RepoPushed; fork() can't target one, so it means create-and-push.
+		// TODO: move thread forks to their own namespace so pushes to them stop starting RepoPushed; fork() can't target one, so it means create-and-push.
 		const name = `${attempt.repo}--${this.ctx.id.name}`;
 		using base = await this.env.ARTIFACTS.get(attempt.repo);
 		const fork = await base

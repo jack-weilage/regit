@@ -762,19 +762,6 @@ const writeNotes = (content: string) => [
 	}
 ];
 
-async function approveCandidate(
-	repo: ReturnType<Env['REPOS']['getByName']>,
-	id: string,
-	sam: { id: string; name: string; kind: 'person' }
-) {
-	const ready = await untilThread(
-		repo,
-		id,
-		(detail) => detail.promotions.at(-1)?.status === 'ready'
-	);
-	await repo.approvePromotion(id, ready.promotions.at(-1)!.id, sam);
-}
-
 test('ships finished work as one commit on main', async () => {
 	const { repo, sam, id } = await startedThread('shipping', [
 		writeNotes('# Notes\\n'),
@@ -793,20 +780,19 @@ test('ships finished work as one commit on main', async () => {
 		title: 'docs: add a title',
 		body: 'Readers need a title.'
 	});
-	await approveCandidate(repo, id, sam);
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
 
 	const main = sh(join(dir, 'shipping.git'), 'rev-parse', 'main');
 	expect(shipped.summary.shipped).toMatchObject({ sha: main, by: 'Sam' });
 	expect(shipped.entries.at(-1)).toMatchObject({
 		type: 'event',
-		text: expect.stringContaining(`Promoted ${main.slice(0, 7)} to main`)
+		text: `Shipped ${main.slice(0, 7)} to main`
 	});
 	expect(sh(join(dir, 'shipping.git'), 'log', '--format=%an|%s', 'main')).toBe(
 		'Sam|docs: add a title\nSam|init'
 	);
-	expect(sh(join(dir, 'shipping.git'), 'log', '-1', '--format=%b', 'main')).toBe(
-		'Readers need a title.\n\nCo-authored-by: ReGit <agent@regit.dev>'
+	expect(sh(join(dir, 'shipping.git'), 'log', '-1', '--format=%b', 'main')).toMatch(
+		/^Readers need a title\.\n\nCo-authored-by: ReGit <agent@regit\.dev>\n\nReGit-Ship: [0-9a-f]{32}$/
 	);
 	expect(sh(join(dir, 'shipping.git'), 'show', 'main:notes.md')).toBe('# Notes');
 	expect((await git.requests()).some((headers) => headers.authorization)).toBe(false);
@@ -825,7 +811,7 @@ test('ships finished work as one commit on main', async () => {
 	expect(sh(join(dir, `shipping--${id}.git`), 'rev-parse', 'main')).toBe(main);
 });
 
-test('hands a conflicting candidate back to its agent to resolve, then prepares it again', async () => {
+test('hands a conflicting ship back to its agent to resolve, then ships again', async () => {
 	const { repo, sam, id } = await startedThread('conflicting', [
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
@@ -842,24 +828,22 @@ test('hands a conflicting candidate back to its agent to resolve, then prepares 
 	]);
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
-	const resolved = await untilThread(
-		repo,
-		id,
-		(detail) => detail.promotions.length === 2 && detail.promotions[1]!.status === 'ready'
+	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
+	expect(shipped.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'event',
+			text: 'Ship conflicts with main in notes.md. Handing it back to the agent to bring up to date.'
+		})
 	);
-	expect(resolved.promotions[0]!).toMatchObject({ status: 'failed', candidate: null });
-	expect(resolved.promotions[0]!.error).toMatch(/Candidate rebase failed/);
 	const handedBack = JSON.stringify((await modelRequests()).at(-2)!.query);
-	expect(handedBack).toContain('This candidate conflicts with main.');
+	expect(handedBack).toContain('Shipping conflicted with main.');
 	expect(handedBack).toContain('conflicts in notes.md');
-	const candidate = resolved.promotions[1]!.candidate!;
-	expect(candidate.expectedHead).toBe(main);
-	expect(sh(join(dir, `${candidate.repository}.git`), 'show', `${candidate.sha}:notes.md`)).toBe(
-		'# Notes\n\nSome better notes'
-	);
+	const canonical = join(dir, 'conflicting.git');
+	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes\n\nSome better notes');
+	expect(sh(canonical, 'rev-parse', 'main^')).toBe(main);
+	expect(sh(canonical, 'log', '--format=%s', 'main')).toBe('docs: add a title\nBetter notes\ninit');
 	const runFork = join(dir, `conflicting--${id}.git`);
 	expect(sh(runFork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(main);
-	expect(sh(join(dir, 'conflicting.git'), 'log', '--format=%s', 'main')).toBe('Better notes\ninit');
 });
 
 test('records how far behind main threads are, warns on conflicts and merges only when asked', async () => {
@@ -1031,7 +1015,6 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
-	await approveCandidate(repo, id, sam);
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
 
 	expect(shipped.entries.at(-1)).toMatchObject({
