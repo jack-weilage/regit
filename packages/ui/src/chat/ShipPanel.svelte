@@ -1,11 +1,11 @@
 <script module lang="ts">
 	import type { ShipStage } from '@regit/core';
 
-	const stages: { stage: ShipStage; label: string }[] = [
-		{ stage: 'fetching', label: "Fetching the thread's work" },
-		{ stage: 'building', label: 'Building one commit on main' },
-		{ stage: 'pushing', label: 'Pushing to main' },
-		{ stage: 'recording', label: 'Recording provenance' }
+	const stages: { stage: ShipStage; label: (branch: string) => string }[] = [
+		{ stage: 'fetching', label: () => "Fetching the thread's work" },
+		{ stage: 'building', label: (branch) => `Building one commit on ${branch}` },
+		{ stage: 'pushing', label: (branch) => `Pushing to ${branch}` },
+		{ stage: 'recording', label: () => 'Recording provenance' }
 	];
 </script>
 
@@ -27,6 +27,7 @@
 	let { intent, status, progress, now, onship }: Props = $props();
 
 	let current = $derived(stages.findIndex(({ stage }) => stage === progress?.stage));
+	let branch = $derived(progress?.branch ?? 'the default branch');
 
 	let busy = $state(false);
 	let error = $state<string | null>(null);
@@ -54,7 +55,7 @@
 	<header>
 		<strong class="heading"
 			><StatusIcon state={shipping ? 'shipping' : 'pending'} />
-			{shipping ? 'Shipping to main' : 'Unshipped changes'}</strong
+			{shipping ? `Shipping to ${branch}` : 'Unshipped changes'}</strong
 		>
 		{#if shipping && progress}
 			<span class="elapsed">{formatDuration((now ?? stopwatch.now) - progress.started)}</span>
@@ -79,7 +80,7 @@
 				<li class={state} aria-current={index === current ? 'step' : undefined}>
 					<StatusIcon {state} />
 					<span>
-						{label}
+						{label(branch)}
 						{#if index === current && progress?.note}<span class="note">{progress.note}</span>{/if}
 					</span>
 				</li>
@@ -99,7 +100,7 @@
 			<div class="actions">
 				<Button size="sm" disabled={busy} onclick={() => (writing = false)}>Cancel</Button>
 				<Button type="submit" variant="primary" size="sm" disabled={busy || status !== 'needs-you'}
-					>Ship to main</Button
+					>Ship commit</Button
 				>
 			</div>
 		</form>

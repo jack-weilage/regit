@@ -267,7 +267,7 @@
 		await expect(canvas.getByRole('textbox', { name: 'Commit title' })).toHaveValue(
 			revisions[0]!.headline
 		);
-		await userEvent.click(canvas.getByRole('button', { name: 'Ship to main' }));
+		await userEvent.click(canvas.getByRole('button', { name: 'Ship commit' }));
 		await waitFor(() => expect(canvas.getByText('Shipped in a1b2c3d')).toBeVisible());
 		await expect(canvas.queryByRole('region', { name: 'Ship' })).toBeNull();
 	}}>{@render thread()}</Story

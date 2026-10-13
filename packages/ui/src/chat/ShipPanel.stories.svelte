@@ -23,7 +23,7 @@
 		await expect(canvas.getByRole('textbox', { name: 'Commit body' })).toHaveValue(intent.purpose);
 		await userEvent.clear(title);
 		await userEvent.type(title, 'perf: paginate members');
-		await userEvent.click(canvas.getByRole('button', { name: 'Ship to main' }));
+		await userEvent.click(canvas.getByRole('button', { name: 'Ship commit' }));
 		await waitFor(() => expect(canvas.queryByRole('textbox', { name: 'Commit title' })).toBeNull());
 		await expect(args.onship).toHaveBeenCalledWith({
 			title: 'perf: paginate members',
@@ -45,10 +45,16 @@
 	args={{
 		status: 'shipping',
 		now,
-		progress: { stage: 'starting', note: null, since: now - 1_000, started: now - 1_000 }
+		progress: {
+			stage: 'starting',
+			note: null,
+			branch: null,
+			since: now - 1_000,
+			started: now - 1_000
+		}
 	}}
 	play={async ({ canvas }) => {
-		await expect(canvas.getByText('Shipping to main')).toBeVisible();
+		await expect(canvas.getByText('Shipping to the default branch')).toBeVisible();
 		await expect(canvas.queryByRole('button')).toBeNull();
 		await expect(canvas.queryByRole('listitem', { current: 'step' })).toBeNull();
 	}}
@@ -62,6 +68,7 @@
 		progress: {
 			stage: 'pushing',
 			note: 'a1b2c3d onto 9f8e7d6',
+			branch: 'main',
 			since: now - 12_000,
 			started: now - 12_000
 		}
@@ -81,7 +88,8 @@
 		now,
 		progress: {
 			stage: 'building',
-			note: 'Main moved, so rebuilding on the new main',
+			note: 'master moved, so rebuilding on top of it',
+			branch: 'master',
 			since: now - 3_000,
 			started: now - 31_000
 		}
@@ -96,6 +104,7 @@
 		progress: {
 			stage: 'fetching',
 			note: 'Retrying, attempt 2',
+			branch: null,
 			since: now - 4_000,
 			started: now - 4_000
 		}
@@ -111,11 +120,11 @@
 	}}
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: 'Ship' }));
-		await userEvent.click(canvas.getByRole('button', { name: 'Ship to main' }));
+		await userEvent.click(canvas.getByRole('button', { name: 'Ship commit' }));
 		await waitFor(() =>
 			expect(canvas.getByRole('alert')).toHaveTextContent('Repository owner permission is required')
 		);
-		await expect(canvas.getByRole('button', { name: 'Ship to main' })).toBeEnabled();
+		await expect(canvas.getByRole('button', { name: 'Ship commit' })).toBeEnabled();
 	}}
 />
 

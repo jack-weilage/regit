@@ -32,9 +32,10 @@ export class RepositoryGit extends DurableObject<Env> {
 	// Squashes the thread onto main, pushes it and records provenance, reporting each stage.
 	// Safe to retry: a ship already on main is found, not repeated.
 	async ship(ship: Ship, attempt = 1): Promise<{ sha: string; branch: string }> {
+		let branch: string | null = null;
 		const progress = (stage: ShipStage, note: string | null = null) =>
 			this.env.REPOS.getByName(ship.repo)
-				.shipProgress(ship, { stage, note, since: Date.now() })
+				.shipProgress(ship, { stage, note, branch, since: Date.now() })
 				.catch((error: unknown) => console.warn('Could not report ship progress', error));
 		return this.#serial(async () => {
 			await progress('fetching', attempt > 1 ? `Retrying, attempt ${attempt}` : null);
@@ -50,19 +51,20 @@ export class RepositoryGit extends DurableObject<Env> {
 				await this.#allow(targets.map((target) => ({ ...target, push: false })));
 				const workspace = sandboxWorkspace(await this.#sandbox());
 				await workspace.clone({ remote: sourceInfo.remote, branch: ship.source.branch });
-				const branch =
+				const target =
 					(await workspace.headBranch({ remote: canonicalInfo.remote })) ??
 					canonicalInfo.defaultBranch;
+				branch = target;
 				await this.#allow(targets);
 				let sha: string | null = null;
 				for (let moved = 0; moved < 5 && !sha; moved++) {
-					await progress('building', moved ? 'Main moved, so rebuilding on the new main' : null);
+					await progress('building', moved ? `${target} moved, so rebuilding on top of it` : null);
 					const built = await workspace.buildShip({
 						id: ship.id,
 						sourceSha: ship.source.sha,
 						base: ship.source.base,
 						remote: canonicalInfo.remote,
-						branch,
+						branch: target,
 						message: [ship.title, ship.body, 'Co-authored-by: ReGit <agent@regit.dev>']
 							.filter(Boolean)
 							.join('\n\n'),
@@ -76,7 +78,7 @@ export class RepositoryGit extends DurableObject<Env> {
 							sha: built.sha,
 							head: built.head,
 							remote: canonicalInfo.remote,
-							branch
+							branch: target
 						});
 						if (pushed) sha = built.sha;
 					}
@@ -94,7 +96,7 @@ export class RepositoryGit extends DurableObject<Env> {
 						shippedBy: ship.by
 					})
 				});
-				return { sha, branch };
+				return { sha, branch: target };
 			} finally {
 				await this.#revoke(targets);
 			}

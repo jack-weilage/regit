@@ -14,6 +14,7 @@ export type ShipStage = 'starting' | 'fetching' | 'building' | 'pushing' | 'reco
 export interface ShipProgress {
 	stage: ShipStage;
 	note: string | null;
+	branch: string | null;
 	since: number;
 	started: number;
 }

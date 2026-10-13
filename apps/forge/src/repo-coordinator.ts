@@ -650,7 +650,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setMeta(`ship:${thread}`, ship.id);
 		this.#setStatus(thread, 'shipping');
 		const now = Date.now();
-		this.#setShipProgress(thread, { stage: 'starting', note: null, since: now, started: now });
+		this.#setShipProgress(thread, {
+			stage: 'starting',
+			note: null,
+			branch: null,
+			since: now,
+			started: now
+		});
 		this.#add(thread, { type: 'event', text: `${by.name} is shipping this thread to main` });
 		try {
 			await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
