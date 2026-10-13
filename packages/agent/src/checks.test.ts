@@ -80,7 +80,11 @@ describe('running checks', () => {
 			action: 'ship',
 			environment: '',
 			evidence: memory(),
-			run: async () => ({ ok: false, output: 'exit code 1' }),
+			run: async ({ name }) => ({
+				ok: false,
+				output: 'exit code 1',
+				log: `.git/regit-checks/${name}.log`
+			}),
 			ask: async () => ({ ok: false, output: '90% likely that the change breaks this check' })
 		});
 		expect(results.map(({ name, kind, status }) => [name, kind, status])).toEqual([
@@ -92,8 +96,13 @@ describe('running checks', () => {
 			'Ship checks: tests failed, lint warned, docs warned'
 		);
 		const notice = checksNotice('ship', results)!;
-		expect(notice).toContain('## tests (failed)\nexit code 1');
-		expect(notice).toContain('## docs (warning, not blocking)');
+		expect(notice).toContain('- tests: failed\n- lint: warned\n- docs: warned\n');
+		expect(notice).toContain(
+			'## tests (failed)\nFull log: .git/regit-checks/tests.log\nexit code 1'
+		);
+		expect(notice).toContain(
+			'## docs (warning, not blocking)\n90% likely that the change breaks this check'
+		);
 		expect(notice).toContain('ships again once you finish');
 		expect(checksNotice('handoff', results.slice(1))).toBeNull();
 	});

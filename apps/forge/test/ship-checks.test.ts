@@ -47,7 +47,9 @@ test('a failing ship check hands the thread back, and it ships once the agent fi
 	expect(notice).toContain(
 		'Shipping stopped because checks from .agents/checks.yml failed on this thread merged with main'
 	);
-	expect(notice).toContain('## title (failed)\\nexit code 1');
+	expect(notice).toContain(
+		'## title (failed)\\nFull log: .git/regit-checks/title.log\\nexit code 1'
+	);
 	expect(sh(canonical, 'rev-parse', 'main^')).toBe(original);
 	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
 });

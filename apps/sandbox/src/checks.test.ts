@@ -124,36 +124,55 @@ describe('planning checks', () => {
 });
 
 describe('running checks', () => {
-	test('reports the exit status and output', async () => {
-		expect(await workspace.runCheck({ command: 'echo fine' })).toEqual({
+	test('reports the exit status and the end of the output, and logs all of it', async () => {
+		expect(await workspace.runCheck({ name: 'fine', command: 'echo fine' })).toEqual({
 			ok: true,
-			output: 'exit code 0\nfine'
+			output: 'exit code 0\nfine',
+			log: '.git/regit-checks/fine.log'
 		});
-		expect(await workspace.runCheck({ command: 'echo broken >&2; exit 3' })).toEqual({
+		expect(
+			await workspace.runCheck({ name: 'unit tests', command: 'echo broken >&2; exit 3' })
+		).toEqual({
 			ok: false,
-			output: 'exit code 3\nbroken'
+			output: 'exit code 3\nbroken',
+			log: '.git/regit-checks/unit-tests.log'
 		});
-		expect(await workspace.runCheck({ command: 'sleep 5', timeoutSeconds: 1 })).toEqual({
-			ok: false,
-			output: 'timed out after 1s'
-		});
+		expect(
+			await workspace.runCheck({ name: 'slow', command: 'sleep 5', timeoutSeconds: 1 })
+		).toMatchObject({ ok: false, output: 'timed out after 1s' });
+
+		const long = await workspace.runCheck({ name: 'long', command: 'seq 1 500; exit 1' });
+		expect(long.output.split('\n').slice(0, 3)).toEqual([
+			'exit code 1',
+			'… (end of the log)',
+			'461'
+		]);
+		expect(long.output).toEndWith('\n500');
+		const log = await readFile(join(root, long.log), 'utf8');
+		expect(log).toStartWith('$ seq 1 500; exit 1\n1\n2\n');
+		expect(log).toEndWith('500\n\nexit code 1\n');
+		expect(await git(root, ['status', '--porcelain'])).toBe('');
 	});
 
 	test('runs at another commit and returns the workspace to its branch', async () => {
 		const old = await git(root, ['rev-parse', 'HEAD']);
 		await commit({ 'greeting.ts': "export const greeting = 'hi';\n" });
 		const result = await workspace.runCheck({
+			name: 'old',
 			command: 'cat greeting.ts; echo dirty > greeting.ts',
 			commit: old
 		});
-		expect(result).toEqual({ ok: true, output: "exit code 0\nexport const greeting = 'hello';" });
+		expect(result).toMatchObject({
+			ok: true,
+			output: "exit code 0\nexport const greeting = 'hello';"
+		});
 		expect(await git(root, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
 		expect(await readFile(join(root, 'greeting.ts'), 'utf8')).toBe(
 			"export const greeting = 'hi';\n"
 		);
 
 		await writeFile(join(root, 'greeting.ts'), 'uncommitted\n');
-		expect(workspace.runCheck({ command: 'true', commit: old })).rejects.toThrow(
+		expect(workspace.runCheck({ name: 'old', command: 'true', commit: old })).rejects.toThrow(
 			'uncommitted changes'
 		);
 	});

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type {
 	CandidateRequest,
 	CandidateResponse,
@@ -9,13 +11,16 @@ import type {
 	RunCheckRequest,
 	RunCheckResponse
 } from '@regit/agent';
-import { exec, git, noHooks, truncate } from './exec.ts';
+import { exec, git, noHooks } from './exec.ts';
 
 export const checksFile = '.agents/checks.yml';
+export const checkLogs = '.git/regit-checks';
 
 const actions: CheckAction[] = ['handoff', 'ship'];
 const keys = ['name', 'run', 'ask', 'when', 'inputs', 'before', 'blocking', 'timeout'];
 const defaultTimeoutSeconds = 15 * 60;
+const tailLines = 40;
+const tailChars = 4_000;
 const candidateIdentity = {
 	GIT_AUTHOR_NAME: 'ReGit',
 	GIT_AUTHOR_EMAIL: 'agent@regit.dev',
@@ -145,20 +150,33 @@ export async function checks(
 	return { checks };
 }
 
+// The end of a check's output, where failures usually are; the whole output goes to its log.
+function tail(output: string) {
+	const lines = output.trimEnd().split('\n');
+	const end = lines.slice(-tailLines).join('\n');
+	const text = end.length > tailChars ? end.slice(-tailChars) : end;
+	return text.length < output.trimEnd().length ? `… (end of the log)\n${text}` : text;
+}
+
 // Runs a check command in the workspace, at another commit when given, and puts the workspace back afterwards.
+// The full output is written to a log under .git, which checkpoints don't commit.
 export async function runCheck(
 	root: string,
-	{ command, commit, timeoutSeconds = defaultTimeoutSeconds }: RunCheckRequest
+	{ name, command, commit, timeoutSeconds = defaultTimeoutSeconds }: RunCheckRequest
 ): Promise<RunCheckResponse> {
+	const log = `${checkLogs}/${name.replace(/[^\w.-]+/g, '-')}.log`;
 	const run = async () => {
 		const { code, output, timedOut } = await exec('bash', ['-lc', command], {
 			cwd: root,
 			timeout: timeoutSeconds * 1000
 		});
 		const status = timedOut ? `timed out after ${timeoutSeconds}s` : `exit code ${code}`;
+		await mkdir(join(root, checkLogs), { recursive: true });
+		await writeFile(join(root, log), `$ ${command}\n${output}\n${status}\n`);
 		return {
 			ok: code === 0 && !timedOut,
-			output: `${status}\n${truncate(output, 8_000)}`.trimEnd()
+			output: `${status}\n${tail(output)}`.trimEnd(),
+			log
 		};
 	};
 	if (!commit || commit === 'HEAD') return run();

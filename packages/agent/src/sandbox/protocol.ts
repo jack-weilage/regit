@@ -208,6 +208,7 @@ export interface ChecksResponse {
 }
 
 export interface RunCheckRequest {
+	name: string;
 	command: string;
 	commit?: string;
 	timeoutSeconds?: number;
@@ -216,6 +217,7 @@ export interface RunCheckRequest {
 export interface RunCheckResponse {
 	ok: boolean;
 	output: string;
+	log: string;
 }
 
 export interface CandidateRequest {

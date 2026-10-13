@@ -37,7 +37,9 @@ test('sends failing handoff checks back to the agent and reuses passes while not
 	expect(notice).toContain(
 		'Checks from .agents/checks.yml that must pass before you hand off failed'
 	);
-	expect(notice).toContain('## title (failed)\\nexit code 1');
+	expect(notice).toContain(
+		'## title (failed)\\nFull log: .git/regit-checks/title.log\\nexit code 1'
+	);
 
 	await script('handoff', [say('Nothing to change.')]);
 	await repo.reply(id, { author: sam, text: 'Anything else?' });

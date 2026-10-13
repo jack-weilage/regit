@@ -11,6 +11,7 @@ export interface Evidence {
 export interface CheckOutcome {
 	ok: boolean;
 	output: string;
+	log?: string;
 }
 
 export interface RunChecksInput {
@@ -49,10 +50,10 @@ export async function runChecks({
 			results.push({ name: check.name, kind, status: 'passed', reused: true, output: '' });
 			continue;
 		}
-		const { ok, output } = await (check.run ? run(check) : ask(check));
+		const { ok, output, log } = await (check.run ? run(check) : ask(check));
 		if (ok) evidence.record(key);
 		const status = ok ? 'passed' : check.blocking ? 'failed' : 'warned';
-		results.push({ name: check.name, kind, status, reused: false, output });
+		results.push({ name: check.name, kind, status, reused: false, output, ...(log && { log }) });
 	}
 	return results;
 }
@@ -94,16 +95,29 @@ export function describeChecks(action: CheckAction, results: CheckResult[]) {
 	return `${label}: ${parts.join(', ')}`;
 }
 
-// What the agent is told when checks it must pass fail, with any advisory warnings alongside.
+// What the agent is told when checks it must pass fail: every result, then the end of each failure's output and where its full log is.
 export function checksNotice(action: CheckAction, results: CheckResult[]) {
 	const failed = blockingFailures(results);
 	if (!failed.length) return null;
-	const warned = results.filter((result) => result.status === 'warned');
-	const sections = [
-		...failed.map(({ name, output }) => `## ${name} (failed)\n${output}`),
-		...warned.map(({ name, output }) => `## ${name} (warning, not blocking)\n${output}`)
-	];
-	return action === 'ship'
-		? `Shipping stopped because checks from .agents/checks.yml failed on this thread merged with main:\n\n${sections.join('\n\n')}\n\nFix the failures; the thread ships again once you finish.`
-		: `Checks from .agents/checks.yml that must pass before you hand off failed:\n\n${sections.join('\n\n')}\n\nFix the failures, then reply with the outcome.`;
+	const summary = results.map(
+		({ name, status, reused }) => `- ${name}: ${status}${reused ? ' (unchanged)' : ''}`
+	);
+	const sections = results
+		.filter(({ status }) => status !== 'passed')
+		.map(({ name, status, output, log }) =>
+			[
+				`## ${name} (${status === 'failed' ? 'failed' : 'warning, not blocking'})`,
+				...(log ? [`Full log: ${log}`] : []),
+				output
+			].join('\n')
+		);
+	const intro =
+		action === 'ship'
+			? 'Shipping stopped because checks from .agents/checks.yml failed on this thread merged with main.'
+			: 'Checks from .agents/checks.yml that must pass before you hand off failed.';
+	const next =
+		action === 'ship'
+			? 'Fix the failures; the thread ships again once you finish.'
+			: 'Fix the failures, then reply with the outcome.';
+	return `${intro}\n${summary.join('\n')}\n\n${sections.join('\n\n')}\n\nRead or search a full log when its end isn't enough. ${next}`;
 }

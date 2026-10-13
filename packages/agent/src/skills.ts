@@ -56,6 +56,7 @@ checks:
 - run is a shell command that passes with exit code 0. A pass is reused while the files it depends on and the toolchain are unchanged; inputs narrows those files (globs or directories, default: everything). timeout is in seconds (default 900).
 - ask is a yes/no rule a decision model judges against the diff. It only warns unless blocking: true.
 - when limits a check to changes touching those paths. blocking: false makes a run check a warning.
+- Failures arrive as a pass/fail summary with the end of each failing output; the full output is in .git/regit-checks/<name>.log.
 - Keep handoff checks fast; put slow suites under ship.`
 };
 

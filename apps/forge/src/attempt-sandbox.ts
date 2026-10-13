@@ -710,7 +710,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 						)
 				},
 				run: (check: PlannedCheck) =>
-					workspace.runCheck({ command: check.run!, commit, timeoutSeconds: check.timeoutSeconds }),
+					workspace.runCheck({
+						name: check.name,
+						command: check.run!,
+						commit,
+						timeoutSeconds: check.timeoutSeconds
+					}),
 				ask: async (check: PlannedCheck) => {
 					diff ??= workspace.diff({ base, head: commit });
 					const request = askRequest(check.ask!, await diff);

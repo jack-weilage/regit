@@ -51,6 +51,7 @@ export interface CheckResult {
 	status: 'passed' | 'failed' | 'warned';
 	reused: boolean;
 	output: string;
+	log?: string;
 }
 
 export interface CheckRun {
