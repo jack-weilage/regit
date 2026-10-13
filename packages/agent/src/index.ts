@@ -31,7 +31,7 @@ export { modelRetries, runAgent, type AgentOutcome, type RetryPolicy } from './l
 export { interruptedOutput, resumeStep } from './resume.ts';
 export { backoff, errorMessage, isTransient, SandboxUnavailableError, sleep } from './transient.ts';
 export { modes, searcher, type Mode } from './modes.ts';
-export { cost, models } from './pricing.ts';
+export { compactThreshold, cost, models } from './pricing.ts';
 export type * from './types.ts';
 export * from './openai/index.ts';
 export * from './sandbox/index.ts';

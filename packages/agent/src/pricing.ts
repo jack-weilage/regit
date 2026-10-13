@@ -33,6 +33,13 @@ export const models: Record<string, ModelInfo> = {
 	}
 };
 
+// Compact before long-context pricing starts, leaving headroom for the step that crosses it.
+export function compactThreshold(model: string) {
+	const info = models[model];
+	if (!info) return undefined;
+	return Math.floor(Math.min(info.longContextFrom, info.contextWindow * 0.75) * 0.9);
+}
+
 export function cost(model: string, usage: Usage) {
 	const info = models[model];
 	if (!info) return null;

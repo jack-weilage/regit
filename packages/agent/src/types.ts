@@ -21,7 +21,14 @@ export type ToolOutput = string | { text: string; imageUrl: string };
 export type Turn =
 	| { role: 'user'; text: string }
 	| { role: 'notification'; text: string }
-	| { role: 'assistant'; text: string; calls: ToolCall[]; reasoning?: string[] }
+	| {
+			role: 'assistant';
+			text: string;
+			calls: ToolCall[];
+			reasoning?: string[];
+			// The model's summary of everything before this reply, replayed in place of it.
+			compaction?: string;
+	  }
 	| { role: 'tool'; results: ToolResult[] };
 
 export interface Usage {
@@ -35,6 +42,8 @@ export type ModelEvent =
 	| { type: 'text'; delta: string }
 	| { type: 'call'; call: ToolCall }
 	| { type: 'reasoning'; data: string }
+	| { type: 'compacting' }
+	| { type: 'compaction'; data: string }
 	| { type: 'done'; usage: Usage };
 
 export interface ModelRequest {
@@ -69,6 +78,7 @@ export interface Step {
 export type AgentEvent =
 	| { type: 'text'; delta: string }
 	| { type: 'call'; call: ToolCall }
+	| { type: 'compacting' }
 	| { type: 'reply'; reply: Reply; usage?: Usage }
 	| { type: 'result'; result: ToolResult }
 	| { type: 'retry'; label: string; error: string; attempt: number; limit: number; delayMs: number }

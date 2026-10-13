@@ -22,6 +22,7 @@ import {
 	askThreads,
 	askThreadsTools,
 	backoff,
+	compactThreshold,
 	errorMessage,
 	isTransient,
 	ModelError,
@@ -455,6 +456,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					gateway: { run: (request) => this.env.MODELS.run(request) },
 					model,
 					effort,
+					compactThreshold: compactThreshold(model),
 					sessionId: this.#thread(),
 					metadata: {
 						repo: attempt.repo,
@@ -509,6 +511,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 					this.#activity.calls = [];
 					const { label, error, attempt: number, limit, delayMs } = event;
 					this.#failed(label, error, 'model request', number, limit, delayMs);
+				} else if (event.type === 'compacting') {
+					if (this.#activity.status?.label !== 'Compacting the context')
+						this.#think('Compacting the context');
 				} else if (event.type === 'reply') {
 					const { reply, usage } = event;
 					this.#setMeta('inflight', JSON.stringify({ reply, usage, results: [] }));
