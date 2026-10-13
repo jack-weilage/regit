@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup } from './support.ts';
 
-const { dir, worker, seed, commit, sh, script } = await setup();
+const { dir, worker, seed, commit, sh, script, modelRequests } = await setup();
 const owner = { id: 'owner', name: 'Sam', kind: 'person' as const };
 const intent = {
 	headline: 'docs: add a title',
@@ -176,4 +176,34 @@ test('work after shipping builds on the shipped commit', async () => {
 	expect(sh(fork, 'show', 'main:footer.md')).toBe('A footer');
 	expect(later.summary.changes).toEqual({ files: 1, additions: 1, deletions: 0 });
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(published);
+});
+
+test('work since shipping that no longer applies on the shipped commit is merged for the agent to resolve', async () => {
+	const { env, repo, id, work, canonical, original } = await finishedThread('ship-replay');
+	await commit(work, { 'notes.md': '# Other notes\n' }, 'Ship another title');
+	sh(work, 'push', '--quiet', canonical, 'main');
+	const shipped = sh(canonical, 'rev-parse', 'main');
+	await env.ATTEMPTS.getByName(id).published({ sha: shipped, branch: 'main', from: original });
+
+	await script('ship-replay', [
+		tool('write_file', { path: 'notes.md', content: '# Merged notes\n' }),
+		say('Resolved.')
+	]);
+	await repo.reply(id, { author: owner, text: 'Carry on.' });
+	const resolved = await until(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Resolved.')
+	);
+	expect(resolved.summary.failure).toBeNull();
+	const notice = JSON.stringify((await modelRequests('ship-replay')).at(-1)!.query);
+	expect(notice).toContain(
+		`This thread shipped as ${shipped.slice(0, 7)}, but the work done since it was captured couldn't be replayed on top of it.`
+	);
+	expect(notice).toContain('merging it into this thread conflicts in notes.md');
+	const fork = join(dir, `ship-replay--${id}.git`);
+	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(shipped);
+	expect(sh(fork, 'show', 'main:notes.md')).toBe('# Merged notes');
 });

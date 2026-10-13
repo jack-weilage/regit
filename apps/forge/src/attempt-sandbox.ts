@@ -416,11 +416,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 				attempt.base = await this.#head(fetch);
 				this.#sql.exec('UPDATE agent SET base = ?', attempt.base);
 			}
-			await this.#rebase(attempt, fetch, fork, token);
+			const unrebased = await this.#rebase(attempt, fetch, fork, token);
 
 			const pending = await this.#drain(attempt.repo);
 			const syncing = !!this.#meta('sync');
-			const synced = syncing ? await this.#sync(attempt, fetch, fork, token) : null;
+			const synced = syncing ? await this.#sync(attempt, fetch, fork, token, unrebased) : null;
 			if (synced) await this.#recheckBehind(attempt, fetch, fork, token);
 			else await this.#reportBehind(attempt, fetch, fork, token);
 			const opening: Turn[] = [
@@ -607,30 +607,40 @@ export class AttemptSandbox extends DurableObject<Env> {
 		};
 	}
 
+	// Moves work done since shipping onto the shipped commit. When it doesn't apply, main is merged in for the agent to resolve, returning the shipped commit.
 	async #rebase(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
 		const pending = this.#meta('rebase');
-		if (!pending) return;
+		if (!pending) return null;
 		const { sha, branch, from } = JSON.parse(pending) as {
 			sha: string;
 			branch: string;
 			from: string;
 		};
 		await this.#fetchMain(attempt, fetch, fork, token, branch);
-		// TODO: let the agent resolve conflicts when later work no longer applies on top of the published commit.
-		await this.#git(
-			fetch,
-			`${gitAsReGit} rebase --onto ${sha} ${from} || (git rebase --abort; exit 1)`
-		);
+		const rebased = await this.#shell(fetch, `${gitAsReGit} rebase --onto ${sha} ${from}`);
+		if (!rebased.ok) {
+			await this.#shell(fetch, 'git rebase --abort');
+			this.#sql.exec("DELETE FROM meta WHERE key = 'rebase'");
+			this.#setMeta('sync', '1');
+			return sha;
+		}
 		await this.#push(fork, token, () =>
 			sandboxWorkspace(fetch).push({ ref: fork.branch, force: true })
 		);
 		attempt.base = sha;
 		this.#sql.exec('UPDATE agent SET base = ?', sha);
 		this.#sql.exec("DELETE FROM meta WHERE key = 'rebase'");
+		return null;
 	}
 
 	// Merges main into the thread so its agent can bring it up to date, as asked or after a conflicting ship.
-	async #sync(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+	async #sync(
+		attempt: AgentRow,
+		fetch: Fetch,
+		fork: Fork,
+		token: string,
+		shipped: string | null = null
+	) {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'sync'");
 		const branch = await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
 		if ((await this.#shell(fetch, 'git merge-base --is-ancestor FETCH_HEAD HEAD')).ok) return null;
@@ -652,11 +662,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#sql.exec('UPDATE agent SET base = ?', head);
 		this.#setMeta('notified', JSON.stringify(conflicts));
 		const what = landed ? `\n\nWhat landed on \`${branch}\`:\n${landed}` : '';
+		const why = shipped
+			? `This thread shipped as ${shipped.slice(0, 7)}, but the work done since it was captured couldn't be replayed on top of it. `
+			: '';
 		if (merged.ok) {
 			await this.#push(fork, token, () => sandboxWorkspace(fetch).push({ ref: fork.branch }));
-			return `\`${branch}\` moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
+			return `${why}\`${branch}\` moved to ${head.slice(0, 7)}, and it merged into this thread cleanly. Re-run the relevant checks against the merged code, then reply with the outcome.${what}`;
 		}
-		return `\`${branch}\` moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
+		return `${why}\`${branch}\` moved to ${head.slice(0, 7)}, and merging it into this thread conflicts in ${conflicts.join(', ')}. Resolve every conflict marker so both the landed changes and what this thread set out to do still hold, run the relevant checks, then reply with the outcome.${what}`;
 	}
 
 	behindMain(behind: ThreadSummary['behind']) {
