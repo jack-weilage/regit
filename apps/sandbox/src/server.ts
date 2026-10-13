@@ -4,6 +4,7 @@ import { isTool, ToolError, tools } from './tools.ts';
 import { trustInterception } from './trust.ts';
 import {
 	buildShip,
+	clashes,
 	clone,
 	commit,
 	compare,
@@ -41,6 +42,7 @@ export function createSandbox(
 		'publish-provenance': async (body) => (await publishProvenance(root, body), {}),
 		clone: (body) => services.pausedDuring(() => clone(root, body)),
 		compare: (body) => compare(root, body),
+		clashes: (body) => clashes(root, body),
 		commit: async (body) => ({ sha: await commit(root, body) }),
 		push: async (body) => ({ sha: await push(root, body) }),
 		diff: async (body) => ({ diff: await diff(root, body) }),

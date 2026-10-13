@@ -39,6 +39,7 @@ export interface SimilarMatch {
 export interface ThreadOverlap {
 	thread: string;
 	headline: string;
+	purpose?: string;
 	files: string[];
 }
 

@@ -715,7 +715,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		if (this.#agent()) this.#setMeta('overlaps', JSON.stringify(overlaps));
 	}
 
-	// Tells the agent once about each file another live thread also changes.
+	// Tells the agent once about each file that would conflict with another live thread.
 	#overlapNotes(): Turn[] {
 		const overlaps = JSON.parse(this.#meta('overlaps') ?? '[]') as ThreadOverlap[];
 		const told = JSON.parse(this.#meta('overlaps-notified') ?? '[]') as string[];
@@ -733,14 +733,15 @@ export class AttemptSandbox extends DurableObject<Env> {
 			}))
 			.filter(({ files }) => files.length);
 		if (!fresh.length) return [];
+		// TODO: consider a small-model summary of how the conflicting changes differ if agents struggle to reconcile them.
 		const lines = fresh.map(
-			({ thread, headline, files }) =>
-				`- Thread ${thread} ("${headline || 'New thread'}"): ${files.join(', ')}`
+			({ thread, headline, purpose, files }) =>
+				`- Thread ${thread} ("${headline || 'New thread'}"): ${files.join(', ')}${purpose ? `\n  Its intent: ${purpose}` : ''}`
 		);
 		return [
 			{
 				role: 'notification',
-				text: `Other threads that haven't shipped also change files this thread changes:\n${lines.join('\n')}\nTheir changes are not in your workspace. Keep your changes compatible with what they set out to do; if they could clash, agree on the shared part with message_thread and mention the overlap in your reply.`
+				text: `Other threads that haven't shipped have changes that would conflict with this thread's:\n${lines.join('\n')}\nTheir changes are not in your workspace; whichever thread ships second resolves the conflict. Use message_thread only if the two threads need to agree on how the shared code should end up, and mention the conflict in your reply.`
 			}
 		];
 	}

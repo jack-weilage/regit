@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import type { ThreadDetail } from '@regit/core';
 import { setup, untilThread, writeNotes } from './support.ts';
 
 const { dir, git, script, modelRequests, sh, commit, startedThread } = await setup();
@@ -189,46 +190,107 @@ test('tells an idle thread about conflicts with main even without a push event',
 	);
 });
 
-test('notes files two live threads both change, in each thread and once to their agents', async () => {
+const write = (command: string) => [
+	{
+		type: 'response.output_item.done',
+		item: {
+			type: 'function_call',
+			call_id: 'write',
+			name: 'run',
+			arguments: JSON.stringify({ command })
+		}
+	}
+];
+const done = (delta: string) => [{ type: 'response.output_text.delta', delta }];
+const conflicts = (detail: ThreadDetail) =>
+	detail.entries.flatMap((entry) =>
+		entry.type === 'event' && entry.text.startsWith('Conflicts with "') ? [entry.text] : []
+	);
+
+test('notes threads whose changes conflict, in each thread and once to their agents', async () => {
 	const {
 		repo,
 		sam,
 		id: first
 	} = await startedThread('overlap', [
-		writeNotes('# Notes\\n'),
-		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+		write("printf '# Notes\\n' > notes.md && printf 'a\\n' > bun.lock"),
+		done('Added the title.')
 	]);
 	await untilThread(repo, first, (detail) => detail.summary.status === 'needs-you');
-	await script('overlap', [
-		writeNotes('# Better notes\\n'),
-		[{ type: 'response.output_text.delta', delta: 'Rewrote the notes.' }]
+	const open = async (text: string, steps: object[][]) => {
+		await script('overlap', steps);
+		const { id } = await repo.openThread({
+			repo: 'overlap',
+			author: sam,
+			text,
+			mode: 'small',
+			machine: 'standard-1'
+		});
+		await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+		return id;
+	};
+	const same = await open('Add the same title.', [
+		write("printf '# Notes\\n' > notes.md"),
+		done('Added it too.')
 	]);
-	const { id: second } = await repo.openThread({
-		repo: 'overlap',
-		author: sam,
-		text: 'Rewrite the notes.',
-		mode: 'small',
-		machine: 'standard-1'
-	});
-	const noted = await untilThread(repo, second, (detail) => detail.summary.status === 'needs-you');
-	expect(noted.entries).toContainEqual(
-		expect.objectContaining({ type: 'event', text: 'Overlaps with "Add a title." in notes.md' })
-	);
-	expect((await repo.thread(first))!.entries.at(-1)).toMatchObject({
-		type: 'event',
-		text: 'Overlaps with "Rewrite the notes." in notes.md'
-	});
+	const rewrite = await open('Rewrite the notes.', [
+		write("printf '# Better notes\\n' > notes.md && printf 'c\\n' > bun.lock"),
+		done('Rewrote the notes.')
+	]);
+	const noted = await untilThread(repo, rewrite, (detail) => conflicts(detail).length === 2);
+	expect(conflicts(noted).sort()).toEqual([
+		'Conflicts with "Add a title." in notes.md',
+		'Conflicts with "Add the same title." in notes.md'
+	]);
+	expect(conflicts((await repo.thread(first))!)).toEqual([
+		'Conflicts with "Rewrite the notes." in notes.md'
+	]);
+	expect(conflicts((await repo.thread(same))!)).toEqual([
+		'Conflicts with "Rewrite the notes." in notes.md'
+	]);
 
 	const told = async (text: string, reply: string) => {
-		await script('overlap', [[{ type: 'response.output_text.delta', delta: reply }]]);
+		await script('overlap', [done(reply)]);
 		await repo.reply(first, { author: sam, text });
 		await untilThread(repo, first, (detail) =>
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === reply)
 		);
 		return JSON.stringify((await modelRequests('overlap')).at(-1)!.query);
 	};
-	expect(await told('Carry on.', 'Noted the overlap.')).toContain(
-		`- Thread ${second} (\\"Rewrite the notes.\\"): notes.md`
-	);
-	expect((await told('And now?', 'Still noted.')).split('also change files')).toHaveLength(2);
+	const notified = await told('Carry on.', 'Noted the conflict.');
+	expect(notified).toContain(`- Thread ${rewrite} (\\"Rewrite the notes.\\"): notes.md\\n`);
+	expect(notified).not.toContain(`- Thread ${same} `);
+	expect((await told('And now?', 'Still noted.')).split('would conflict with')).toHaveLength(2);
+});
+
+test('blames a conflict on another thread only in files both threads changed', async () => {
+	const {
+		repo,
+		sam,
+		id: first
+	} = await startedThread('stale-main', [
+		write("printf '# Notes\\n' > notes.md && printf 'Mine\\n' > todo.md"),
+		done('Added the title and a todo.')
+	]);
+	await untilThread(repo, first, (detail) => detail.summary.status === 'needs-you');
+	const work = join(dir, 'stale-main-work');
+	await commit(work, { 'todo.md': 'Theirs\n' }, 'Add a todo');
+	sh(work, 'push', '--quiet', join(dir, 'stale-main.git'), 'main');
+
+	await script('stale-main', [
+		write("printf '# Better notes\\n' > notes.md"),
+		done('Rewrote the notes.')
+	]);
+	const { id: later } = await repo.openThread({
+		repo: 'stale-main',
+		author: sam,
+		text: 'Rewrite the notes.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const noted = await untilThread(repo, later, (detail) => conflicts(detail).length > 0);
+	expect(conflicts(noted)).toEqual(['Conflicts with "Add a title." in notes.md']);
+	expect(conflicts((await repo.thread(first))!)).toEqual([
+		'Conflicts with "Rewrite the notes." in notes.md'
+	]);
 });

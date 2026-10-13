@@ -1,6 +1,8 @@
 import { access, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
+	ClashesRequest,
+	ClashesResponse,
 	CloneRequest,
 	CloneResponse,
 	CommitRequest,
@@ -269,17 +271,39 @@ export async function compare(
 			threads.push({ id: fork.id, behind, conflicts: [] });
 			continue;
 		}
-		const merged = await exec(
-			'git',
-			['merge-tree', '--write-tree', '--name-only', '--no-messages', main, head],
-			{ cwd: root }
-		);
-		if (merged.code !== 0 && merged.code !== 1)
-			throw new Error(`git merge-tree failed: ${merged.output.trim()}`);
-		const files = merged.code === 1 ? merged.stdout.trim().split('\n').slice(1) : [];
-		threads.push({ id: fork.id, behind, conflicts: files.filter(Boolean) });
+		threads.push({ id: fork.id, behind, conflicts: await conflicts(root, main, head) });
 	}
 	return { main, branch, headline, threads };
+}
+
+// Files that would conflict if each of the other forks merged into this one.
+export async function clashes(
+	root: string,
+	{ fork, others }: ClashesRequest
+): Promise<ClashesResponse> {
+	if (!(await exists(join(root, '.git')))) await git(root, ['init', '--quiet']);
+	safeRemote(fork.remote);
+	const head = await forkHead(root, fork);
+	if (!head) return { clashes: [] };
+	const found: ClashesResponse['clashes'] = [];
+	for (const other of others) {
+		safeRemote(other.remote);
+		const theirs = await forkHead(root, other);
+		const files = theirs ? await conflicts(root, head, theirs) : [];
+		if (files.length) found.push({ id: other.id, files });
+	}
+	return { clashes: found };
+}
+
+async function conflicts(root: string, ours: string, theirs: string) {
+	const merged = await exec(
+		'git',
+		['merge-tree', '--write-tree', '--name-only', '--no-messages', ours, theirs],
+		{ cwd: root }
+	);
+	if (merged.code !== 0 && merged.code !== 1)
+		throw new Error(`git merge-tree failed: ${merged.output.trim()}`);
+	return merged.code === 1 ? merged.stdout.trim().split('\n').slice(1).filter(Boolean) : [];
 }
 
 async function forkHead(root: string, { remote, branch, published }: CompareRequest['forks'][0]) {

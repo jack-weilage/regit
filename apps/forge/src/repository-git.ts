@@ -20,6 +20,8 @@ export class PublisherGitProxy extends WorkerEntrypoint<Env, { targets: GitAcces
 
 const committer = { name: 'ReGit', email: 'agent@regit.dev' };
 
+type ForkRef = { id: string; repository: string; branch: string; published?: string };
+
 export class RepositoryGit extends DurableObject<Env> {
 	#pending: Promise<unknown> = Promise.resolve();
 
@@ -103,19 +105,11 @@ export class RepositoryGit extends DurableObject<Env> {
 		});
 	}
 
-	async compare(
-		repo: string,
-		forks: { id: string; repository: string; branch: string; published?: string }[]
-	) {
+	async compare(repo: string, forks: ForkRef[]) {
 		return this.#serial(async () => {
 			using canonical = await this.env.ARTIFACTS.get(repo);
 			const canonicalInfo = await canonical.info();
-			const sources = [];
-			for (const fork of forks) {
-				using source = await this.env.ARTIFACTS.get(fork.repository);
-				const { remote } = await source.info();
-				sources.push({ fork, remote, access: await this.#access(source, remote) });
-			}
+			const sources = await this.#forks(forks);
 			const targets = [
 				await this.#access(canonical, canonicalInfo.remote),
 				...sources.map(({ access }) => access)
@@ -124,17 +118,38 @@ export class RepositoryGit extends DurableObject<Env> {
 				await this.#allow(targets);
 				return await sandboxWorkspace(await this.#sandbox()).compare({
 					remote: canonicalInfo.remote,
-					forks: sources.map(({ fork, remote }) => ({
-						id: fork.id,
-						remote,
-						branch: fork.branch,
-						published: fork.published
-					}))
+					forks: sources.map(({ fork }) => fork)
 				});
 			} finally {
 				await this.#revoke(targets);
 			}
 		});
+	}
+
+	async clashes(fork: ForkRef, others: ForkRef[]) {
+		return this.#serial(async () => {
+			const [mine, ...rest] = await this.#forks([fork, ...others]);
+			const targets = [mine!, ...rest].map(({ access }) => access);
+			try {
+				await this.#allow(targets);
+				return await sandboxWorkspace(await this.#sandbox()).clashes({
+					fork: mine!.fork,
+					others: rest.map(({ fork }) => fork)
+				});
+			} finally {
+				await this.#revoke(targets);
+			}
+		});
+	}
+
+	async #forks(forks: ForkRef[]) {
+		const sources = [];
+		for (const { repository, ...fork } of forks) {
+			using source = await this.env.ARTIFACTS.get(repository);
+			const { remote } = await source.info();
+			sources.push({ fork: { ...fork, remote }, access: await this.#access(source, remote) });
+		}
+		return sources;
 	}
 
 	async #access(repo: ArtifactsRepo, remote: string, push = false): Promise<GitAccess> {
