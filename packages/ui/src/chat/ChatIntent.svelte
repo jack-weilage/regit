@@ -23,11 +23,13 @@
 	import ThreadIcon from './ThreadIcon.svelte';
 	import { statuses } from './status.ts';
 	import type { SimilarThread, ThreadStatus } from './types.ts';
+	import type { DoneWhenResult } from '@regit/core';
 
 	interface Props {
 		headline: string;
 		purpose: string;
 		doneWhen: string[];
+		results?: Record<string, DoneWhenResult>;
 		status?: IntentStatus;
 		note?: string;
 		changes?: { files: number; additions: number; deletions: number };
@@ -45,6 +47,7 @@
 		headline,
 		purpose,
 		doneWhen,
+		results,
 		status,
 		note,
 		changes,
@@ -107,7 +110,7 @@
 	<p class="purpose">{purpose}</p>
 	<div class="section">
 		<p class="heading">Done when</p>
-		<ChatChecks checks={doneWhen} />
+		<ChatChecks checks={doneWhen} {results} />
 	</div>
 {/snippet}
 

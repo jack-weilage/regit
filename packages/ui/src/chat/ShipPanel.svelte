@@ -16,12 +16,21 @@
 	import Button from '../Button.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import ChatRetry from './ChatRetry.svelte';
+	import { doneWhenState } from './done-when.ts';
 	import { stopwatch } from './clock.svelte.ts';
 	import { formatDuration } from './format.ts';
-	import type { CheckResult, CheckRun, Intent, ShipProgress, ThreadStatus } from '@regit/core';
+	import type {
+		CheckResult,
+		CheckRun,
+		DoneWhenResult,
+		Intent,
+		ShipProgress,
+		ThreadStatus
+	} from '@regit/core';
 
 	interface Props {
 		intent?: Intent;
+		results?: Record<string, DoneWhenResult>;
 		status: ThreadStatus;
 		progress?: ShipProgress | null;
 		checks?: CheckRun | null;
@@ -30,7 +39,16 @@
 		onship: (commit: { title: string; body: string }) => Promise<unknown>;
 	}
 
-	let { intent, status, progress, checks, branch: known, now, onship }: Props = $props();
+	let {
+		intent,
+		results = {},
+		status,
+		progress,
+		checks,
+		branch: known,
+		now,
+		onship
+	}: Props = $props();
 
 	const uid = $props.id();
 
@@ -50,6 +68,11 @@
 	let body = $state('');
 
 	let shipping = $derived(status === 'shipping');
+	let unmet = $derived(
+		(intent?.doneWhen ?? [])
+			.map((check) => ({ check, ...doneWhenState(results[check]) }))
+			.filter(({ met }) => !met)
+	);
 
 	async function ship() {
 		busy = true;
@@ -122,6 +145,24 @@
 						{:else}
 							<div class="row">{@render check(result)}</div>
 						{/if}
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+	{#if !shipping && unmet.length}
+		<div class="checks">
+			<p class="label" id="{uid}-done-when">
+				{unmet.length} of {intent!.doneWhen.length} done-when checks not met
+			</p>
+			<ul aria-labelledby="{uid}-done-when">
+				{#each unmet as { check, icon, label } (check)}
+					<li class={icon}>
+						<div class="row">
+							<StatusIcon state={icon} />
+							<span class="name">{check}</span>
+							<span class="reused">{label ?? 'Not checked'}</span>
+						</div>
 					</li>
 				{/each}
 			</ul>

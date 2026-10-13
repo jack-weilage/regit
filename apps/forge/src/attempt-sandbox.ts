@@ -19,6 +19,7 @@ import {
 	type ThreadSummary,
 	type CheckAction,
 	type CheckResult,
+	type Intent,
 	type Ship,
 	type ShipVerification
 } from '@regit/core';
@@ -458,6 +459,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			base: main,
 			commit: candidate.sha,
 			config: main,
+			intent: async () => ship.intent,
 			started: () =>
 				this.env.REPOS.getByName(ship.repo)
 					.shipProgress(ship, { stage: 'checking', note: null, branch, since: Date.now() })
@@ -542,9 +544,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 				tools: combineTools(
 					skillTools(skills),
 					guidance.tools,
-					intentTools((intent) =>
-						this.env.REPOS.getByName(attempt.repo).intentProposed(this.#thread(), intent)
-					),
+					intentTools({
+						update: (intent) =>
+							this.env.REPOS.getByName(attempt.repo).intentProposed(this.#thread(), intent),
+						record: async (results) =>
+							this.env.REPOS.getByName(attempt.repo).doneWhenRecorded(
+								this.#thread(),
+								results,
+								await this.#tree(fetch)
+							)
+					}),
 					suggestTools((suggestion) =>
 						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#thread(), suggestion)
 					),
@@ -678,6 +687,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const results = await this.#check(attempt, fetch, 'handoff', {
 				base: attempt.base,
 				commit: 'HEAD',
+				intent: () => this.env.REPOS.getByName(attempt.repo).intent(this.#thread()),
 				signal
 			});
 			if (signal?.aborted) return;
@@ -706,12 +716,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 			base,
 			commit,
 			config,
+			intent,
 			started,
 			signal
 		}: {
 			base: string;
 			commit: string;
 			config?: string;
+			intent: () => Promise<Intent | null | undefined>;
 			started?: () => Promise<unknown>;
 			signal?: AbortSignal;
 		}
@@ -732,6 +744,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				action,
 				signal,
 				environment: attempt.toolchain ?? '',
+				intent,
 				evidence: {
 					passed: (key) =>
 						this.#sql
@@ -755,9 +768,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 						commit,
 						timeoutSeconds: check.timeoutSeconds
 					}),
-				ask: async (check: PlannedCheck) => {
+				ask: async (check: PlannedCheck, context?: string) => {
 					diff ??= workspace.diff({ base, head: commit });
-					const request = askRequest(check.ask!, await diff);
+					const request = askRequest(check.ask!, await diff, context);
 					const metadata = { repo: attempt.repo, thread: this.#thread(), task: 'check' };
 					return askVerdict(await this.env.MODELS.decide(request, metadata));
 				}
@@ -795,6 +808,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			this.#setMeta('changes', JSON.stringify(files));
 			await this.#report(attempt.repo, {
 				type: 'changes',
+				tree: await this.#tree(fetch),
 				summary: summarize(files),
 				paths: [
 					...new Set(files.flatMap(({ path, oldPath }) => (oldPath ? [oldPath, path] : [path])))
@@ -1030,6 +1044,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const text = typeof output === 'string' ? output : output.text;
 		const [status = '', ...rest] = text.split('\n');
 		return { ok: status === 'exit code 0', output: rest.join('\n') };
+	}
+
+	// The tree done-when results are recorded on; null when it can't be read, which leaves them outdated.
+	async #tree(fetch: Fetch) {
+		return (await this.#git(fetch, 'git rev-parse HEAD^{tree}').catch(() => '')).trim() || null;
 	}
 
 	async #git(fetch: Fetch, command: string) {

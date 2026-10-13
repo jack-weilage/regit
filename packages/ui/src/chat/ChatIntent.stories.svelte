@@ -115,6 +115,42 @@
 />
 
 <Story
+	name="Verified"
+	args={{
+		...progress,
+		status: 'needs-you',
+		results: {
+			[progress.doneWhen[0]!]: {
+				status: 'met',
+				evidence: 'bun test settings: render took 310ms with 10k members',
+				at: 0,
+				tree: 'a1b2c3d'
+			},
+			[progress.doneWhen[1]!]: {
+				status: 'met',
+				evidence: 'Scrolled the preview; members loaded in pages of 50',
+				at: 0,
+				tree: 'f0e1d2c',
+				stale: true
+			},
+			[progress.doneWhen[2]!]: {
+				status: 'unverified',
+				evidence: 'The member suite needs a database the sandbox lacks',
+				at: 0,
+				tree: 'a1b2c3d'
+			}
+		}
+	}}
+	play={async ({ canvas }) => {
+		await expect(
+			canvas.getByText('Met · bun test settings: render took 310ms with 10k members')
+		).toBeVisible();
+		await expect(canvas.getByText(/^Outdated · /)).toBeVisible();
+		await expect(canvas.getByText(/^Unverified · /)).toBeVisible();
+	}}
+/>
+
+<Story
 	name="Shipping"
 	args={{
 		...progress,

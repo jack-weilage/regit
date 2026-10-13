@@ -33,6 +33,31 @@
 />
 
 <Story
+	name="Done when"
+	args={{
+		results: {
+			[intent.doneWhen[0]!]: {
+				status: 'met',
+				evidence: 'Rendered settings before the member request resolved',
+				at: 0,
+				tree: 'a1b2c3d'
+			},
+			[intent.doneWhen[1]!]: {
+				status: 'unverified',
+				evidence: 'Needs a browser',
+				at: 0,
+				tree: 'a1b2c3d'
+			}
+		}
+	}}
+	play={async ({ canvas }) => {
+		const list = canvas.getByRole('list', { name: '1 of 2 done-when checks not met' });
+		await expect(list).toHaveTextContent('Members load as you scroll. Unverified');
+		await expect(list).not.toHaveTextContent(intent.doneWhen[0]!);
+	}}
+/>
+
+<Story
 	name="Working"
 	args={{ status: 'running' }}
 	play={async ({ canvas }) => {
