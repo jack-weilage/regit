@@ -91,6 +91,7 @@
 		--icon-size: 1em;
 
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--space-1);
 		margin: 0;
 		padding: 0;
@@ -164,5 +165,6 @@
 		font-family: var(--font-mono);
 		line-height: 1.5;
 		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 </style>
