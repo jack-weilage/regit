@@ -11,7 +11,8 @@
 			id: 'members',
 			number: 42,
 			headline: 'perf(settings): load members lazily',
-			status: 'needs-you',
+			status: 'idle',
+			needsYou: true,
 			updatedAt: minutes(4),
 			href: '#members',
 			preview: {
@@ -33,17 +34,26 @@
 			id: 'sessions',
 			number: 7,
 			headline: 'fix(auth): refresh expired sessions',
-			status: 'needs-you',
+			status: 'idle',
+			needsYou: true,
 			updatedAt: minutes(60),
 			href: '#sessions',
 			conflictsWith: 'main',
 			failed: 'The agent stopped'
 		},
 		{
+			id: 'question',
+			number: 44,
+			headline: 'Where do we validate webhooks?',
+			status: 'idle',
+			updatedAt: minutes(1),
+			href: '#question'
+		},
+		{
 			id: 'invoices',
 			number: 43,
 			headline: 'feat(billing): export invoices as CSV',
-			status: 'running',
+			status: 'working',
 			updatedAt: minutes(0),
 			href: '#invoices'
 		},
@@ -51,7 +61,7 @@
 			id: 'readme',
 			number: 41,
 			headline: 'docs(readme): document local setup',
-			status: 'running',
+			status: 'working',
 			updatedAt: minutes(2),
 			href: '#readme'
 		},
@@ -97,13 +107,15 @@
 			'href',
 			'#members'
 		);
-		const sections = ['Needs you', 'Running', 'Recent'].map((name) =>
-			canvas.getByRole('list', { name })
-		);
-		await expect(within(sections[0]!).getAllByRole('link')).toHaveLength(2);
-		await expect(
-			[...sections[2]!.querySelectorAll('time')].map((time) => time.textContent)
-		).toEqual(['1d']);
+		const open = canvas.getByRole('list', { name: 'Open threads' });
+		await expect([...open.querySelectorAll('time')].map((time) => time.textContent)).toEqual([
+			'now',
+			'1m',
+			'2m',
+			'4m',
+			'1h',
+			'1d'
+		]);
 		await expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull();
 		await expect(canvas.queryByRole('link', { name: /split the router/ })).toBeNull();
 		await expect(canvas.getByRole('link', { name: /load members lazily/ })).toHaveAttribute(
@@ -203,9 +215,10 @@
 		await expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull();
 		await userEvent.click(toggle);
 		const archived = await canvas.findByRole('list', { name: 'Archived' });
-		await expect(
-			[...archived.querySelectorAll('time')].map((time) => time.textContent)
-		).toEqual(['3h', 'Sep 23']);
+		await expect([...archived.querySelectorAll('time')].map((time) => time.textContent)).toEqual([
+			'3h',
+			'Sep 23'
+		]);
 		await userEvent.click(toggle);
 		await waitFor(() => expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull());
 	}}
@@ -267,14 +280,15 @@
 			{
 				id: 'sessions',
 				headline: 'fix(auth): refresh expired sessions',
-				status: 'needs-you',
+				status: 'idle',
+				needsYou: true,
 				updatedAt: minutes(0),
 				href: '#'
 			},
 			{
 				id: 'members',
 				headline: 'perf(settings): load members lazily',
-				status: 'running',
+				status: 'working',
 				updatedAt: minutes(12),
 				href: '#'
 			},
@@ -288,7 +302,7 @@
 			{
 				id: 'modes',
 				headline: 'docs: explain modes',
-				status: 'running',
+				status: 'working',
 				updatedAt: minutes(1),
 				href: '#'
 			},
@@ -324,22 +338,87 @@
 		);
 		await expect(icons).toEqual([
 			'Needs you',
-			'Running',
-			'Running',
+			'Working',
+			'Working',
 			'Shipping',
 			'Shipped',
 			'Archived',
 			'Archived'
 		]);
 		await expect(
-			within(canvas.getByRole('list', { name: 'Running' })).getAllByRole('link')
-		).toHaveLength(3);
+			within(canvas.getByRole('list', { name: 'Open threads' })).getAllByRole('link')
+		).toHaveLength(5);
 		await expect(
 			[...canvasElement.querySelectorAll('time')].slice(0, 4).map((time) => time.textContent)
 		).toEqual(['now', '1m', '12m', '3h']);
 		const rows = canvas.getAllByRole('link');
 		await expect(new Set(rows.map((row) => row.offsetHeight)).size).toBe(1);
 		await expect(rows.filter((row) => row.getAttribute('aria-current') === 'page')).toHaveLength(1);
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Idle"
+	args={{
+		current: undefined,
+		threads: [
+			{
+				id: 'question',
+				headline: 'Where do we validate webhooks?',
+				status: 'idle',
+				updatedAt: minutes(1),
+				href: '#question'
+			},
+			{
+				id: 'changes',
+				headline: 'feat(billing): export invoices as CSV',
+				status: 'idle',
+				needsYou: true,
+				updatedAt: minutes(20),
+				href: '#changes'
+			},
+			{
+				id: 'answered',
+				headline: 'How are sessions refreshed?',
+				status: 'idle',
+				updatedAt: minutes(5),
+				href: '#answered'
+			},
+			{
+				id: 'failed',
+				headline: 'fix(auth): refresh expired sessions',
+				status: 'idle',
+				needsYou: true,
+				failed: 'The agent stopped',
+				updatedAt: minutes(60),
+				href: '#failed'
+			}
+		]
+	}}
+	play={async ({ canvas }) => {
+		const links = within(canvas.getByRole('list', { name: 'Open threads' })).getAllByRole('link');
+		await expect(links.map((link) => link.querySelector('.headline')!.textContent)).toEqual([
+			'Where do we validate webhooks?',
+			'How are sessions refreshed?',
+			'feat(billing): export invoices as CSV',
+			'fix(auth): refresh expired sessions'
+		]);
+		await expect(links.map((link) => link.classList.contains('attention'))).toEqual([
+			false,
+			false,
+			true,
+			true
+		]);
+		await expect(within(links[0]!).getByRole('img', { name: 'Idle' })).toBeVisible();
+		await expect(within(links[1]!).getByRole('img', { name: 'Idle' })).toBeVisible();
+		await expect(within(links[2]!).getByRole('img', { name: 'Needs you' })).toBeVisible();
+		await expect(within(links[3]!).getByRole('img', { name: 'The agent stopped' })).toBeVisible();
 	}}
 >
 	{#snippet template(args)}
@@ -357,14 +436,14 @@
 			{
 				id: 'settings',
 				headline: 'perf(settings): load members lazily',
-				status: 'running',
+				status: 'working',
 				updatedAt: minutes(1),
 				href: '#settings'
 			},
 			{
 				id: 'audit',
 				headline: 'fix(audit): query only the last entry',
-				status: 'running',
+				status: 'working',
 				updatedAt: minutes(3),
 				href: '#audit',
 				parent: { id: 'settings', headline: 'perf(settings): load members lazily' }
@@ -372,7 +451,7 @@
 			{
 				id: 'index',
 				headline: 'perf(db): index audit entries by repo',
-				status: 'running',
+				status: 'working',
 				updatedAt: minutes(5),
 				href: '#index',
 				parent: { id: 'audit', headline: 'fix(audit): query only the last entry' }
@@ -380,7 +459,7 @@
 			{
 				id: 'avatars',
 				headline: 'perf(settings): cache member avatars',
-				status: 'running',
+				status: 'working',
 				updatedAt: minutes(2),
 				href: '#avatars',
 				parent: { id: 'settings', headline: 'perf(settings): load members lazily' }
@@ -388,7 +467,7 @@
 			{
 				id: 'copy',
 				headline: 'docs(settings): explain lazy loading',
-				status: 'needs-you',
+				status: 'idle',
 				updatedAt: minutes(8),
 				href: '#copy',
 				parent: { id: 'settings', headline: 'perf(settings): load members lazily' }
@@ -396,7 +475,7 @@
 			{
 				id: 'orphan',
 				headline: 'chore: drop the old audit table',
-				status: 'needs-you',
+				status: 'idle',
 				updatedAt: minutes(30),
 				href: '#orphan',
 				parent: { id: 'gone', headline: 'refactor(audit): move to D1' }
@@ -404,8 +483,7 @@
 		]
 	}}
 	play={async ({ canvas, userEvent }) => {
-		const running = canvas.getByRole('list', { name: 'Running' });
-		const spunOff = within(running).getByRole('list', {
+		const spunOff = canvas.getByRole('list', {
 			name: 'Spun off from perf(settings): load members lazily'
 		});
 		await expect(
@@ -413,26 +491,23 @@
 		).toEqual([
 			'perf(settings): cache member avatars',
 			'fix(audit): query only the last entry',
-			'perf(db): index audit entries by repo'
+			'perf(db): index audit entries by repo',
+			'docs(settings): explain lazy loading'
 		]);
 		await expect(
-			within(running).getByRole('list', {
-				name: 'Spun off from fix(audit): query only the last entry'
-			})
+			canvas.getByRole('list', { name: 'Spun off from fix(audit): query only the last entry' })
 		).toBeVisible();
-		await expect(within(running).queryByRole('img', { name: /Spun off from/ })).toBeNull();
+		await expect(within(spunOff).queryByRole('img', { name: /Spun off from/ })).toBeNull();
 
 		const copy = canvas.getByRole('link', { name: /explain lazy loading/ });
-		await expect(
-			within(copy).getByRole('img', { name: 'Spun off from perf(settings): load members lazily' })
-		).toBeVisible();
+		await expect(within(copy).getByRole('img', { name: 'Idle' })).toBeVisible();
 		await expect(
 			within(canvas.getByRole('link', { name: /drop the old audit table/ })).getByRole('img', {
 				name: 'Spun off from refactor(audit): move to D1'
 			})
 		).toBeVisible();
 
-		const parent = canvas.getByRole('link', { name: /^Running perf\(settings\): load/ });
+		const parent = canvas.getByRole('link', { name: /^Working perf\(settings\): load/ });
 		const row = (link: HTMLElement) => link.closest('.row')!;
 		await userEvent.hover(parent);
 		await waitFor(() => expect(row(copy)).toHaveClass('related'));
@@ -480,7 +555,7 @@
 			{
 				id: 'fresh',
 				headline: 'fix(auth): refresh expired sessions',
-				status: 'running',
+				status: 'working',
 				updatedAt: Date.now() - 50_000,
 				href: '#'
 			}

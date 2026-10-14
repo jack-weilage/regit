@@ -4,22 +4,32 @@
 	import Menu from '../Menu.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import ChatMention from './ChatMention.svelte';
-	import { statuses } from './status.ts';
+	import { needsYou as flagged, statuses } from './status.ts';
 	import type { Author, Mentionable, ThreadAction, ThreadStatus } from './types.ts';
 
 	interface Props {
 		headline: string;
 		number?: number;
 		status: ThreadStatus;
+		needsYou?: boolean;
 		parent?: Mentionable;
 		people?: Author[];
 		actions?: ThreadAction[];
 		onpreview?: () => void;
 	}
 
-	let { headline, number, status, parent, people = [], actions = [], onpreview }: Props = $props();
+	let {
+		headline,
+		number,
+		status,
+		needsYou = false,
+		parent,
+		people = [],
+		actions = [],
+		onpreview
+	}: Props = $props();
 
-	let current = $derived(statuses[status]);
+	let current = $derived(status === 'idle' && needsYou ? flagged : statuses[status]);
 </script>
 
 <header>

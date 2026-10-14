@@ -10,7 +10,7 @@ test('ships finished work as one commit on main', async () => {
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
 		[{ type: 'response.output_text.delta', delta: 'It is the first line.' }]
 	]);
-	const ready = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const ready = await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	expect(ready.summary.changes).toEqual({ files: 1, additions: 1, deletions: 1 });
 	expect(await repo.changes(id)).toMatchObject([
 		{ path: 'notes.md', change: 'modified', additions: 1, deletions: 1 }
@@ -60,7 +60,7 @@ test('ships finished work as one commit on main', async () => {
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some(
 				(entry) => entry.type === 'message' && entry.text === 'It is the first line.'
 			)
@@ -74,7 +74,7 @@ test('hands a conflicting ship back to its agent to resolve, then ships again', 
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const work = join(dir, 'conflicting-work');
 	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
 	sh(work, 'push', '--quiet', join(dir, 'conflicting.git'), 'main');
@@ -110,7 +110,7 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 		[writeNotes('# Notes\\n'), [{ type: 'response.output_text.delta', delta: 'Added the title.' }]],
 		'master'
 	);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');

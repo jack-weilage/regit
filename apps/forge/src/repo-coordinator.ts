@@ -61,6 +61,7 @@ import {
 	describeTrigger,
 	idlePhase,
 	maxDeploySecretBytes,
+	needsYou,
 	normalizeAutomation,
 	threadPurgeDelayMs
 } from '@regit/core';
@@ -114,6 +115,7 @@ type ThreadRow = {
 	overlaps: string | null;
 	checks: string | null;
 	verdict: Verdict | null;
+	unmet: number | null;
 	parent_headline?: string | null;
 	parent_number?: number | null;
 };
@@ -323,11 +325,28 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
 		// TODO: remove once no coordinator has threads in the removed draft and reviewing statuses.
 		this.#sql.exec(`
-			UPDATE threads SET status = 'needs-you' WHERE status IN ('draft', 'reviewing');
-			UPDATE threads SET reopen_status = 'needs-you' WHERE reopen_status IN ('draft', 'reviewing');
+			UPDATE threads SET status = 'idle' WHERE status IN ('draft', 'reviewing');
+			UPDATE threads SET reopen_status = 'idle' WHERE reopen_status IN ('draft', 'reviewing');
 		`);
 		// TODO: remove once no coordinator has threads in the renamed discarded status.
 		this.#sql.exec("UPDATE threads SET status = 'archived' WHERE status = 'discarded'");
+		// TODO: remove once no coordinator has threads in the renamed running and needs-you statuses.
+		this.#sql.exec(`
+			UPDATE threads SET status = 'working' WHERE status = 'running';
+			UPDATE threads SET status = 'idle' WHERE status = 'needs-you';
+			UPDATE threads SET reopen_status = 'working' WHERE reopen_status = 'running';
+			UPDATE threads SET reopen_status = 'idle' WHERE reopen_status = 'needs-you';
+		`);
+		// TODO: remove once every repository's coordinator has the unmet column.
+		try {
+			this.#sql.exec('ALTER TABLE threads ADD COLUMN unmet INTEGER NOT NULL DEFAULT 0');
+			for (const { id } of this.#sql.exec<{ id: string }>('SELECT id FROM threads').toArray()) {
+				const entry = this.#latestIntentEntry(id);
+				if (entry) this.#countUnmet(id, entry);
+			}
+		} catch {
+			/* Already added. */
+		}
 	}
 
 	async openThread({
@@ -358,7 +377,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async reply(thread: string, { author, text }: { author: Author; text: string }) {
 		const summary = this.#active(thread);
-		const steering = summary.status === 'running';
+		const steering = summary.status === 'working';
 		const entry = this.#add(thread, {
 			type: 'message',
 			author,
@@ -366,7 +385,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			...(steering && { steering: { read: false } })
 		});
 		if (summary.status === 'archived') return;
-		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
+		if (['idle', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'working');
 		await this.#converse(thread, author, text, entry);
 	}
 
@@ -377,7 +396,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			type: 'event',
 			text: `${by.name} asked to bring this thread up to date with ${await this.#branch()}`
 		});
-		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
+		if (['idle', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'working');
 		await this.#converse(
 			thread,
 			by,
@@ -392,7 +411,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.#notShipping(thread);
 		this.#takeHandBack(thread);
 		if (summary.status === 'archived') return;
-		const reopen = ['running', 'shipping'].includes(summary.status) ? 'needs-you' : summary.status;
+		const reopen = ['working', 'shipping'].includes(summary.status) ? 'idle' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Archived by ${by.name}` });
 		this.#setStatus(thread, 'archived');
@@ -411,7 +430,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			)
 			.toArray();
 		this.#add(thread, { type: 'event', text: `Reopened by ${by.name}` });
-		this.#setStatus(thread, row?.reopen_status ?? 'needs-you');
+		this.#setStatus(thread, row?.reopen_status ?? 'idle');
 		this.#checkOverlaps(thread);
 	}
 
@@ -447,16 +466,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			});
 		for (const row of pending) this.#markRead(thread, `e${row.seq}`);
 		this.#add(thread, { type: 'event', text: `Stopped by ${by.name}` });
-		if (['running', 'shipping'].includes(summary.status)) {
-			this.#setStatus(thread, 'needs-you');
+		if (['working', 'shipping'].includes(summary.status)) {
+			this.#setStatus(thread, 'idle');
 		}
 	}
 
 	async resume(thread: string, by: Author) {
 		const summary = this.#active(thread);
-		if (summary.status !== 'needs-you' || !summary.failure?.resumable) return;
+		if (summary.status !== 'idle' || !summary.failure?.resumable) return;
 		this.#add(thread, { type: 'event', text: `${by.name} asked the agent to try again` });
-		this.#setStatus(thread, 'running');
+		this.#setStatus(thread, 'working');
 		try {
 			await retrying('Agent', () => this.#agent(thread).resume());
 		} catch (error) {
@@ -552,7 +571,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const sender = this.#active(from);
 		const recipient = this.#summary(to);
 		if (!recipient || recipient.deleted) throw new Error(`There is no thread ${to}`);
-		const steering = recipient.status === 'running';
+		const steering = recipient.status === 'working';
 		if (['archived', 'shipping'].includes(recipient.status)) {
 			throw new Error(`Thread ${to} is ${recipient.status}. Tell your person instead.`);
 		}
@@ -893,7 +912,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	async ship(thread: string, input: ShipInput) {
 		const summary = this.#active(thread);
-		if (summary.status !== 'needs-you' || !summary.changes?.files) {
+		if (summary.status !== 'idle' || !summary.changes?.files) {
 			throw new Error('This thread has nothing ready to ship');
 		}
 		await this.#owner(input.by);
@@ -903,8 +922,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async #startShip(thread: string, { by, email, title, body }: ShipInput, handBacks: number) {
 		const source = await this.#agent(thread).revision();
 		if (!source) throw new Error('This thread has no changes to ship');
-		if (this.#active(thread).status !== 'needs-you')
-			throw new Error('The thread started working again');
+		if (this.#active(thread).status !== 'idle') throw new Error('The thread started working again');
 		const ship: Ship = {
 			id: crypto.randomUUID().replaceAll('-', ''),
 			repo: this.#repo(),
@@ -1045,7 +1063,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#stopShipping(thread: string, reason: string, failures: RetryFailure[] = []) {
 		this.#sql.exec('DELETE FROM meta WHERE key = ?', `ship:${thread}`);
 		this.#setShipProgress(thread, null);
-		this.#setStatus(thread, 'needs-you');
+		this.#setStatus(thread, 'idle');
 		this.#fail(thread, { title: 'Shipping stopped', error: reason, failures }, false);
 	}
 
@@ -1062,7 +1080,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	#unreachable(thread: string, error: unknown) {
-		if (this.#summary(thread)?.status === 'running') this.#setStatus(thread, 'needs-you');
+		if (this.#summary(thread)?.status === 'working') this.#setStatus(thread, 'idle');
 		const failures = error instanceof RetriesExhausted ? error.failures : [];
 		const message = error instanceof Error ? error.message : String(error);
 		this.#fail(thread, { title: "Couldn't reach the agent", error: message, failures }, false);
@@ -1083,7 +1101,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text: `${message}. Handing it back to the agent to ${conflict ? 'bring up to date' : 'fix'}.`,
 			tone: 'warning'
 		});
-		this.#setStatus(ship.thread, 'running');
+		this.#setStatus(ship.thread, 'working');
 		await this.#converse(
 			ship.thread,
 			agent,
@@ -1335,7 +1353,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text: `Deploy checks failed on ${branch} after this shipped as ${culprit.sha.slice(0, 7)}: ${failed.join(', ')}. Handing it back to the agent to fix.`,
 			tone: 'danger'
 		});
-		this.#setStatus(thread, 'running');
+		this.#setStatus(thread, 'working');
 		await this.#converse(
 			thread,
 			agent,
@@ -1676,8 +1694,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				text: 'The agent stopped at its step limit',
 				tone: 'warning'
 			});
-		const running = this.#summary(thread)!.status === 'running';
-		if (running) this.#setStatus(thread, 'needs-you');
+		const working = this.#summary(thread)!.status === 'working';
+		if (working) this.#setStatus(thread, 'idle');
 		if (update.status === 'failed') {
 			const failure = {
 				title: 'The agent stopped',
@@ -1686,7 +1704,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			};
 			this.#fail(thread, failure, true);
 		}
-		if (!running) return;
+		if (!working) return;
 		const handBack = this.#takeHandBack(thread);
 		if (!handBack) return;
 		if (update.status !== 'finished')
@@ -1774,6 +1792,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			JSON.stringify(entry),
 			Number(entry.id.slice(1))
 		);
+		if (entry.type === 'intent') this.#countUnmet(thread, entry);
 		this.#broadcast({ type: 'entry', thread, entry });
 		this.#touch(thread);
 	}
@@ -1811,6 +1830,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.one();
 		const full = { ...entry, id: `e${seq}`, at } as Entry;
 		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(full), seq);
+		if (full.type === 'intent') this.#countUnmet(thread, full);
 		this.#broadcast({ type: 'entry', thread, entry: full });
 		this.#touch(thread);
 		return full.id;
@@ -1872,7 +1892,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	#setStatus(thread: string, status: ThreadStatus) {
 		this.#sql.exec('UPDATE threads SET status = ? WHERE id = ?', status, thread);
-		if (status === 'running' || status === 'shipping')
+		if (status === 'working' || status === 'shipping')
 			this.#sql.exec('UPDATE threads SET failure = NULL WHERE id = ?', thread);
 		this.#touch(thread);
 	}
@@ -1904,7 +1924,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			const number = Number(this.#meta('last-thread-number')) + 1;
 			this.#sql.exec(
 				`INSERT INTO threads (id, number, headline, status, mode, auto, machine, parent, context, updated_at)
-				VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
+				VALUES (?, ?, ?, 'working', ?, ?, ?, ?, ?, ?)`,
 				id,
 				number,
 				input.headline,
@@ -2001,7 +2021,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 		const run = automation.runs.done + 1;
 		const trigger = describeTrigger(automation.on, automation.delayMs);
-		const steering = summary.status === 'running';
+		const steering = summary.status === 'working';
 		const entry = this.#add(thread, {
 			type: 'automation',
 			automation: automation.id,
@@ -2014,7 +2034,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		});
 		this.#automations.ran(automation, entry, now);
 		this.#touch(thread);
-		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
+		if (['idle', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'working');
 		const why = `${trigger}${automation.note ? `: ${automation.note}` : ''}; run ${run} of ${automation.runs.limit}`;
 		const author = { name: `Automation "${automation.name}"`, kind: 'agent' as const };
 		const text = `(${why}; you set this automation up in this thread) ${automation.message}`;
@@ -2034,6 +2054,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
 		else await this.ctx.storage.deleteAlarm();
+	}
+
+	// Unmet done-when checks on the thread's current tree flag it as needing someone.
+	#countUnmet(thread: string, entry: Extract<Entry, { type: 'intent' }>) {
+		const unmet = entry.intent.doneWhen.filter((check) => {
+			const result = entry.results?.[check];
+			return result?.status === 'unmet' && !result.stale;
+		}).length;
+		this.#sql.exec('UPDATE threads SET unmet = ? WHERE id = ?', unmet, thread);
 	}
 
 	#latestIntent(thread: string) {
@@ -2058,7 +2087,7 @@ function headlineFrom(text: string) {
 }
 
 function toSummary(row: ThreadRow): ThreadSummary {
-	return {
+	const summary: Omit<ThreadSummary, 'needsYou'> = {
 		id: row.id,
 		number: row.number,
 		headline: row.headline,
@@ -2085,4 +2114,5 @@ function toSummary(row: ThreadRow): ThreadSummary {
 		failure: row.failure ? (JSON.parse(row.failure) as ThreadSummary['failure']) : null,
 		checks: row.checks ? (JSON.parse(row.checks) as CheckRun) : null
 	};
+	return { ...summary, needsYou: needsYou(summary, row.unmet ?? 0) };
 }

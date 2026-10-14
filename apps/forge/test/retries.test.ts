@@ -27,7 +27,7 @@ test('retries a model outage and records that the thread recovered', async () =>
 
 	await expect
 		.poll(async () => (await coordinator.thread(id))!.summary.status, { timeout: 60_000 })
-		.toBe('needs-you');
+		.toBe('idle');
 	const { entries, summary } = (await coordinator.thread(id))!;
 	expect(summary.failure).toBeNull();
 	expect(entries.find((entry) => entry.type === 'recovered')).toMatchObject({
@@ -52,7 +52,8 @@ test('stops after retrying a turn, then picks it back up when a person asks', as
 		.poll(async () => (await coordinator.thread(id))!.summary.failure, { timeout: 60_000 })
 		.toMatchObject({ title: 'The agent stopped', resumable: true });
 	const failed = (await coordinator.thread(id))!;
-	expect(failed.summary.status).toBe('needs-you');
+	expect(failed.summary.status).toBe('idle');
+	expect(failed.summary.needsYou).toBe(true);
 	const failure = failed.entries.at(-1);
 	expect(failure).toMatchObject({ type: 'failure', error: 'The model is overloaded' });
 	expect(failure?.type === 'failure' && failure.failures).toHaveLength(25);

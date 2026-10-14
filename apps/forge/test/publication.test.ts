@@ -64,7 +64,7 @@ async function finishedThread(name: string) {
 		machine: 'standard-1'
 	});
 	const id = opened.id;
-	const detail = await until(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const detail = await until(repo, id, (detail) => detail.summary.status === 'idle');
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(original);
 	return { env, repo, id, detail, work, canonical, original };
 }
@@ -168,7 +168,7 @@ test('work after shipping builds on the shipped commit', async () => {
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Added a footer.')
 	);
 	const fork = join(dir, `ship-later--${id}.git`);
@@ -206,7 +206,7 @@ test('work since shipping that no longer applies on the shipped commit is merged
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Resolved.')
 	);
 	expect(resolved.summary.failure).toBeNull();

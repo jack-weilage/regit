@@ -7,7 +7,7 @@ const thread: ThreadSummary = {
 	id: 'abcdef012345',
 	number: 42,
 	headline: 'fix(settings): load members lazily',
-	status: 'running',
+	status: 'working',
 	mode: 'small',
 	auto: false,
 	machine: 'standard-1',
@@ -18,7 +18,8 @@ const thread: ThreadSummary = {
 	shipped: null,
 	failure: null,
 	behind: null,
-	checks: null
+	checks: null,
+	needsYou: false
 };
 
 test('similar thread mentions display a number but preserve internal handles and use numeric links', () => {
@@ -39,7 +40,7 @@ test('similar thread mentions display a number but preserve internal handles and
 			label: thread.headline,
 			href: '/demo/42',
 			relation: 'overlap',
-			status: 'running'
+			status: 'working'
 		}
 	]);
 });

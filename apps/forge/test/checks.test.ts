@@ -31,7 +31,7 @@ const titled = {
 `
 };
 const replied = (text: string) => (detail: ThreadDetail) =>
-	detail.summary.status === 'needs-you' &&
+	detail.summary.status === 'idle' &&
 	detail.entries.some((entry) => entry.type === 'message' && entry.text === text);
 const checkEvents = (detail: ThreadDetail) =>
 	detail.entries.flatMap((entry) =>
@@ -128,10 +128,10 @@ test('stopping the agent cancels running handoff checks and starts no further tu
 	});
 	const started = Date.now();
 	await repo.stop(id, sam);
-	const stopped = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const stopped = await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	await new Promise((resolve) => setTimeout(resolve, 2000));
 	const after = (await repo.thread(id))!;
-	expect(after.summary.status).toBe('needs-you');
+	expect(after.summary.status).toBe('idle');
 	expect(after.summary.failure).toBeNull();
 	expect(after.entries).toHaveLength(stopped.entries.length);
 	expect(Date.now() - started).toBeLessThan(30_000);
@@ -170,6 +170,8 @@ test('records done-when results, keeps them outdated after later changes and giv
 			{ type: 'intent' }
 		>;
 	const done = await untilThread(repo, id, replied('Done.'));
+	expect(done.summary.changes?.files).toBe(1);
+	expect(done.summary.needsYou).toBe(true);
 	expect(latest(done).results).toEqual({
 		[titleCheck]: {
 			status: 'met',
@@ -200,4 +202,37 @@ test('records done-when results, keeps them outdated after later changes and giv
 	expect(latest(updated).results).toEqual({
 		[titleCheck]: expect.objectContaining({ status: 'met', stale: true })
 	});
+});
+
+test('flags idle threads that need someone only for unmet done-when checks, not answers', async () => {
+	const intent = {
+		headline: 'docs(notes): check the title',
+		purpose: 'Someone asked whether the notes have a title.',
+		doneWhen: ['notes.md starts with a heading']
+	};
+	const { repo, sam, id } = await startedThread('needs-you', [say('The notes have no title yet.')]);
+	const answered = await untilThread(repo, id, replied('The notes have no title yet.'));
+	expect(answered.summary).toMatchObject({ changes: { files: 0 }, failure: null, needsYou: false });
+
+	await script('needs-you', [
+		call('update_intent', intent),
+		call('record_done_when', {
+			results: [{ check: 1, status: 'unmet', evidence: 'head -1 notes.md printed Some notes' }]
+		}),
+		say('It has no heading.')
+	]);
+	await repo.reply(id, { author: sam, text: 'Check it against an intent.' });
+	const unmet = await untilThread(repo, id, replied('It has no heading.'));
+	expect(unmet.summary).toMatchObject({ changes: { files: 0 }, needsYou: true });
+	expect((await repo.threads()).find((thread) => thread.id === id)?.needsYou).toBe(true);
+
+	await script('needs-you', [
+		call('record_done_when', {
+			results: [{ check: 1, status: 'met', evidence: 'Agreed the first line counts' }]
+		}),
+		say('Fine as it is.')
+	]);
+	await repo.reply(id, { author: sam, text: 'The first line is the title.' });
+	const met = await untilThread(repo, id, replied('Fine as it is.'));
+	expect(met.summary.needsYou).toBe(false);
 });

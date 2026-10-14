@@ -20,7 +20,7 @@ export const defaultMachine: Machine = 'standard-1';
 
 export const defaultDeployMachine: Machine = 'standard-3';
 
-export type ThreadStatus = 'running' | 'needs-you' | 'shipping' | 'shipped' | 'archived';
+export type ThreadStatus = 'working' | 'idle' | 'shipping' | 'shipped' | 'archived';
 
 export interface Author {
 	id?: string;
@@ -202,6 +202,22 @@ export interface ThreadSummary {
 		conflicts: string[];
 	} | null;
 	checks: CheckRun | null;
+	// Idle with a failure, changes to ship, a conflict with main or unmet done-when checks.
+	needsYou: boolean;
+}
+
+// An idle thread needs someone when it failed, has changes to ship, conflicts with main or missed done-when checks.
+export function needsYou(
+	summary: Pick<ThreadSummary, 'status' | 'failure' | 'changes' | 'behind'>,
+	unmetChecks: number
+) {
+	return (
+		summary.status === 'idle' &&
+		(!!summary.failure ||
+			!!summary.changes?.files ||
+			!!summary.behind?.conflicts.length ||
+			unmetChecks > 0)
+	);
 }
 
 export interface ShipInput {

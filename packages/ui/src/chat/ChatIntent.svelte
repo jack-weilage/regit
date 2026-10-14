@@ -1,10 +1,11 @@
 <script module lang="ts">
 	import type { StatusIconState } from './status.ts';
 
-	export type IntentStatus = 'working' | 'needs-you' | 'shipping' | 'shipped';
+	export type IntentStatus = 'working' | 'idle' | 'needs-you' | 'shipping' | 'shipped';
 
 	const icons: Record<IntentStatus, StatusIconState> = {
 		working: 'running',
+		idle: 'pending',
 		'needs-you': 'attention',
 		shipping: 'shipping',
 		shipped: 'passed'
@@ -61,7 +62,7 @@
 		onmessage
 	}: Props = $props();
 
-	const messageable = (status: ThreadStatus) => ['running', 'needs-you'].includes(status);
+	const messageable = (status: ThreadStatus) => ['working', 'idle'].includes(status);
 
 	let same = $derived(similar.find((thread) => thread.relation === 'same'));
 	let overlaps = $derived(similar.filter((thread) => thread.relation === 'overlap'));

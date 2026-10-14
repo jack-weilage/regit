@@ -38,7 +38,7 @@ test('delivers a timed message the agent scheduled to its own thread, then ends 
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'automation')
 	);
 	expect(detail.entries.find((entry) => entry.type === 'automation')).toMatchObject({
@@ -100,7 +100,7 @@ test("runs when what the thread shipped deploys and keeps waiting for events tha
 			'.agents/deploy': 'echo deployed\n'
 		}
 	);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	expect(
 		((await repo.automations(id)) as Automation[]).map(({ name, nextAt, ended }) => ({
 			name,
@@ -149,7 +149,7 @@ test('a person can cancel an automation, and archiving the thread ends the rest'
 		}),
 		say('Both set up.')
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const [first, second] = (await repo.automations(id)) as Automation[];
 	expect(second).toMatchObject({ runs: { done: 0, limit: 3 }, ended: null });
 	expect(second!.nextAt).toBeGreaterThan(Date.now());

@@ -34,7 +34,7 @@ async function greenStart(name: string, steps: object[][], files: Record<string,
 		headline: 'init'
 	});
 	await untilMain(started.repo, (main) => main.green?.sha === seeded && !main.verifying);
-	await untilThread(started.repo, started.id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(started.repo, started.id, (detail) => detail.summary.status === 'idle');
 	return { ...started, seeded };
 }
 
@@ -150,7 +150,7 @@ test('bisects to the commit that broke main, rules out flakes, and starts new th
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	expect((await env.ATTEMPTS.getByName(id).revision())?.base).toBe(seeded);
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(tip);
 });

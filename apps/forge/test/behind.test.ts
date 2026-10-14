@@ -12,7 +12,7 @@ test('reads main once per turn while the thread is up to date, however often it 
 		writeNotes('# Notes\\n\\nSome notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	const done = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const done = await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	expect(done.entries.filter((entry) => entry.type === 'tools' && entry.checkpoint)).toHaveLength(
 		2
 	);
@@ -31,7 +31,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	await script('landing', [
 		[
 			{
@@ -53,7 +53,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		mode: 'small',
 		machine: 'standard-1'
 	});
-	await untilThread(repo, clean, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, clean, (detail) => detail.summary.status === 'idle');
 	const work = join(dir, 'landing-work');
 	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
 	sh(work, 'push', '--quiet', join(dir, 'landing.git'), 'main');
@@ -91,7 +91,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some(
 				(entry) => entry.type === 'message' && entry.text === 'Still on the old main.'
 			)
@@ -108,7 +108,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Still waiting.')
 	);
 	expect(
@@ -127,7 +127,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	const merged = await untilThread(
 		repo,
 		id,
-		(detail) => detail.summary.status === 'needs-you' && detail.summary.behind === null
+		(detail) => detail.summary.status === 'idle' && detail.summary.behind === null
 	);
 	expect(merged.entries).toContainEqual(
 		expect.objectContaining({
@@ -152,7 +152,7 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		repo,
 		clean,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some(
 				(entry) => entry.type === 'message' && entry.text === 'Noted the conflict.'
 			)
@@ -175,7 +175,7 @@ test('fetches main for a conflict notice that arrives mid-turn so the agent can 
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const go = join(dir, 'midturn-go');
 	await script('midturn', [
 		write(`while [ ! -f ${go} ]; do sleep 0.1; done`),
@@ -183,7 +183,7 @@ test('fetches main for a conflict notice that arrives mid-turn so the agent can 
 		done('Looked at main.')
 	]);
 	await repo.reply(id, { author: sam, text: 'Keep going.' });
-	await untilThread(repo, id, (detail) => detail.summary.status === 'running');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'working');
 
 	const work = join(dir, 'midturn-work');
 	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
@@ -205,7 +205,7 @@ test('fetches main for a conflict notice that arrives mid-turn so the agent can 
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Looked at main.')
 	);
 	const requests = await modelRequests('midturn');
@@ -223,7 +223,7 @@ test('lets the agent fetch and merge main itself without counting main as its ch
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const go = join(dir, 'self-merge-go');
 	await script('self-merge', [
 		write(`while [ ! -f ${go} ]; do sleep 0.1; done`),
@@ -233,7 +233,7 @@ test('lets the agent fetch and merge main itself without counting main as its ch
 		done('Merged main.')
 	]);
 	await repo.reply(id, { author: sam, text: 'Pull in main.' });
-	await untilThread(repo, id, (detail) => detail.summary.status === 'running');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'working');
 	const work = join(dir, 'self-merge-work');
 	await commit(work, { 'other.md': 'Landed\n' }, 'Add other.md');
 	sh(work, 'push', '--quiet', join(dir, 'self-merge.git'), 'main');
@@ -244,7 +244,7 @@ test('lets the agent fetch and merge main itself without counting main as its ch
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Merged main.')
 	);
 	const fork = join(dir, `self-merge--${id}.git`);
@@ -259,7 +259,7 @@ test('tells an idle thread about conflicts with main even without a push event',
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const work = join(dir, 'unannounced-work');
 	await commit(work, { 'notes.md': 'Quiet notes\n' }, 'Quiet notes');
 	sh(work, 'push', '--quiet', join(dir, 'unannounced.git'), 'main');
@@ -271,7 +271,7 @@ test('tells an idle thread about conflicts with main even without a push event',
 	const detail = await untilThread(
 		repo,
 		id,
-		(detail) => detail.summary.status === 'needs-you' && !!detail.summary.behind
+		(detail) => detail.summary.status === 'idle' && !!detail.summary.behind
 	);
 	expect(detail.summary.behind).toMatchObject({ commits: 1, conflicts: ['notes.md'] });
 	expect(JSON.stringify((await modelRequests('unannounced')).at(-1)!.query)).toContain(
@@ -305,7 +305,7 @@ test('notes threads whose changes conflict, in each thread and once to their age
 		write("printf '# Notes\\n' > notes.md && printf 'a\\n' > bun.lock"),
 		done('Added the title.')
 	]);
-	await untilThread(repo, first, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, first, (detail) => detail.summary.status === 'idle');
 	const open = async (text: string, steps: object[][]) => {
 		await script('overlap', steps);
 		const { id } = await repo.openThread({
@@ -315,7 +315,7 @@ test('notes threads whose changes conflict, in each thread and once to their age
 			mode: 'small',
 			machine: 'standard-1'
 		});
-		await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+		await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 		return id;
 	};
 	const same = await open('Add the same title.', [
@@ -361,7 +361,7 @@ test('blames a conflict on another thread only in files both threads changed', a
 		write("printf '# Notes\\n' > notes.md && printf 'Mine\\n' > todo.md"),
 		done('Added the title and a todo.')
 	]);
-	await untilThread(repo, first, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, first, (detail) => detail.summary.status === 'idle');
 	const work = join(dir, 'stale-main-work');
 	await commit(work, { 'todo.md': 'Theirs\n' }, 'Add a todo');
 	sh(work, 'push', '--quiet', join(dir, 'stale-main.git'), 'main');

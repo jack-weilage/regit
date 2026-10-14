@@ -211,7 +211,7 @@
 	args={{ similar: similarThreads, onmessage: fn() }}
 	play={async ({ args, canvas, userEvent }) => {
 		await expect(canvas.getByRole('note')).toHaveTextContent(
-			'Same goal as perf(settings): load org members in pages Running'
+			'Same goal as perf(settings): load org members in pages Working'
 		);
 		await userEvent.click(canvas.getByRole('button', { name: /Message perf\(settings\)/ }));
 		await expect(args.onmessage).toHaveBeenCalledWith(similarThreads[0]);

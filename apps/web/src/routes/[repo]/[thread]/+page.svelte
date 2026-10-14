@@ -153,8 +153,8 @@
 				: 'Shipped';
 			return { status: 'shipped', note };
 		}
-		if (status === 'running') return { status: 'working', note: 'The agent is working' };
-		if (status === 'needs-you') return { status: 'needs-you' };
+		if (status === 'working') return { status: 'working', note: 'The agent is working' };
+		if (status === 'idle') return { status: detail!.summary.needsYou ? 'needs-you' : 'idle' };
 		return {};
 	});
 	let intentEntry = $derived(
@@ -267,6 +267,7 @@
 					headline={summary.headline || 'New thread'}
 					number={summary.number}
 					status={summary.status}
+					needsYou={summary.needsYou}
 					parent={summary.parent
 						? {
 								kind: 'thread',
@@ -360,7 +361,7 @@
 								onresume={block.id === latestFailure &&
 								block.resumable &&
 								summary.failure?.resumable &&
-								summary.status === 'needs-you'
+								summary.status === 'idle'
 									? () => resumeThread(ref)
 									: undefined}
 							/>
@@ -405,7 +406,7 @@
 						<ChatBehindMain
 							{...behind}
 							updating={updating?.sha === behind.sha &&
-								(updating.calling || summary.status !== 'needs-you')}
+								(updating.calling || summary.status !== 'idle')}
 							onupdate={() => bringUpToDate(behind.sha)}
 						/>
 					{/if}
@@ -439,7 +440,7 @@
 					{/if}
 					{#if phase.type === 'thinking'}
 						<ChatActivity since={phase.since}>{phase.label}</ChatActivity>
-					{:else if !activity && summary.status === 'running'}
+					{:else if !activity && summary.status === 'working'}
 						<ChatActivity>ReGit is working</ChatActivity>
 					{/if}
 				</ErrorBoundary>
@@ -464,7 +465,7 @@
 						</ErrorBoundary>
 					{/if}
 					<ChatComposer
-						working={summary.status === 'running'}
+						working={summary.status === 'working'}
 						onstop={() => stopThread(ref)}
 						onsend={(text) => reply({ ...ref, text })}
 					/>
@@ -523,7 +524,7 @@
 		headline={summary.headline || 'This thread'}
 		messages={detail.entries.filter((entry) => entry.type === 'message').length}
 		checkpoints={countCheckpoints(detail.entries)}
-		running={summary.status === 'running'}
+		running={summary.status === 'working'}
 		restoreDays={threadPurgeDelayMs / 86_400_000}
 		onconfirm={() => deleteThread(ref)}
 	/>

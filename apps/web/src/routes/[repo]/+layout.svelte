@@ -72,6 +72,7 @@
 			number: thread.number,
 			headline: thread.headline || 'New thread',
 			status: thread.status,
+			needsYou: thread.needsYou,
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.number}`,
 			parent: thread.parent ?? undefined,
@@ -219,7 +220,7 @@
 					headline={detail.summary.headline || 'This thread'}
 					messages={detail.entries.filter((entry) => entry.type === 'message').length}
 					checkpoints={countCheckpoints(detail.entries)}
-					running={detail.summary.status === 'running'}
+					running={detail.summary.status === 'working'}
 					restoreDays={threadPurgeDelayMs / 86_400_000}
 					onconfirm={() => deleteThread({ repo, id })}
 				/>

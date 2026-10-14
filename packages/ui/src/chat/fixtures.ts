@@ -21,7 +21,7 @@ export const similarThreads: SimilarThread[] = [
 		label: 'perf(settings): load org members in pages',
 		href: '#',
 		relation: 'same',
-		status: 'running'
+		status: 'working'
 	},
 	{
 		kind: 'thread',
@@ -29,7 +29,7 @@ export const similarThreads: SimilarThread[] = [
 		label: 'feat(api): rename user id to account id',
 		href: '#',
 		relation: 'overlap',
-		status: 'running'
+		status: 'working'
 	},
 	{
 		kind: 'thread',

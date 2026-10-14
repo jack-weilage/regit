@@ -10,7 +10,7 @@ test('reads other threads with its tools and returns the answer and usage', asyn
 	const reads: string[] = [];
 	const source: ThreadSource = {
 		list: async () => [
-			{ id: 'auth01', status: 'running', headline: 'fix(auth): refresh sessions' }
+			{ id: 'auth01', status: 'working', headline: 'fix(auth): refresh sessions' }
 		],
 		read: async (id) => {
 			reads.push(id);

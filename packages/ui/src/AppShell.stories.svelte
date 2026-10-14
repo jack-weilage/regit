@@ -19,28 +19,31 @@
 		{
 			id: 'members',
 			headline: 'perf(settings): load members lazily',
-			status: 'needs-you',
+			status: 'idle',
+			needsYou: true,
 			updatedAt: minutes(4),
 			href: '#members'
 		},
 		{
 			id: 'sessions',
 			headline: 'fix(auth): refresh expired sessions',
-			status: 'needs-you',
+			status: 'idle',
+			needsYou: true,
 			updatedAt: minutes(60),
 			href: '#sessions'
 		},
 		{
 			id: 'invoices',
 			headline: 'feat(billing): export invoices as CSV',
-			status: 'running',
+			status: 'working',
 			updatedAt: minutes(0),
 			href: '#invoices'
 		},
 		{
 			id: 'router',
 			headline: 'refactor(api): split the router',
-			status: 'needs-you',
+			status: 'idle',
+			needsYou: true,
 			updatedAt: minutes(180),
 			href: '#router'
 		},
@@ -102,7 +105,8 @@
 				{#snippet header()}
 					<ChatHeader
 						headline="perf(settings): load members lazily"
-						status="needs-you"
+						status="idle"
+						needsYou
 						people={[sam]}
 					/>
 				{/snippet}

@@ -52,7 +52,7 @@ test('suggests separate work and spins it off into a linked thread that starts w
 	expect(child).toMatchObject({
 		headline: suggestion.headline,
 		number: 2,
-		status: 'running',
+		status: 'working',
 		mode: 'small',
 		parent: { id, number: 1, headline: 'Tidy the notes.' }
 	});
@@ -304,7 +304,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 		machine: 'standard-1'
 	});
 	expect(await intent(first.id)).not.toHaveProperty('similar');
-	await untilThread(repo, first.id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, first.id, (detail) => detail.summary.status === 'idle');
 
 	await scriptDecisions('dupes', [
 		{
@@ -339,7 +339,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 			t1: 'perf(settings): load org members in pages — Big orgs wait for every member to load.'
 		}
 	});
-	await untilThread(repo, second.id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, second.id, (detail) => detail.summary.status === 'idle');
 
 	await script('dupes', [[{ type: 'response.output_text.delta', delta: 'Thanks.' }]]);
 	await repo.forwardIntent(second.id, first.id, sam);
@@ -405,7 +405,7 @@ test('sizes an auto thread once, when it opens', async () => {
 	expect(opened).toMatchObject({ mode: 'large', auto: true });
 	await expect
 		.poll(async () => (await repo.thread(opened.id))!.summary.status, { timeout: 20_000 })
-		.toBe('needs-you');
+		.toBe('idle');
 	const [first, second] = await decisionRequests('sized');
 	expect(first!.state).toMatchObject({ new_intent: 'Rework how notes are stored.' });
 	expect(second!.state).toMatchObject({ new_intent: expect.stringContaining('typo') });

@@ -12,7 +12,7 @@
 		args: {
 			number: 1234,
 			headline: 'perf(settings): render org settings without loading every member',
-			status: 'running',
+			status: 'working',
 			parent: { ...threads[0]!, number: 7 },
 			people: [
 				{ name: 'Sam Rivera', kind: 'person' },
@@ -34,7 +34,7 @@
 </script>
 
 <Story
-	name="Running"
+	name="Working"
 	play={async ({ args, canvas, userEvent }) => {
 		await expect(canvas.getByText('#1234')).toBeVisible();
 		await expect(canvas.getByRole('heading')).not.toHaveTextContent('1234');
@@ -53,9 +53,9 @@
 	}}
 />
 
-<Story name="Needs you" args={{ status: 'needs-you' }} />
+<Story name="Needs you" args={{ status: 'idle', needsYou: true }} />
 <Story name="Shipped" args={{ status: 'shipped', onpreview: undefined }} />
-<Story name="Idle" args={{ status: 'needs-you', parent: undefined, people: [], actions: [] }} />
+<Story name="Idle" args={{ status: 'idle', parent: undefined, people: [], actions: [] }} />
 
 <Story name="Narrow" asChild>
 	<div style="inline-size: 22rem">

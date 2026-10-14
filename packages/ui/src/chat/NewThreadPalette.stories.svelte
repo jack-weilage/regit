@@ -109,7 +109,7 @@
 			expect(canvas.getByRole('textbox', { name: 'What should change?' })).toHaveFocus()
 		);
 		await userEvent.keyboard('{ArrowDown}{Enter}');
-		await expect(canvas.getAllByRole('option')[1]).toHaveTextContent('Same goal · Running');
+		await expect(canvas.getAllByRole('option')[1]).toHaveTextContent('Same goal · Working');
 		await expect(args.onopenthread).toHaveBeenCalledWith(similarThreads[0]);
 	}}
 	template={page}

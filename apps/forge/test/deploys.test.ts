@@ -22,7 +22,7 @@ test('deploys green commits with the repository secrets, keeping them out of wha
 			'.agents/deploy': `printf '%s' "$API_TOKEN" > '${token}'\necho "deployed with $API_TOKEN"\n`
 		}
 	);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const lin = { id: 'lin', name: 'Lin', kind: 'person' as const };
 	await expect(repo.setDeploySecret('API_TOKEN', 'x', lin)).rejects.toThrow();
 	await expect(repo.setDeploySecret('api-token', 'x', sam)).rejects.toThrow();
@@ -93,7 +93,7 @@ test('does not deploy without a deploy script or while main is failing', async (
 `
 		}
 	);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const seeded = sh(join(dir, 'undeployed.git'), 'rev-parse', 'main');
 	await repo.landed({ repo: 'undeployed', ref: 'refs/heads/main', after: seeded, headline: '' });
 	const red = await untilMain(repo, (main) => main.verified?.sha === seeded);

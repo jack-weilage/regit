@@ -7,6 +7,7 @@
 		number?: number;
 		headline: string;
 		status: ThreadStatus;
+		needsYou?: boolean;
 		updatedAt: number;
 		href: string;
 		parent?: { id: string; headline: string };
@@ -16,13 +17,6 @@
 		actions?: ThreadAction[];
 	}
 
-	const groups: { title: string; statuses: ThreadStatus[]; collapsible?: boolean }[] = [
-		{ title: 'Needs you', statuses: ['needs-you'] },
-		{ title: 'Running', statuses: ['running', 'shipping'] },
-		{ title: 'Recent', statuses: ['shipped'] },
-		{ title: 'Archived', statuses: ['archived'], collapsible: true }
-	];
-
 	interface ThreadNode {
 		thread: ThreadListItem;
 		children: ThreadNode[];
@@ -30,7 +24,8 @@
 
 	const maxDepth = 3;
 
-	// Spin-offs nest under their parent when both are in the same group; past maxDepth they stay level.
+	// Spin-offs nest under their parent when both are listed; past maxDepth they stay level.
+	// Families sort by their most recently updated thread.
 	function nest(threads: ThreadListItem[]) {
 		const ids = new Set(threads.map((thread) => thread.id));
 		const children = new Map<string | null, ThreadListItem[]>();
@@ -45,7 +40,13 @@
 					? [{ thread, children: nested }]
 					: [{ thread, children: [] }, ...nested];
 			});
-		return grow(null, 0);
+		const latest = (node: ThreadNode): number =>
+			Math.max(node.thread.updatedAt, ...node.children.map(latest));
+		const sort = (nodes: ThreadNode[]): ThreadNode[] =>
+			nodes
+				.map((node) => ({ ...node, children: sort(node.children) }))
+				.toSorted((a, b) => latest(b) - latest(a));
+		return sort(grow(null, 0));
 	}
 
 	const previewDelay = 400;
@@ -61,7 +62,7 @@
 	import ThreadPreview from './ThreadPreview.svelte';
 	import { formatAge } from './format.ts';
 	import { clock } from './clock.svelte.ts';
-	import { statuses } from './status.ts';
+	import { needsYou, statuses } from './status.ts';
 
 	interface Props {
 		threads: ThreadListItem[];
@@ -87,19 +88,12 @@
 	let hovered: ThreadListItem | null = $state(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
-	let sections = $derived(
-		groups
-			.map((group) => ({
-				title: group.title,
-				collapsible: group.collapsible,
-				nodes: nest(
-					threads
-						.filter((thread) => group.statuses.includes(thread.status))
-						.toSorted((a, b) => b.updatedAt - a.updatedAt)
-				)
-			}))
-			.filter((section) => section.nodes.length)
-	);
+	let open = $derived(nest(threads.filter((thread) => thread.status !== 'archived')));
+	let archived = $derived(nest(threads.filter((thread) => thread.status === 'archived')));
+
+	function status(thread: ThreadListItem) {
+		return thread.status === 'idle' && thread.needsYou ? needsYou : statuses[thread.status];
+	}
 
 	function related(thread: ThreadListItem) {
 		return !!hovered && (hovered.parent?.id === thread.id || thread.parent?.id === hovered.id);
@@ -142,29 +136,27 @@
 			{/if}
 		</div>
 	{/if}
-	{#each sections as section, index (section.title)}
-		{#if section.collapsible}
-			<details class="collapsible" bind:open={archivedOpen}>
-				<summary class="title">
-					<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true">
-						<path d="m6 4 4 4-4 4" />
-					</svg>
-					<span id="{id}-section-{index}">{section.title}</span>
-					<span class="count">{section.nodes.length}</span>
-				</summary>
-				{#if archivedOpen}
-					<ul aria-labelledby="{id}-section-{index}">
-						{@render branch(section.nodes)}
-					</ul>
-				{/if}
-			</details>
-		{:else}
-			<p id="{id}-section-{index}" class="title">{section.title}</p>
-			<ul aria-labelledby="{id}-section-{index}">
-				{@render branch(section.nodes)}
-			</ul>
-		{/if}
-	{/each}
+	{#if open.length}
+		<ul aria-label="Open threads">
+			{@render branch(open)}
+		</ul>
+	{/if}
+	{#if archived.length}
+		<details class="collapsible" bind:open={archivedOpen}>
+			<summary class="title">
+				<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true">
+					<path d="m6 4 4 4-4 4" />
+				</svg>
+				<span id="{id}-archived">Archived</span>
+				<span class="count">{archived.length}</span>
+			</summary>
+			{#if archivedOpen}
+				<ul aria-labelledby="{id}-archived">
+					{@render branch(archived)}
+				</ul>
+			{/if}
+		</details>
+	{/if}
 </nav>
 
 {#snippet branch(nodes: ThreadNode[], parent?: ThreadListItem)}
@@ -174,15 +166,18 @@
 				<a
 					href={thread.href}
 					aria-current={thread.id === current ? 'page' : undefined}
-					class={{ attention: thread.status === 'needs-you', failed: !!thread.failed }}
+					class={{
+						attention: thread.status === 'idle' && thread.needsYou,
+						failed: !!thread.failed
+					}}
 					onpointerenter={(event) => show(thread, event.currentTarget)}
 					onpointerleave={leave}
 					onfocus={(event) => show(thread, event.currentTarget)}
 					onblur={hide}
 				>
 					<StatusIcon
-						state={thread.failed ? 'failed' : statuses[thread.status].icon}
-						aria-label={thread.failed ?? statuses[thread.status].label}
+						state={thread.failed ? 'failed' : status(thread).icon}
+						aria-label={thread.failed ?? status(thread).label}
 						role="img"
 					/>
 					{#if thread.number}<span class="number">#{thread.number}</span>{/if}

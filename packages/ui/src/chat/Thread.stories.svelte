@@ -93,7 +93,7 @@
 		{ type: 'intent', id: id(), intent: revisions[0]! }
 	]);
 	let started = $state(false);
-	let status = $state<ThreadStatus>('needs-you');
+	let status = $state<ThreadStatus>('idle');
 	let intent = $derived(entries.findLast((entry) => entry.type === 'intent')!.intent);
 
 	let latestIntent = $derived(entries.findLast((entry) => entry.type === 'intent')?.id);
@@ -117,7 +117,7 @@
 
 	function send(text: string) {
 		add({ type: 'message', id: id(), author: sam, text });
-		status = 'running';
+		status = 'working';
 		setTimeout(() => {
 			if (started) {
 				const count = entries.filter((entry) => entry.type === 'intent').length;
@@ -134,7 +134,7 @@
 				);
 			}
 			started = true;
-			status = 'needs-you';
+			status = 'idle';
 		}, 600);
 	}
 
@@ -177,7 +177,7 @@
 						superseded={block.id !== latestIntent}
 						status={status === 'shipped'
 							? 'shipped'
-							: status === 'running'
+							: status === 'working'
 								? 'working'
 								: 'needs-you'}
 						note={status === 'shipped' ? 'Shipped in a1b2c3d' : undefined}
@@ -215,7 +215,7 @@
 					}}
 				/>
 			{/if}
-			{#if status === 'running'}
+			{#if status === 'working'}
 				<ChatActivity>ReGit is working</ChatActivity>
 			{/if}
 		</ChatLog>

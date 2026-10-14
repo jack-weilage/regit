@@ -205,12 +205,12 @@ test('steers a running attempt with messages read after the current step', async
 	});
 	await repo.reply(id, { author: sam, text: 'Keep the title short.' });
 	let detail = await repo.thread(id);
-	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
+	for (let i = 0; i < 300 && detail?.summary.status === 'working'; i++) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		detail = await repo.thread(id);
 	}
 
-	expect(detail!.summary.status).toBe('needs-you');
+	expect(detail!.summary.status).toBe('idle');
 	expect(detail!.entries.find((entry) => entry.type === 'message' && entry.steering)).toMatchObject(
 		{ text: 'Keep the title short.', steering: { read: true } }
 	);
@@ -240,7 +240,7 @@ test('stops a running attempt mid tool call', async () => {
 	await repo.stop(id, sam);
 	const detail = await repo.thread(id);
 	expect(Date.now() - stoppedAt).toBeLessThan(20_000);
-	expect(detail!.summary.status).toBe('needs-you');
+	expect(detail!.summary.status).toBe('idle');
 	expect(detail!.entries.at(-1)).toMatchObject({ type: 'event', text: 'Stopped by Sam' });
 	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
 	await new Promise((resolve) => setTimeout(resolve, 1000));

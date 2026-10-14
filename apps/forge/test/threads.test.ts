@@ -31,7 +31,7 @@ test('archives, reopens, deletes, restores and purges a thread', async () => {
 	expect((await repo.thread(id))!.summary.status).toBe('archived');
 	await repo.reopen(id, sam);
 	const reopened = await repo.thread(id);
-	expect(reopened!.summary.status).toBe('needs-you');
+	expect(reopened!.summary.status).toBe('idle');
 	expect(reopened!.entries.map((entry) => entry.type === 'event' && entry.text)).toEqual(
 		expect.arrayContaining(['Archived by Sam', 'Reopened by Sam'])
 	);
@@ -92,7 +92,7 @@ test('tells live clients the agent is idle even when the coordinator forgot its 
 	const { repo, id } = await startedThread('forgotten-activity', [
 		[{ type: 'response.output_text.delta', delta: 'Done.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const live: LiveMessage[] = [];
 	const { webSocket: socket } = await repo.fetch('https://repo/live', {
 		headers: { Upgrade: 'websocket' }
@@ -160,7 +160,7 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 	});
 	expect(opened).toMatchObject({
 		number: 1,
-		status: 'running',
+		status: 'working',
 		headline: 'The notes need a title.',
 		machine: 'standard-3'
 	});
@@ -187,14 +187,14 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 	await drafted(2);
 
 	let detail = await repo.thread(opened.id);
-	for (let i = 0; i < 300 && detail?.summary.status === 'running'; i++) {
+	for (let i = 0; i < 300 && detail?.summary.status === 'working'; i++) {
 		await new Promise((resolve) => setTimeout(resolve, 200));
 		detail = await repo.thread(opened.id);
 	}
 	socket!.close();
 
 	expect(detail!.summary).toMatchObject({
-		status: 'needs-you',
+		status: 'idle',
 		headline: 'docs(notes): add a title'
 	});
 	expect(await env.ATTEMPTS.getByName(opened.id).snapshot()).toMatchObject({
@@ -270,7 +270,7 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 		rows: [{ task: 'agent', model: 'gpt-6-luna', tokens: 300, cost: expect.closeTo(5 * call, 10) }],
 		context: { used: 60, limit: 244_800 }
 	});
-	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'needs-you' }]);
+	expect(await repo.threads()).toMatchObject([{ id: opened.id, status: 'idle' }]);
 	expect(sh(join(dir, `notes--${opened.id}.git`), 'show', 'main:notes.md')).toBe(
 		'# Notes\n\nSome notes'
 	);
@@ -332,12 +332,12 @@ test('resumes a finished thread with its history when someone replies', async ()
 		}
 		throw new Error('The thread never got there');
 	};
-	await waitFor((detail) => detail.summary.status === 'needs-you');
+	await waitFor((detail) => detail.summary.status === 'idle');
 
 	await repo.reply(id, { author: sam, text: 'Also add a footer.' });
 	const detail = await waitFor(
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some(
 				(entry) => entry.type === 'message' && entry.text === 'Added the footer too.'
 			)
@@ -367,7 +367,7 @@ test('resumes an archived thread once it is reopened', async () => {
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Carried on.')
 	);
 
@@ -384,14 +384,14 @@ test('answers a reply to a finished thread without changes', async () => {
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }],
 		[{ type: 'response.output_text.delta', delta: 'Because readers asked for one.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 
 	await repo.reply(id, { author: sam, text: 'Why a title?' });
 	const detail = await untilThread(
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' &&
+			detail.summary.status === 'idle' &&
 			detail.entries.some(
 				(entry) => entry.type === 'message' && entry.text === 'Because readers asked for one.'
 			)
@@ -426,7 +426,7 @@ test('allocates repository-scoped numbers concurrently and never reuses purged n
 	expect(opened.map((thread) => thread.number).sort()).toEqual([1, 2, 3]);
 	for (const thread of opened) {
 		expect(thread.id).toMatch(/^[0-9a-f]{12}$/);
-		await untilThread(repo, thread.id, (detail) => detail.summary.status === 'needs-you');
+		await untilThread(repo, thread.id, (detail) => detail.summary.status === 'idle');
 		expect((await repo.thread(thread.id))!.summary.number).toBe(thread.number);
 	}
 	const newest = opened.find((thread) => thread.number === 3)!;
@@ -460,8 +460,8 @@ test('resolves numbered routes without confusing numeric legacy IDs or invalid n
 	await repo.threads();
 	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'route-numbers' });
 	await sql.exec(`INSERT INTO threads (id, number, headline, status, mode, updated_at)
-		VALUES ('abcdef012345', 42, 'First', 'needs-you', 'small', 0),
-		('123456789012', 7, 'Numeric hex ID', 'needs-you', 'small', 0)`);
+		VALUES ('abcdef012345', 42, 'First', 'idle', 'small', 0),
+		('123456789012', 7, 'Numeric hex ID', 'idle', 'small', 0)`);
 	expect(await repo.resolveThread('42')).toEqual({ id: 'abcdef012345', number: 42 });
 	expect(await repo.resolveThread('00042')).toEqual({ id: 'abcdef012345', number: 42 });
 	expect(await repo.resolveThread('abcdef012345')).toEqual({ id: 'abcdef012345', number: 42 });

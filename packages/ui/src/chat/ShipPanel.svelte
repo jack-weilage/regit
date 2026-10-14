@@ -100,7 +100,7 @@
 			<Button
 				variant="primary"
 				size="sm"
-				disabled={status !== 'needs-you'}
+				disabled={status !== 'idle'}
 				onclick={() => {
 					title = intent?.headline ?? '';
 					body = intent?.purpose ?? '';
@@ -173,7 +173,7 @@
 			<label>Commit body <textarea rows="3" maxlength="20000" bind:value={body}></textarea></label>
 			<div class="actions">
 				<Button size="sm" disabled={busy} onclick={() => (writing = false)}>Cancel</Button>
-				<Button type="submit" variant="primary" size="sm" disabled={busy || status !== 'needs-you'}
+				<Button type="submit" variant="primary" size="sm" disabled={busy || status !== 'idle'}
 					>Ship commit</Button
 				>
 			</div>
