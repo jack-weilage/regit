@@ -134,6 +134,13 @@ test('fails the attempt when the model fails', async () => {
 		error: 'No credits',
 		steps: [{ turns: [{ role: 'user', text: 'Sam: Anything' }] }]
 	});
+	const [sent] = await modelRequests('failing');
+	expect(sent).toMatchObject({
+		provider: 'anthropic',
+		endpoint: 'v1/messages',
+		headers: { 'cf-aig-metadata': { mode: 'medium', task: 'agent' } },
+		query: { model: 'claude-opus-5-5', output_config: { effort: 'medium' } }
+	});
 });
 
 test('records a failed agent turn in the thread', async () => {

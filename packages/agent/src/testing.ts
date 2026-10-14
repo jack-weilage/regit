@@ -6,6 +6,20 @@ import type {
 	ToolExecutor,
 	ToolSpec
 } from './types.ts';
+import type { Gateway, GatewayRequest } from './gateway.ts';
+
+export function fakeGateway(...responses: Response[]) {
+	const requests: GatewayRequest[] = [];
+	const gateway: Gateway = {
+		async run(request) {
+			requests.push(request);
+			const response = responses.shift();
+			if (!response) throw new Error('The fake gateway ran out of responses');
+			return response;
+		}
+	};
+	return { gateway, requests };
+}
 
 // A reply can fail partway: an Error in it is thrown once the events before it have streamed.
 export function scriptedModel(replies: (ModelEvent | Error)[][]) {

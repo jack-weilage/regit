@@ -638,15 +638,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		});
 		this.#sql.exec('UPDATE threads SET headline = ? WHERE id = ?', intent.headline, thread);
 		this.#touch(thread);
-		const assessment = await this.#assess(describeIntent(intent), thread);
-		if (!assessment) return;
-		const { similar, size } = assessment;
-		if (similar.length) this.#replace(thread, { ...this.#entry(thread, id)!, similar } as Entry);
-		const current = this.#summary(thread)!;
-		if (current.auto && !current.changes?.files && current.mode !== size) {
-			this.#sql.exec('UPDATE threads SET mode = ? WHERE id = ?', size, thread);
-			this.#touch(thread);
-		}
+		const similar = (await this.#assess(describeIntent(intent), thread))?.similar;
+		if (similar?.length) this.#replace(thread, { ...this.#entry(thread, id)!, similar } as Entry);
 	}
 
 	doneWhenRecorded(thread: string, reports: DoneWhenReport[], tree: string | null) {

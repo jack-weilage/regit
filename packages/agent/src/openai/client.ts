@@ -5,7 +5,8 @@ import type {
 	ResponseStreamEvent
 } from 'openai/resources/responses/responses';
 import type { ModelClient, ModelEvent, Turn } from '../types.ts';
-import { gatewayFetch, type Gateway, type Metadata } from './gateway.ts';
+import { gatewayBase, gatewayFetch, type Gateway, type Metadata } from '../gateway.ts';
+import { ModelError, retryAfter } from '../model-error.ts';
 
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -19,18 +20,6 @@ export interface OpenAIModelOptions {
 	// Input tokens past which the server compacts the context into a summary item.
 	compactThreshold?: number;
 	resolveImage?: (url: string) => Promise<string>;
-}
-
-export class ModelError extends Error {
-	constructor(
-		message: string,
-		readonly status?: number,
-		readonly code?: string,
-		readonly retryAfterMs?: number
-	) {
-		super(message);
-		this.name = 'ModelError';
-	}
 }
 
 const breakpoint = { mode: 'explicit' } as const;
@@ -50,7 +39,7 @@ export function openaiModel({
 	if (sessionId.length > 64) throw new Error(`Session ids are at most 64 characters: ${sessionId}`);
 	const client = new OpenAI({
 		apiKey: 'ai-gateway',
-		baseURL: 'https://ai-gateway.invalid/v1',
+		baseURL: gatewayBase,
 		fetch: gatewayFetch(gateway, 'openai', metadata),
 		maxRetries
 	});
@@ -133,13 +122,6 @@ function rejectsCompaction(error: unknown) {
 		error.status === 400 &&
 		/context_management|compact/i.test(error.message)
 	);
-}
-
-function retryAfter(headers: Headers | undefined) {
-	const ms = Number(headers?.get('retry-after-ms'));
-	if (ms > 0) return ms;
-	const seconds = Number(headers?.get('retry-after'));
-	return seconds > 0 ? seconds * 1000 : undefined;
 }
 
 function cached(text: string): ResponseInputText {

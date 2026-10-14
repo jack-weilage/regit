@@ -42,8 +42,19 @@ export { combineTools } from './tools.ts';
 export { modelRetries, runAgent, type AgentOutcome, type RetryPolicy } from './loop.ts';
 export { interruptedOutput, resumeStep } from './resume.ts';
 export { backoff, errorMessage, isTransient, SandboxUnavailableError, sleep } from './transient.ts';
-export { modes, searcher, type Mode } from './modes.ts';
-export { compactThreshold, cost, models } from './pricing.ts';
+export {
+	modelClient,
+	modes,
+	searcher,
+	type Effort,
+	type Mode,
+	type ModelChoice,
+	type ModelOptions
+} from './modes.ts';
+export { compactThreshold, cost, models, type Provider } from './pricing.ts';
 export type * from './types.ts';
+export { gatewayFetch, type Gateway, type GatewayRequest, type Metadata } from './gateway.ts';
+export { ModelError } from './model-error.ts';
+export { anthropicModel, type AnthropicModelOptions } from './anthropic/client.ts';
 export * from './openai/index.ts';
 export * from './sandbox/index.ts';

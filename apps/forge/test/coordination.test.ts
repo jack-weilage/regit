@@ -293,7 +293,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 	});
 });
 
-test('sizes an auto thread when it opens and again when its intent changes', async () => {
+test('sizes an auto thread once, when it opens', async () => {
 	await seed('sized', { 'notes.md': 'Some notes\n' });
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('sized');
@@ -328,17 +328,16 @@ test('sizes an auto thread when it opens and again when its intent changes', asy
 	});
 	expect(opened).toMatchObject({ mode: 'large', auto: true });
 	await expect
-		.poll(async () => (await repo.thread(opened.id))!.summary.mode, { timeout: 20_000 })
-		.toBe('small');
-	expect((await repo.thread(opened.id))!.summary.auto).toBe(true);
-	const [first] = await decisionRequests('sized');
-	expect(first!.state).toMatchObject({ new_intent: 'Rework how notes are stored.' });
-
-	// The resize applies from the next turn, so this one's usage stays with the large mode's model.
-	await expect
 		.poll(async () => (await repo.thread(opened.id))!.summary.status, { timeout: 20_000 })
 		.toBe('needs-you');
-	const agent = (await repo.thread(opened.id))!.usage.rows.filter((row) => row.task === 'agent');
+	const [first, second] = await decisionRequests('sized');
+	expect(first!.state).toMatchObject({ new_intent: 'Rework how notes are stored.' });
+	expect(second!.state).toMatchObject({ new_intent: expect.stringContaining('typo') });
+
+	// An intent that reads smaller doesn't move the thread to another model.
+	const { summary, usage } = (await repo.thread(opened.id))!;
+	expect(summary).toMatchObject({ mode: 'large', auto: true });
+	const agent = usage.rows.filter((row) => row.task === 'agent');
 	expect(agent).toEqual([expect.objectContaining({ model: 'gpt-6.1-sol', tokens: 120 })]);
 });
 
