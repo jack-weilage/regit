@@ -68,6 +68,20 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	expect(await repo.thread(later.id)).toMatchObject({ summary: { deleted: { by: 'Sam' } } });
 });
 
+test('answers live connection pings', async () => {
+	const env = await worker.getEnv();
+	const { webSocket: socket } = await env.REPOS.getByName('pinged').fetch('https://repo/live', {
+		headers: { Upgrade: 'websocket' }
+	});
+	socket!.accept();
+	const pong = new Promise((resolve) =>
+		socket!.addEventListener('message', (event) => resolve(event.data))
+	);
+	socket!.send('ping');
+	expect(await pong).toBe('pong');
+	socket!.close();
+});
+
 test('coordinates a thread from a request to recorded changes, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
 	const propose = (name: string, headline: string) => [

@@ -276,6 +276,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				/* Already added. */
 			}
 		}
+		// Live connections ping to tell a dead socket from a quiet one; the runtime answers without waking this object.
+		this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
 		// TODO: remove once no coordinator has threads in the removed draft and reviewing statuses.
 		this.#sql.exec(`
 			UPDATE threads SET status = 'needs-you' WHERE status IN ('draft', 'reviewing');

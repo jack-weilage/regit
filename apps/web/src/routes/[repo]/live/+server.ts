@@ -3,7 +3,10 @@ import { coordinatorFor } from '#lib/server/coordinators.ts';
 import { requireRepoAccess } from '#lib/server/access.ts';
 import type { RequestHandler } from './$types';
 
+// Each beat pings both ends: the browser to keep the stream open, and the coordinator to prove its socket still
+// delivers. A coordinator that stops answering ends the stream, so the browser reconnects and reloads what it missed.
 const heartbeat = 25_000;
+const unanswered = 2 * heartbeat;
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	await requireRepoAccess(params.repo, locals.user?.id);
@@ -17,6 +20,7 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 	const encoder = new TextEncoder();
 	let timer: ReturnType<typeof setInterval> | undefined;
 	let closed = false;
+	let answered = Date.now();
 
 	function stop() {
 		closed = true;
@@ -29,13 +33,25 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 			const send = (chunk: string) => {
 				if (!closed) controller.enqueue(encoder.encode(chunk));
 			};
-			socket.addEventListener('message', (event) => send(`data: ${event.data}\n\n`));
-			socket.addEventListener('close', () => {
+			const end = () => {
 				if (closed) return;
 				stop();
 				controller.close();
+			};
+			socket.addEventListener('message', (event) => {
+				if (event.data === 'pong') answered = Date.now();
+				else send(`data: ${event.data}\n\n`);
 			});
-			timer = setInterval(() => send(': ping\n\n'), heartbeat);
+			socket.addEventListener('close', end);
+			timer = setInterval(() => {
+				if (Date.now() - answered > unanswered) return end();
+				send(': ping\n\n');
+				try {
+					socket.send('ping');
+				} catch {
+					end();
+				}
+			}, heartbeat);
 			request.signal.addEventListener('abort', stop);
 		},
 		cancel: stop
