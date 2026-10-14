@@ -33,7 +33,7 @@ async function greenStart(name: string, steps: object[][], files: Record<string,
 		after: seeded,
 		headline: 'init'
 	});
-	await untilMain(started.repo, (main) => main.green?.sha === seeded);
+	await untilMain(started.repo, (main) => main.green?.sha === seeded && !main.verifying);
 	await untilThread(started.repo, started.id, (detail) => detail.summary.status === 'needs-you');
 	return { ...started, seeded };
 }
@@ -166,8 +166,7 @@ test('checks only the newest of the commits that land while a check runs', async
 			headline: ''
 		});
 	}
-	const done = await untilMain(repo, (main) => main.green?.sha === landed[2]);
-	expect(done.verifying).toBeNull();
+	await untilMain(repo, (main) => main.green?.sha === landed[2] && !main.verifying);
 	const checked = await readFile(join(sandboxes!, 'main-queueing/.git/checked'), 'utf8');
 	expect(checked.trim().split('\n')).toEqual([seeded, landed[0], landed[2]]);
 });
