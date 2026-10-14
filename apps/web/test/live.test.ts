@@ -58,7 +58,7 @@ test('relays coordinator messages and keeps a coordinator that answers pings', a
 	state.socket.deliver('{"type":"entry"}');
 	await vi.advanceTimersByTimeAsync(5 * heartbeat);
 	expect(live.read()).toContain('data: {"type":"entry"}\n\n');
-	expect(live.read()).toContain(': ping\n\n');
+	expect(live.read()).toContain('event: ping\ndata:\n\n');
 	expect(live.read()).not.toContain('pong');
 	expect(state.socket.sent.filter((data) => data === 'ping')).toHaveLength(5);
 	expect(live.ended()).toBe(false);

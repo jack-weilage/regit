@@ -20,6 +20,7 @@
 		type ThreadSummary
 	} from '@regit/core';
 	import { setLiveActivity } from '#lib/activity.ts';
+	import { connectLive } from '#lib/live.ts';
 	import {
 		assessRequest,
 		createGitAccessToken,
@@ -82,39 +83,41 @@
 		alert = { thread: id, text: `${headline || 'New thread'}: ${failure.title.toLowerCase()}` };
 	}
 
-	const live: Attachment = () => {
-		const source = new EventSource(`/${repo}/live`);
-		let opened = false;
-		// Updates sent while reconnecting are lost, so reload what they would have changed.
-		source.addEventListener('open', () => {
-			if (opened) {
-				for (const thread of Object.keys(activities)) delete activities[thread];
-				liveMain = null;
-				getMain(repo).refresh();
-				getThreads(repo).refresh();
-				if (page.params.thread) getThread({ repo, id: page.params.thread }).refresh();
+	const live: Attachment = () =>
+		connectLive(
+			`/${repo}/live`,
+			{
+				reconnected() {
+					for (const thread of Object.keys(activities)) delete activities[thread];
+					liveMain = null;
+					getMain(repo).refresh();
+					getThreads(repo).refresh();
+					if (page.params.thread) getThread({ repo, id: page.params.thread }).refresh();
+				},
+				message(data) {
+					const message = JSON.parse(data) as LiveMessage;
+					if (message.type === 'main') {
+						liveMain = { repo, main: message.main };
+						return;
+					}
+					if (message.type === 'activity') {
+						activities[message.thread] = message.activity;
+						return;
+					}
+					const thread = message.type === 'entry' ? message.thread : message.summary.id;
+					if (message.type === 'thread') {
+						notice(message.summary);
+						getThreads(repo).refresh();
+					}
+					if (thread === page.params.thread) getThread({ repo, id: thread }).refresh();
+				}
+			},
+			{
+				open: (url) => new EventSource(url),
+				page: window,
+				visible: () => document.visibilityState === 'visible'
 			}
-			opened = true;
-		});
-		source.addEventListener('message', (event) => {
-			const message = JSON.parse(event.data) as LiveMessage;
-			if (message.type === 'main') {
-				liveMain = { repo, main: message.main };
-				return;
-			}
-			if (message.type === 'activity') {
-				activities[message.thread] = message.activity;
-				return;
-			}
-			const thread = message.type === 'entry' ? message.thread : message.summary.id;
-			if (message.type === 'thread') {
-				notice(message.summary);
-				getThreads(repo).refresh();
-			}
-			if (thread === page.params.thread) getThread({ repo, id: thread }).refresh();
-		});
-		return () => source.close();
-	};
+		);
 
 	let managingDeploys = $state(false);
 	let deploys = $derived(managingDeploys ? await getDeploySettings(repo) : null);

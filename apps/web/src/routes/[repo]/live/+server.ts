@@ -1,11 +1,11 @@
 import { error } from '@sveltejs/kit';
 import { coordinatorFor } from '#lib/server/coordinators.ts';
 import { requireRepoAccess } from '#lib/server/access.ts';
+import { liveHeartbeatMs as heartbeat } from '#lib/live.ts';
 import type { RequestHandler } from './$types';
 
-// Each beat pings both ends: the browser to keep the stream open, and the coordinator to prove its socket still
-// delivers. A coordinator that stops answering ends the stream, so the browser reconnects and reloads what it missed.
-const heartbeat = 25_000;
+// Each beat pings both ends: the browser to prove the stream still delivers, and the coordinator to prove its socket
+// does. A coordinator that stops answering ends the stream, so the browser reconnects and reloads what it missed.
 const unanswered = 2 * heartbeat;
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
@@ -45,7 +45,7 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 			socket.addEventListener('close', end);
 			timer = setInterval(() => {
 				if (Date.now() - answered > unanswered) return end();
-				send(': ping\n\n');
+				send('event: ping\ndata:\n\n');
 				try {
 					socket.send('ping');
 				} catch {
