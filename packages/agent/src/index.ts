@@ -3,7 +3,7 @@ export { threadInstructions } from './instructions.ts';
 export { repositoryGuidance } from './guidance.ts';
 export { intentTools, type DoneWhenReport, type Intent } from './intent.ts';
 export { parseDiff } from './diff.ts';
-export { suggestTools, type Suggestion } from './suggest.ts';
+export { launchTools, type Suggestion } from './launch.ts';
 export { threadTools } from './threads.ts';
 export {
 	assessRequest,

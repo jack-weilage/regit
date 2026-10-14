@@ -8,6 +8,7 @@
 		status: ThreadStatus;
 		updatedAt: number;
 		href: string;
+		parent?: { id: string; headline: string };
 		conflictsWith?: string;
 		failed?: string;
 		preview?: Omit<ThreadPreviewProps, 'headline'>;
@@ -19,6 +20,31 @@
 		{ title: 'Running', statuses: ['running', 'shipping'] },
 		{ title: 'Recent', statuses: ['shipped', 'discarded'] }
 	];
+
+	interface ThreadNode {
+		thread: ThreadListItem;
+		children: ThreadNode[];
+	}
+
+	const maxDepth = 3;
+
+	// Spin-offs nest under their parent when both are in the same group; past maxDepth they stay level.
+	function nest(threads: ThreadListItem[]) {
+		const ids = new Set(threads.map((thread) => thread.id));
+		const children = new Map<string | null, ThreadListItem[]>();
+		for (const thread of threads) {
+			const parent = thread.parent && ids.has(thread.parent.id) ? thread.parent.id : null;
+			children.set(parent, [...(children.get(parent) ?? []), thread]);
+		}
+		const grow = (parent: string | null, depth: number): ThreadNode[] =>
+			(children.get(parent) ?? []).flatMap((thread) => {
+				const nested = grow(thread.id, depth + 1);
+				return depth < maxDepth
+					? [{ thread, children: nested }]
+					: [{ thread, children: [] }, ...nested];
+			});
+		return grow(null, 0);
+	}
 
 	const previewDelay = 400;
 	const closeDelay = 150;
@@ -49,22 +75,33 @@
 	const id = $props.id();
 
 	let previewed: { thread: ThreadListItem; anchor: HTMLElement } | null = $state(null);
+	let hovered: ThreadListItem | null = $state(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	let sections = $derived(
 		groups
 			.map((group) => ({
 				title: group.title,
-				threads: threads
-					.filter((thread) => group.statuses.includes(thread.status))
-					.toSorted((a, b) => b.updatedAt - a.updatedAt)
+				nodes: nest(
+					threads
+						.filter((thread) => group.statuses.includes(thread.status))
+						.toSorted((a, b) => b.updatedAt - a.updatedAt)
+				)
 			}))
-			.filter((section) => section.threads.length)
+			.filter((section) => section.nodes.length)
 	);
+
+	function related(thread: ThreadListItem) {
+		return !!hovered && (hovered.parent?.id === thread.id || thread.parent?.id === hovered.id);
+	}
 
 	function show(thread: ThreadListItem, anchor: HTMLElement) {
 		clearTimeout(timer);
-		if (!thread.preview) return hide();
+		hovered = thread;
+		if (!thread.preview) {
+			previewed = null;
+			return;
+		}
 		const open = () => (previewed = { thread, anchor });
 		if (previewed) open();
 		else timer = setTimeout(open, previewDelay);
@@ -72,11 +109,13 @@
 
 	function hide() {
 		clearTimeout(timer);
+		hovered = null;
 		previewed = null;
 	}
 
 	function leave() {
 		clearTimeout(timer);
+		hovered = null;
 		if (previewed) timer = setTimeout(hide, closeDelay);
 	}
 </script>
@@ -96,64 +135,88 @@
 	{#each sections as section, index (section.title)}
 		<p id="{id}-section-{index}" class="title">{section.title}</p>
 		<ul aria-labelledby="{id}-section-{index}">
-			{#each section.threads as thread (thread.id)}
-				<li class:has-actions={!!thread.actions?.length}>
-					<a
-						href={thread.href}
-						aria-current={thread.id === current ? 'page' : undefined}
-						class={{ attention: thread.status === 'needs-you', failed: !!thread.failed }}
-						onpointerenter={(event) => show(thread, event.currentTarget)}
-						onpointerleave={leave}
-						onfocus={(event) => show(thread, event.currentTarget)}
-						onblur={hide}
-					>
-						<StatusIcon
-							state={thread.failed ? 'failed' : statuses[thread.status].icon}
-							aria-label={thread.failed ?? statuses[thread.status].label}
-							role="img"
-						/>
-						<span class="headline">{thread.headline}</span>
-						{#if thread.conflictsWith}
-							<svg
-								class="conflicts"
-								viewBox="0 0 16 16"
-								role="img"
-								aria-label="Conflicts with {thread.conflictsWith}"
-							>
-								<path d="M8 2.25 14.5 13.5h-13Z" />
-								<path d="M8 6.5v3.25M8 11.75v.01" />
-							</svg>
-						{/if}
-						<time datetime={new Date(thread.updatedAt).toISOString()}
-							>{formatAge(thread.updatedAt, time)}</time
-						>
-					</a>
-					{#if thread.actions?.length}
-						<div class="actions">
-							<Menu label="Thread actions: {thread.headline}" items={thread.actions}>
-								{#snippet trigger(props)}
-									<Button
-										variant="ghost"
-										size="sm"
-										icon
-										aria-label="Thread actions: {thread.headline}"
-										{...props}
-										onpointerenter={hide}
-										onfocus={hide}
-									>
-										<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
-											<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" />
-										</svg>
-									</Button>
-								{/snippet}
-							</Menu>
-						</div>
-					{/if}
-				</li>
-			{/each}
+			{@render branch(section.nodes)}
 		</ul>
 	{/each}
 </nav>
+
+{#snippet branch(nodes: ThreadNode[], parent?: ThreadListItem)}
+	{#each nodes as { thread, children } (thread.id)}
+		<li>
+			<div class={['row', { 'has-actions': !!thread.actions?.length, related: related(thread) }]}>
+				<a
+					href={thread.href}
+					aria-current={thread.id === current ? 'page' : undefined}
+					class={{ attention: thread.status === 'needs-you', failed: !!thread.failed }}
+					onpointerenter={(event) => show(thread, event.currentTarget)}
+					onpointerleave={leave}
+					onfocus={(event) => show(thread, event.currentTarget)}
+					onblur={hide}
+				>
+					<StatusIcon
+						state={thread.failed ? 'failed' : statuses[thread.status].icon}
+						aria-label={thread.failed ?? statuses[thread.status].label}
+						role="img"
+					/>
+					<span class="headline">{thread.headline}</span>
+					{#if thread.parent && thread.parent.id !== parent?.id}
+						<svg
+							class="spun"
+							viewBox="0 0 16 16"
+							role="img"
+							aria-label="Spun off from {thread.parent.headline}"
+						>
+							<circle cx="5" cy="3.5" r="1.5" />
+							<circle cx="5" cy="12.5" r="1.5" />
+							<circle cx="11" cy="4.5" r="1.5" />
+							<path d="M5 5v6M11 6c0 3-6 2.5-6 5" />
+						</svg>
+					{/if}
+					{#if thread.conflictsWith}
+						<svg
+							class="conflicts"
+							viewBox="0 0 16 16"
+							role="img"
+							aria-label="Conflicts with {thread.conflictsWith}"
+						>
+							<path d="M8 2.25 14.5 13.5h-13Z" />
+							<path d="M8 6.5v3.25M8 11.75v.01" />
+						</svg>
+					{/if}
+					<time datetime={new Date(thread.updatedAt).toISOString()}
+						>{formatAge(thread.updatedAt, time)}</time
+					>
+				</a>
+				{#if thread.actions?.length}
+					<div class="actions">
+						<Menu label="Thread actions: {thread.headline}" items={thread.actions}>
+							{#snippet trigger(props)}
+								<Button
+									variant="ghost"
+									size="sm"
+									icon
+									aria-label="Thread actions: {thread.headline}"
+									{...props}
+									onpointerenter={hide}
+									onfocus={hide}
+								>
+									<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
+										<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" />
+									</svg>
+								</Button>
+							{/snippet}
+						</Menu>
+					</div>
+				{/if}
+			</div>
+			{#if children.length}
+				<ul class="children" aria-label="Spun off from {thread.headline}">
+					{@render branch(children, thread)}
+				</ul>
+			{/if}
+		</li>
+	{/each}
+{/snippet}
 
 <Popover
 	id="{id}-preview"
@@ -225,12 +288,57 @@
 	}
 
 	li {
+		--icon-size: 0.9em;
+		--guide: calc(var(--space-4) + var(--icon-size) / 2 - 0.5px);
+		--guide-color: color-mix(in oklab, var(--color-muted) 40%, var(--color-bg));
+
+		position: relative;
+	}
+
+	.row {
 		position: relative;
 
 		&:hover a,
 		&:focus-within a {
 			background: var(--color-surface);
 			color: var(--color-fg);
+		}
+
+		&.related a {
+			outline: 1px dashed var(--guide-color);
+			outline-offset: -1px;
+			color: var(--color-fg);
+		}
+
+		&:has(+ .children)::after {
+			content: '';
+			position: absolute;
+			inset-inline-start: var(--guide);
+			inset-block: calc(50% + var(--icon-size) / 2 + var(--space-1)) 0;
+			border-inline-start: 1px solid var(--guide-color);
+		}
+	}
+
+	.children {
+		--indent: 1.25em;
+
+		margin-block-start: var(--space-1);
+		padding-inline-start: var(--indent);
+
+		> li:not(:last-child)::before,
+		> li > .row::before {
+			content: '';
+			position: absolute;
+			inset-inline-start: calc(var(--guide) - var(--indent));
+			inset-block: calc(-1 * var(--space-1)) 0;
+			border-inline-start: 1px solid var(--guide-color);
+		}
+
+		> li > .row::before {
+			inset-block-end: 50%;
+			inline-size: calc(var(--indent) - var(--icon-size) / 2 - var(--space-2));
+			border-block-end: 1px solid var(--guide-color);
+			border-end-start-radius: var(--radius);
 		}
 	}
 
@@ -244,8 +352,8 @@
 		color: var(--color-muted);
 	}
 
-	li:hover .actions,
-	li:focus-within .actions,
+	.row:hover .actions,
+	.row:focus-within .actions,
 	.actions:has(:global(:popover-open)) {
 		opacity: 1;
 		pointer-events: auto;
@@ -268,8 +376,6 @@
 	}
 
 	a {
-		--icon-size: 0.9em;
-
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
@@ -307,6 +413,17 @@
 		font-size: var(--text-meta);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.spun {
+		flex: none;
+		inline-size: var(--icon-size);
+		block-size: var(--icon-size);
+		fill: none;
+		stroke: var(--color-muted);
+		stroke-width: 1.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	.conflicts {

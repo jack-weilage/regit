@@ -10,7 +10,7 @@ const targets: Record<string, string> = {
 	search: 'pattern',
 	run: 'command',
 	update_intent: 'headline',
-	suggest_thread: 'headline',
+	launch_thread: 'headline',
 	message_thread: 'thread',
 	ask_threads: 'question',
 	load_skill: 'name'
@@ -26,6 +26,16 @@ export function toolTarget(name: string, args: string) {
 		return rest.length ? `${first} …` : first;
 	} catch {
 		return '';
+	}
+}
+
+// A launch that only suggests is shown as a suggestion.
+function recordedTool(name: string, args: string) {
+	if (name !== 'launch_thread') return name;
+	try {
+		return (JSON.parse(args) as { start?: unknown }).start === true ? name : 'suggest_thread';
+	} catch {
+		return 'suggest_thread';
 	}
 }
 
@@ -45,7 +55,7 @@ export class StepActivity {
 			const { id, name, arguments: args } = event.call;
 			this.calls.push({
 				id,
-				tool: name,
+				tool: recordedTool(name, args),
 				target: toolTarget(name, args),
 				status: 'running',
 				startedAt: this.now()

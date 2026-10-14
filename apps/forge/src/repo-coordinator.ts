@@ -199,6 +199,11 @@ function renderDiff(file: DiffFile) {
 const regenerated =
 	/(^|\/)(bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|Gemfile\.lock|composer\.lock|flake\.lock)$/;
 
+function startPrompt({ headline, purpose, doneWhen }: Intent) {
+	const checks = doneWhen.map((check) => `- ${check}`).join('\n');
+	return `Work on this thread's intent.\n\n${headline}\n\n${purpose}${checks && `\n\nDone when:\n${checks}`}`;
+}
+
 function describeIntent({ headline, purpose, doneWhen }: Intent) {
 	const checks = doneWhen.length ? ` Done when: ${doneWhen.join('; ')}` : '';
 	return `${headline} — ${purpose}${checks}`;
@@ -732,10 +737,17 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#broadcast({ type: 'entry', thread, entry });
 	}
 
-	suggestThread(thread: string, { context, ...intent }: Suggestion) {
+	// Starts the thread only when a person asked for it in this thread: the latest one to write is its author.
+	async launchThread(thread: string, { context, ...intent }: Suggestion, start: boolean) {
 		const summary = this.#summary(thread);
-		if (!summary || summary.deleted || summary.status === 'discarded') return;
-		this.#add(thread, { type: 'suggestion', intent, context, outcome: null });
+		if (!summary || summary.deleted || summary.status === 'discarded') return null;
+		const entry = this.#add(thread, { type: 'suggestion', intent, context, outcome: null });
+		if (!start) return null;
+		const requester = this.#entries(thread).findLast(
+			(entry) => entry.type === 'message' && entry.author.kind === 'person'
+		);
+		if (requester?.type !== 'message') return null;
+		return (await this.spinOff(thread, entry, requester.author)).id;
 	}
 
 	async spinOff(thread: string, entry: string, by: Author) {
@@ -747,7 +759,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
 		this.#sql.exec(
 			`INSERT INTO threads (id, headline, status, mode, machine, parent, context, updated_at)
-			VALUES (?, ?, 'needs-you', ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, 'running', ?, ?, ?, ?, ?)`,
 			id,
 			suggestion.intent.headline,
 			parent.mode,
@@ -759,7 +771,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (suggestion.context)
 			this.#add(id, { type: 'message', author: agent, text: suggestion.context });
 		this.#add(id, { type: 'intent', intent: suggestion.intent });
+		const started = this.#add(id, { type: 'event', text: `Started by ${by.name}` });
 		this.#update(thread, { ...suggestion, outcome: { kind: 'spun-off', thread: id, by: by.name } });
+		await this.#converse(id, by, startPrompt(suggestion.intent), started).catch(() => {});
 		return this.#summary(id)!;
 	}
 

@@ -4,7 +4,7 @@ import type { InflightStep } from './types.ts';
 const external = new Set([
 	'update_intent',
 	'record_done_when',
-	'suggest_thread',
+	'launch_thread',
 	'message_thread',
 	'ask_threads'
 ]);

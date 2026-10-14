@@ -292,6 +292,110 @@
 </Story>
 
 <Story
+	name="Spin-offs"
+	args={{
+		current: 'audit',
+		threads: [
+			{
+				id: 'settings',
+				headline: 'perf(settings): load members lazily',
+				status: 'running',
+				updatedAt: minutes(1),
+				href: '#settings'
+			},
+			{
+				id: 'audit',
+				headline: 'fix(audit): query only the last entry',
+				status: 'running',
+				updatedAt: minutes(3),
+				href: '#audit',
+				parent: { id: 'settings', headline: 'perf(settings): load members lazily' }
+			},
+			{
+				id: 'index',
+				headline: 'perf(db): index audit entries by repo',
+				status: 'running',
+				updatedAt: minutes(5),
+				href: '#index',
+				parent: { id: 'audit', headline: 'fix(audit): query only the last entry' }
+			},
+			{
+				id: 'avatars',
+				headline: 'perf(settings): cache member avatars',
+				status: 'running',
+				updatedAt: minutes(2),
+				href: '#avatars',
+				parent: { id: 'settings', headline: 'perf(settings): load members lazily' }
+			},
+			{
+				id: 'copy',
+				headline: 'docs(settings): explain lazy loading',
+				status: 'needs-you',
+				updatedAt: minutes(8),
+				href: '#copy',
+				parent: { id: 'settings', headline: 'perf(settings): load members lazily' }
+			},
+			{
+				id: 'orphan',
+				headline: 'chore: drop the old audit table',
+				status: 'needs-you',
+				updatedAt: minutes(30),
+				href: '#orphan',
+				parent: { id: 'gone', headline: 'refactor(audit): move to D1' }
+			}
+		]
+	}}
+	play={async ({ canvas, userEvent }) => {
+		const running = canvas.getByRole('list', { name: 'Running' });
+		const spunOff = within(running).getByRole('list', {
+			name: 'Spun off from perf(settings): load members lazily'
+		});
+		await expect(
+			[...spunOff.querySelectorAll('.headline')].map((headline) => headline.textContent)
+		).toEqual([
+			'perf(settings): cache member avatars',
+			'fix(audit): query only the last entry',
+			'perf(db): index audit entries by repo'
+		]);
+		await expect(
+			within(running).getByRole('list', {
+				name: 'Spun off from fix(audit): query only the last entry'
+			})
+		).toBeVisible();
+		await expect(within(running).queryByRole('img', { name: /Spun off from/ })).toBeNull();
+
+		const copy = canvas.getByRole('link', { name: /explain lazy loading/ });
+		await expect(
+			within(copy).getByRole('img', { name: 'Spun off from perf(settings): load members lazily' })
+		).toBeVisible();
+		await expect(
+			within(canvas.getByRole('link', { name: /drop the old audit table/ })).getByRole('img', {
+				name: 'Spun off from refactor(audit): move to D1'
+			})
+		).toBeVisible();
+
+		const parent = canvas.getByRole('link', { name: /^Running perf\(settings\): load/ });
+		const row = (link: HTMLElement) => link.closest('.row')!;
+		await userEvent.hover(parent);
+		await waitFor(() => expect(row(copy)).toHaveClass('related'));
+		await expect(row(canvas.getByRole('link', { name: /cache member avatars/ }))).toHaveClass(
+			'related'
+		);
+		await expect(row(canvas.getByRole('link', { name: /index audit entries/ }))).not.toHaveClass(
+			'related'
+		);
+		await userEvent.unhover(parent);
+		await waitFor(() => expect(row(copy)).not.toHaveClass('related'));
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
 	name="Empty"
 	args={{ threads: [], newThread: 'new-thread' }}
 	play={async ({ canvas }) => {
