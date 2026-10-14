@@ -154,7 +154,7 @@
 			onpreview={started ? () => {} : undefined}
 			actions={[
 				{ label: 'Copy link', onselect: () => {} },
-				{ label: 'Discard', onselect: () => {} }
+				{ label: 'Archive', onselect: () => {} }
 			]}
 		/>
 		<ChatLog label="Thread messages">

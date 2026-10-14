@@ -16,10 +16,11 @@
 		actions?: ThreadAction[];
 	}
 
-	const groups: { title: string; statuses: ThreadStatus[] }[] = [
+	const groups: { title: string; statuses: ThreadStatus[]; collapsible?: boolean }[] = [
 		{ title: 'Needs you', statuses: ['needs-you'] },
 		{ title: 'Running', statuses: ['running', 'shipping'] },
-		{ title: 'Recent', statuses: ['shipped', 'discarded'] }
+		{ title: 'Recent', statuses: ['shipped'] },
+		{ title: 'Archived', statuses: ['archived'], collapsible: true }
 	];
 
 	interface ThreadNode {
@@ -75,6 +76,13 @@
 
 	const id = $props.id();
 
+	let archivedOpen = $state(false);
+
+	$effect(() => {
+		if (threads.some((thread) => thread.id === current && thread.status === 'archived'))
+			archivedOpen = true;
+	});
+
 	let previewed: { thread: ThreadListItem; anchor: HTMLElement } | null = $state(null);
 	let hovered: ThreadListItem | null = $state(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -83,6 +91,7 @@
 		groups
 			.map((group) => ({
 				title: group.title,
+				collapsible: group.collapsible,
 				nodes: nest(
 					threads
 						.filter((thread) => group.statuses.includes(thread.status))
@@ -134,10 +143,27 @@
 		</div>
 	{/if}
 	{#each sections as section, index (section.title)}
-		<p id="{id}-section-{index}" class="title">{section.title}</p>
-		<ul aria-labelledby="{id}-section-{index}">
-			{@render branch(section.nodes)}
-		</ul>
+		{#if section.collapsible}
+			<details class="collapsible" bind:open={archivedOpen}>
+				<summary class="title">
+					<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true">
+						<path d="m6 4 4 4-4 4" />
+					</svg>
+					<span id="{id}-section-{index}">{section.title}</span>
+					<span class="count">{section.nodes.length}</span>
+				</summary>
+				{#if archivedOpen}
+					<ul aria-labelledby="{id}-section-{index}">
+						{@render branch(section.nodes)}
+					</ul>
+				{/if}
+			</details>
+		{:else}
+			<p id="{id}-section-{index}" class="title">{section.title}</p>
+			<ul aria-labelledby="{id}-section-{index}">
+				{@render branch(section.nodes)}
+			</ul>
+		{/if}
 	{/each}
 </nav>
 
@@ -277,6 +303,60 @@
 
 		&:first-child {
 			margin-block-start: 0;
+		}
+	}
+
+	.collapsible {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: var(--space-2);
+		margin-block-start: var(--space-5);
+
+		&:first-child {
+			margin-block-start: 0;
+		}
+
+		summary {
+			display: flex;
+			align-items: center;
+			gap: var(--space-2);
+			border-radius: var(--radius);
+			cursor: pointer;
+			list-style: none;
+
+			&::-webkit-details-marker {
+				display: none;
+			}
+
+			&:hover {
+				color: var(--color-fg);
+			}
+
+			&:focus-visible {
+				outline: 2px solid var(--color-accent);
+				outline-offset: 2px;
+			}
+		}
+
+		.chevron {
+			flex: none;
+			inline-size: 1em;
+			block-size: 1em;
+			fill: none;
+			stroke: currentColor;
+			stroke-width: 1.5;
+			stroke-linecap: round;
+			stroke-linejoin: round;
+			transition: rotate 0.15s;
+		}
+
+		&[open] .chevron {
+			rotate: 90deg;
+		}
+
+		.count {
+			font-weight: 400;
+			font-variant-numeric: tabular-nums;
 		}
 	}
 

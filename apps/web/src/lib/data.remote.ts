@@ -130,8 +130,8 @@ export const reply = command(v.object({ ...thread.entries, text }), async ({ rep
 	getThreads(repo).refresh();
 });
 
-export const discardThread = command(thread, async ({ repo, id }) => {
-	await (await coordinator(repo, 'editor')).discard(id, author());
+export const archiveThread = command(thread, async ({ repo, id }) => {
+	await (await coordinator(repo, 'editor')).archive(id, author());
 	getThread({ repo, id }).refresh();
 	getThreads(repo).refresh();
 });

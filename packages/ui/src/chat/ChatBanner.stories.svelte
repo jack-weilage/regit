@@ -10,7 +10,7 @@
 </script>
 
 <Story
-	name="Discarded"
+	name="Archived"
 	asChild
 	play={async ({ canvas, userEvent }) => {
 		await userEvent.click(canvas.getByRole('button', { name: 'Reopen' }));
@@ -19,7 +19,7 @@
 >
 	<div style="inline-size: 32rem">
 		<ChatBanner>
-			Discarded by Sam. The conversation is read-only.
+			Archived by Sam. The conversation is read-only.
 			{#snippet actions()}
 				<Button size="sm" onclick={reopen}>Reopen</Button>
 			{/snippet}

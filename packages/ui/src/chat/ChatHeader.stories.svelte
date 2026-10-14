@@ -4,7 +4,7 @@
 	import ChatHeader from './ChatHeader.svelte';
 	import { threads } from './fixtures.ts';
 
-	const discard = fn();
+	const archive = fn();
 
 	const { Story } = defineMeta({
 		title: 'Chat/Header',
@@ -22,9 +22,9 @@
 				{ label: 'Copy link', onselect: fn() },
 				{ label: 'Try another approach', onselect: fn() },
 				{
-					label: 'Discard thread',
+					label: 'Archive thread',
 					detail: 'Stops the attempt, keeps the conversation',
-					onselect: discard
+					onselect: archive
 				},
 				{ label: 'Delete thread…', separated: true, danger: true, onselect: fn() }
 			],
@@ -46,9 +46,9 @@
 		await expect(canvas.getByRole('menuitem', { name: 'Delete thread…' })).toHaveFocus();
 		await expect(canvas.getByRole('separator')).toBeInTheDocument();
 		await userEvent.keyboard('{ArrowUp}');
-		await expect(canvas.getByRole('menuitem', { name: /Discard thread/ })).toHaveFocus();
+		await expect(canvas.getByRole('menuitem', { name: /Archive thread/ })).toHaveFocus();
 		await userEvent.keyboard('{Enter}');
-		await expect(discard).toHaveBeenCalledOnce();
+		await expect(archive).toHaveBeenCalledOnce();
 		await waitFor(() => expect(canvas.getByRole('menu')).not.toBeVisible());
 	}}
 />

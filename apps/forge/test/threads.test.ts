@@ -6,7 +6,7 @@ import { setup, sleepCall, untilThread } from './support.ts';
 const { dir, worker, script, modelRequests, sh, seed, startedThread, untilRequests } =
 	await setup();
 
-test('discards, reopens, deletes, restores and purges a thread', async () => {
+test('archives, reopens, deletes, restores and purges a thread', async () => {
 	const offline = [{ type: 'response.failed', response: { error: { message: 'Offline' } } }];
 	await script('lifecycle', [offline, offline]);
 	const env = await worker.getEnv();
@@ -27,13 +27,13 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	const imageId = await repo.saveImage(id, `data:image/png;base64,${pixels.toString('base64')}`);
 	expect(Buffer.from((await repo.image(imageId))!.data).equals(pixels)).toBe(true);
 
-	await repo.discard(id, sam);
-	expect((await repo.thread(id))!.summary.status).toBe('discarded');
+	await repo.archive(id, sam);
+	expect((await repo.thread(id))!.summary.status).toBe('archived');
 	await repo.reopen(id, sam);
 	const reopened = await repo.thread(id);
 	expect(reopened!.summary.status).toBe('needs-you');
 	expect(reopened!.entries.map((entry) => entry.type === 'event' && entry.text)).toEqual(
-		expect.arrayContaining(['Discarded by Sam', 'Reopened by Sam'])
+		expect.arrayContaining(['Archived by Sam', 'Reopened by Sam'])
 	);
 
 	await repo.delete(id, sam);
@@ -351,14 +351,14 @@ test('resumes a finished thread with its history when someone replies', async ()
 	expect(JSON.stringify(turns[1]!.query)).toContain('Sam: Also add a footer.');
 });
 
-test('resumes a discarded thread once it is reopened', async () => {
+test('resumes an archived thread once it is reopened', async () => {
 	const { env, repo, sam, id } = await startedThread('reopened', [
 		sleepCall,
 		[{ type: 'response.output_text.delta', delta: 'Carried on.' }]
 	]);
 	await untilRequests('reopened', id, 1);
 	await new Promise((resolve) => setTimeout(resolve, 500));
-	await repo.discard(id, sam);
+	await repo.archive(id, sam);
 	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('cancelled');
 
 	repo.reopen(id, sam);

@@ -8,5 +8,5 @@ export const statuses: Record<ThreadStatus, { label: string; icon: StatusIconSta
 	'needs-you': { label: 'Needs you', icon: 'attention' },
 	shipping: { label: 'Shipping', icon: 'shipping' },
 	shipped: { label: 'Shipped', icon: 'passed' },
-	discarded: { label: 'Discarded', icon: 'failed' }
+	archived: { label: 'Archived', icon: 'pending' }
 };

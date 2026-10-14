@@ -251,7 +251,7 @@ test('refuses thread messages to itself, unknown or idle threads, and past the l
 
 	await expect(send(from.id, from.id, 'Hi')).rejects.toThrow();
 	await expect(send(from.id, 'nope', 'Hi')).rejects.toThrow();
-	await repo.discard(idle.id, sam);
+	await repo.archive(idle.id, sam);
 	await expect(send(from.id, idle.id, 'Hi')).rejects.toThrow();
 	for (let i = 0; i < 5; i++) await send(from.id, to.id, `Message ${i}`);
 	await expect(send(from.id, to.id, 'One more')).rejects.toThrow();

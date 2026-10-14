@@ -52,7 +52,7 @@
 		cancelAutomation,
 		shipThread,
 		deleteThread,
-		discardThread,
+		archiveThread,
 		dismissSuggestion,
 		forwardIntent,
 		getChanges,
@@ -199,12 +199,12 @@
 		const status = detail?.summary.status;
 		return [
 			{ label: 'Copy link', onselect: () => navigator.clipboard.writeText(location.href) },
-			status === 'discarded'
+			status === 'archived'
 				? { label: 'Reopen thread', detail: 'Pick up where it left off', onselect: reopen }
 				: {
-						label: 'Discard thread',
+						label: 'Archive thread',
 						detail: 'Stops the attempt, keeps the conversation',
-						onselect: () => discardThread(ref)
+						onselect: () => archiveThread(ref)
 					},
 			{ label: 'Delete thread…', separated: true, danger: true, onselect: () => (deleting = true) }
 		];
@@ -400,7 +400,7 @@
 					</ErrorBoundary>
 				{/each}
 				<ErrorBoundary title="Couldn't show this thread's status" resetOn={params.thread}>
-					{#if summary.behind && summary.status !== 'discarded'}
+					{#if summary.behind && summary.status !== 'archived'}
 						{@const behind = summary.behind}
 						<ChatBehindMain
 							{...behind}
@@ -409,7 +409,7 @@
 							onupdate={() => bringUpToDate(behind.sha)}
 						/>
 					{/if}
-					{#if summary.status === 'shipping' || (summary.status !== 'discarded' && summary.changes?.files)}
+					{#if summary.status === 'shipping' || (summary.status !== 'archived' && summary.changes?.files)}
 						<ShipPanel
 							intent={intentEntry?.intent}
 							results={intentEntry?.results}
@@ -445,9 +445,9 @@
 				</ErrorBoundary>
 			</ChatLog>
 			{#snippet bottom()}
-				{#if summary.status === 'discarded'}
+				{#if summary.status === 'archived'}
 					<ChatBanner>
-						This thread was discarded. The conversation is read-only.
+						This thread was archived. The conversation is read-only.
 						{#snippet actions()}
 							<Button size="sm" onclick={reopen}>Reopen</Button>
 						{/snippet}

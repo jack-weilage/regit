@@ -28,7 +28,7 @@
 		createGitAccessToken,
 		deleteDeploySecret,
 		deleteThread,
-		discardThread,
+		archiveThread,
 		reopenThread,
 		getDeploySettings,
 		getGitAccess,
@@ -83,16 +83,16 @@
 							new URL(`/${repo}/${thread.number}`, location.origin).href
 						)
 				},
-				thread.status === 'discarded'
+				thread.status === 'archived'
 					? {
 							label: 'Reopen thread',
 							detail: 'Pick up where it left off',
 							onselect: () => reopenThread({ repo, id: thread.id })
 						}
 					: {
-							label: 'Discard thread',
+							label: 'Archive thread',
 							detail: 'Stops the attempt, keeps the conversation',
-							onselect: () => discardThread({ repo, id: thread.id })
+							onselect: () => archiveThread({ repo, id: thread.id })
 						},
 				{
 					label: 'Delete thread…',

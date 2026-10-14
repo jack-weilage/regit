@@ -312,6 +312,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			UPDATE threads SET status = 'needs-you' WHERE status IN ('draft', 'reviewing');
 			UPDATE threads SET reopen_status = 'needs-you' WHERE reopen_status IN ('draft', 'reviewing');
 		`);
+		// TODO: remove once no coordinator has threads in the renamed discarded status.
+		this.#sql.exec("UPDATE threads SET status = 'archived' WHERE status = 'discarded'");
 	}
 
 	async openThread({
@@ -349,14 +351,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			text,
 			...(steering && { steering: { read: false } })
 		});
-		if (summary.status === 'discarded') return;
+		if (summary.status === 'archived') return;
 		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
 		await this.#converse(thread, author, text, entry);
 	}
 
 	async bringUpToDate(thread: string, by: Author) {
 		const summary = this.#active(thread);
-		if (summary.status === 'discarded') return;
+		if (summary.status === 'archived') return;
 		const entry = this.#add(thread, {
 			type: 'event',
 			text: `${by.name} asked to bring this thread up to date with ${await this.#branch()}`
@@ -371,15 +373,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 	}
 
-	async discard(thread: string, by: Author) {
+	async archive(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		await this.#notShipping(thread);
 		this.#takeHandBack(thread);
-		if (summary.status === 'discarded') return;
+		if (summary.status === 'archived') return;
 		const reopen = ['running', 'shipping'].includes(summary.status) ? 'needs-you' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
-		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
-		this.#setStatus(thread, 'discarded');
+		this.#add(thread, { type: 'event', text: `Archived by ${by.name}` });
+		this.#setStatus(thread, 'archived');
 		this.#automations.endThread(thread, Date.now());
 		this.#checkOverlaps(thread);
 		await this.#agent(thread).cancel();
@@ -387,7 +389,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	reopen(thread: string, by: Author) {
 		const summary = this.#active(thread);
-		if (summary.status !== 'discarded') return;
+		if (summary.status !== 'archived') return;
 		const [row] = this.#sql
 			.exec<Pick<ThreadRow, 'reopen_status'>>(
 				'SELECT reopen_status FROM threads WHERE id = ?',
@@ -498,13 +500,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	otherThreads(from: string) {
 		return this.threads()
-			.filter((thread) => thread.id !== from && thread.status !== 'discarded')
+			.filter((thread) => thread.id !== from && thread.status !== 'archived')
 			.map(({ id, number, headline, status }) => ({ id, number, headline, status }));
 	}
 
 	async createAutomation(thread: string, spec: unknown) {
 		const summary = this.#active(thread);
-		if (summary.status === 'discarded') throw new Error('This thread is discarded');
+		if (summary.status === 'archived') throw new Error('This thread is archived');
 		const now = Date.now();
 		const automation = this.#automations.create(thread, normalizeAutomation(spec, now), now);
 		this.#touch(thread);
@@ -537,7 +539,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const recipient = this.#summary(to);
 		if (!recipient || recipient.deleted) throw new Error(`There is no thread ${to}`);
 		const steering = recipient.status === 'running';
-		if (['discarded', 'shipping'].includes(recipient.status)) {
+		if (['archived', 'shipping'].includes(recipient.status)) {
 			throw new Error(`Thread ${to} is ${recipient.status}. Tell your person instead.`);
 		}
 		if (this.#threadMessagesSincePerson(to) >= maxThreadMessages) {
@@ -709,7 +711,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async intentProposed(thread: string, intent: Intent) {
 		const summary = this.#summary(thread);
 		if (!summary || summary.deleted) return;
-		if (summary.status === 'discarded') return;
+		if (summary.status === 'archived') return;
 		const previous = this.#latestIntentEntry(thread)?.results ?? {};
 		const results = Object.fromEntries(
 			intent.doneWhen.flatMap((check) => (previous[check] ? [[check, previous[check]]] : []))
@@ -818,7 +820,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	// Starts the thread only when a person asked for it in this thread: the latest one to write is its author.
 	async launchThread(thread: string, { context, ...intent }: Suggestion, start: boolean) {
 		const summary = this.#summary(thread);
-		if (!summary || summary.deleted || summary.status === 'discarded') return null;
+		if (!summary || summary.deleted || summary.status === 'archived') return null;
 		const entry = this.#add(thread, { type: 'suggestion', intent, context, outcome: null });
 		if (!start) return null;
 		const requester = this.#entries(thread).findLast(
@@ -1097,7 +1099,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (this.#meta('main') === after) return;
 		const forks = [];
 		for (const thread of this.threads()) {
-			if (thread.status === 'discarded') continue;
+			if (thread.status === 'archived') continue;
 			const fork = await this.#agent(thread.id).forkRef();
 			if (fork) forks.push({ id: thread.id, ...fork });
 		}
@@ -1510,7 +1512,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#liveThreads() {
 		return this.#sql
 			.exec<Pick<ThreadRow, 'id' | 'headline' | 'paths' | 'overlaps'>>(
-				"SELECT id, headline, paths, overlaps FROM threads WHERE deleted_at IS NULL AND status != 'discarded'"
+				"SELECT id, headline, paths, overlaps FROM threads WHERE deleted_at IS NULL AND status != 'archived'"
 			)
 			.toArray()
 			.map((row) => ({
@@ -1969,7 +1971,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async #fireAutomation(automation: DueAutomation, now: number) {
 		const { thread } = automation;
 		const summary = this.#summary(thread);
-		if (!summary || summary.deleted || summary.status === 'discarded')
+		if (!summary || summary.deleted || summary.status === 'archived')
 			return this.#automations.endThread(thread, now);
 		const pending = automation.pendingEntry && this.#entry(thread, automation.pendingEntry);
 		if (pending && pending.type === 'automation' && pending.steering?.read === false) {

@@ -130,14 +130,14 @@ test('only an owner can ship, and shipping squashes the thread onto main with pr
 	expect(readdirSync(dir).filter((name) => name.includes('--candidate-'))).toEqual([]);
 });
 
-test('a shipping thread cannot be discarded until it finishes', async () => {
-	const { repo, id } = await finishedThread('ship-discard');
+test('a shipping thread cannot be archived until it finishes', async () => {
+	const { repo, id } = await finishedThread('ship-archive');
 	await repo.ship(id, input);
-	await expect(repo.discard(id, owner)).rejects.toThrow();
+	await expect(repo.archive(id, owner)).rejects.toThrow();
 	expect(((await repo.thread(id)) as ThreadDetail).summary.status).toBe('shipping');
 	await until(repo, id, (detail) => detail.summary.status === 'shipped');
-	await repo.discard(id, owner);
-	expect(((await repo.thread(id)) as ThreadDetail).summary.status).toBe('discarded');
+	await repo.archive(id, owner);
+	expect(((await repo.thread(id)) as ThreadDetail).summary.status).toBe('archived');
 });
 
 test('ships onto main as it is when shipping, even after main moved', async () => {

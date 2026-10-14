@@ -138,7 +138,7 @@ test("runs when what the thread shipped deploys and keeps waiting for events tha
 	expect(check).toMatchObject({ name: 'post-deploy-check', ended: { reason: 'runs' } });
 });
 
-test('a person can cancel an automation, and discarding the thread ends the rest', async () => {
+test('a person can cancel an automation, and archiving the thread ends the rest', async () => {
 	const { repo, sam, id } = await startedThread('cancelling', [
 		create('first', { name: 'first', on: { after: '1h' }, message: 'First.' }),
 		create('second', {
@@ -180,7 +180,7 @@ test('a person can cancel an automation, and discarding the thread ends the rest
 		text: 'Sam cancelled the automation "first"'
 	});
 
-	await repo.discard(id, sam);
+	await repo.archive(id, sam);
 	expect(
 		((await repo.automations(id)) as Automation[]).map(({ name, ended }) => [name, ended?.reason])
 	).toEqual([

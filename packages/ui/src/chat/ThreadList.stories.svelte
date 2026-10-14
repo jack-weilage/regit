@@ -59,7 +59,7 @@
 			id: 'router',
 			number: 30,
 			headline: 'refactor(api): split the router',
-			status: 'discarded',
+			status: 'archived',
 			updatedAt: minutes(180),
 			href: '#router'
 		},
@@ -75,7 +75,7 @@
 			id: 'search',
 			number: 2,
 			headline: 'feat(search): fuzzy thread search',
-			status: 'discarded',
+			status: 'archived',
 			updatedAt: minutes(60 * 24 * 9),
 			href: '#search'
 		}
@@ -103,7 +103,9 @@
 		await expect(within(sections[0]!).getAllByRole('link')).toHaveLength(2);
 		await expect(
 			[...sections[2]!.querySelectorAll('time')].map((time) => time.textContent)
-		).toEqual(['3h', '1d', 'Sep 23']);
+		).toEqual(['1d']);
+		await expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull();
+		await expect(canvas.queryByRole('link', { name: /split the router/ })).toBeNull();
 		await expect(canvas.getByRole('link', { name: /load members lazily/ })).toHaveAttribute(
 			'aria-current',
 			'page'
@@ -135,7 +137,7 @@
 			actions: [
 				{ label: 'Copy link', onselect: fn() },
 				{
-					label: thread.status === 'discarded' ? 'Reopen thread' : 'Discard thread',
+					label: thread.status === 'archived' ? 'Reopen thread' : 'Archive thread',
 					onselect: fn()
 				},
 				{ label: 'Delete thread…', danger: true, separated: true, onselect: fn() }
@@ -172,16 +174,57 @@
 		await waitFor(() => expect(menu).toBeVisible());
 		await userEvent.keyboard('{Escape}');
 
-		const discarded = canvas.getByRole('button', {
+		await userEvent.click(canvas.getByText('Archived'));
+		const archived = await canvas.findByRole('button', {
 			name: 'Thread actions: refactor(api): split the router'
 		});
 		await userEvent.hover(canvas.getByRole('link', { name: /split the router/ }));
-		discarded.focus();
-		await userEvent.click(discarded);
+		archived.focus();
+		await userEvent.click(archived);
 		await waitFor(() =>
 			expect(canvas.getByRole('menuitem', { name: 'Reopen thread' })).toBeVisible()
 		);
 		await userEvent.keyboard('{Escape}');
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem; block-size: 30rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Archived"
+	play={async ({ canvas, userEvent }) => {
+		const toggle = canvas.getByText('Archived').closest('summary')!;
+		await expect(toggle).toHaveTextContent(/Archived\s*2/);
+		await expect(toggle.parentElement).not.toHaveAttribute('open');
+		await expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull();
+		await userEvent.click(toggle);
+		const archived = await canvas.findByRole('list', { name: 'Archived' });
+		await expect(
+			[...archived.querySelectorAll('time')].map((time) => time.textContent)
+		).toEqual(['3h', 'Sep 23']);
+		await userEvent.click(toggle);
+		await waitFor(() => expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull());
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem; block-size: 30rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Archived current"
+	args={{ current: 'router' }}
+	play={async ({ canvas }) => {
+		await expect(await canvas.findByRole('link', { name: /split the router/ })).toHaveAttribute(
+			'aria-current',
+			'page'
+		);
 	}}
 >
 	{#snippet template(args)}
@@ -253,7 +296,7 @@
 				id: 'router',
 				headline:
 					'refactor(api): split the router into per-resource modules and move the auth middleware',
-				status: 'discarded',
+				status: 'archived',
 				updatedAt: minutes(60 * 48),
 				href: '#'
 			},
@@ -267,13 +310,15 @@
 			{
 				id: 'search',
 				headline: 'feat(search): fuzzy thread search',
-				status: 'discarded',
+				status: 'archived',
 				updatedAt: minutes(60 * 24 * 60),
 				href: '#'
 			}
 		]
 	}}
-	play={async ({ canvas, canvasElement }) => {
+	play={async ({ canvas, canvasElement, userEvent }) => {
+		await userEvent.click(canvas.getByText('Archived'));
+		await canvas.findByRole('list', { name: 'Archived' });
 		const icons = [...canvasElement.querySelectorAll('svg[role=img]')].map((icon) =>
 			icon.getAttribute('aria-label')
 		);
@@ -282,16 +327,16 @@
 			'Running',
 			'Running',
 			'Shipping',
-			'Discarded',
 			'Shipped',
-			'Discarded'
+			'Archived',
+			'Archived'
 		]);
 		await expect(
 			within(canvas.getByRole('list', { name: 'Running' })).getAllByRole('link')
 		).toHaveLength(3);
 		await expect(
-			[...canvasElement.querySelectorAll('time')].slice(0, 5).map((time) => time.textContent)
-		).toEqual(['now', '1m', '12m', '3h', '2d']);
+			[...canvasElement.querySelectorAll('time')].slice(0, 4).map((time) => time.textContent)
+		).toEqual(['now', '1m', '12m', '3h']);
 		const rows = canvas.getAllByRole('link');
 		await expect(new Set(rows.map((row) => row.offsetHeight)).size).toBe(1);
 		await expect(rows.filter((row) => row.getAttribute('aria-current') === 'page')).toHaveLength(1);

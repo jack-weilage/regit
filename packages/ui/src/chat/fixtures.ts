@@ -46,8 +46,8 @@ export const similarThreads: SimilarThread[] = [
 		label: 'Audit log retention',
 		href: '#',
 		relation: 'related',
-		status: 'discarded',
-		detail: 'Discarded 3 days ago'
+		status: 'archived',
+		detail: 'Archived 3 days ago'
 	}
 ];
 
@@ -56,7 +56,7 @@ export const threads: Mentionable[] = [
 		kind: 'thread',
 		handle: 'paginate-member-list',
 		label: 'Paginate the member list',
-		detail: 'Discarded',
+		detail: 'Archived',
 		href: '#'
 	},
 	{

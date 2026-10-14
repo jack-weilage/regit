@@ -20,7 +20,7 @@ export const defaultMachine: Machine = 'standard-1';
 
 export const defaultDeployMachine: Machine = 'standard-3';
 
-export type ThreadStatus = 'running' | 'needs-you' | 'shipping' | 'shipped' | 'discarded';
+export type ThreadStatus = 'running' | 'needs-you' | 'shipping' | 'shipped' | 'archived';
 
 export interface Author {
 	id?: string;
@@ -261,7 +261,7 @@ export interface RepoCoordinatorApi {
 		machine: Machine;
 	}): Promise<ThreadSummary>;
 	reply(thread: string, input: { author: Author; text: string }): Promise<void>;
-	discard(thread: string, by: Author): Promise<void>;
+	archive(thread: string, by: Author): Promise<void>;
 	reopen(thread: string, by: Author): void;
 	delete(thread: string, by: Author): Promise<void>;
 	restore(thread: string): void;
