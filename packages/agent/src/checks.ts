@@ -1,4 +1,4 @@
-import type { CheckAction, CheckResult } from '@regit/core';
+import type { CheckAction, CheckResult, EventTone } from '@regit/core';
 import type { Intent } from './intent.ts';
 import type { PlannedCheck } from './sandbox/protocol.ts';
 import type { JevRequest, JevResponse } from './similar.ts';
@@ -139,6 +139,11 @@ export function describeChecks(action: CheckAction, results: CheckResult[]) {
 		({ name, status, reused }) => `${name} ${status}${reused ? ' (unchanged)' : ''}`
 	);
 	return `${label}: ${parts.join(', ')}`;
+}
+
+export function checksTone(results: CheckResult[]): EventTone | undefined {
+	if (blockingFailures(results).length) return 'danger';
+	if (results.some(({ status }) => status === 'warned')) return 'warning';
 }
 
 function failureSections(results: CheckResult[]) {

@@ -4,6 +4,7 @@ import {
 	askVerdict,
 	brokeMainNotice,
 	checksNotice,
+	checksTone,
 	describeChecks,
 	evidenceKey,
 	missingIntent,
@@ -98,6 +99,9 @@ describe('running checks', () => {
 			'Checks: tests failed, lint warned, docs warned'
 		);
 		expect(describeChecks('deploy', results.slice(0, 1))).toBe('Deploy checks: tests failed');
+		expect(checksTone(results)).toBe('danger');
+		expect(checksTone(results.slice(1))).toBe('warning');
+		expect(checksTone([])).toBeUndefined();
 		const notice = checksNotice(results)!;
 		expect(notice).toContain('- tests: failed\n- lint: warned\n- docs: warned\n');
 		expect(notice).toContain(

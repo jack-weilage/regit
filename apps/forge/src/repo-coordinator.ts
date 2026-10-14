@@ -4,6 +4,7 @@ import {
 	assessRequest,
 	blockingFailures,
 	brokeMainNotice,
+	checksTone,
 	describeChecks,
 	compactThreshold,
 	maxSimilarCandidates,
@@ -989,7 +990,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const conflict = /^Ship conflicts with (\S+) in /.exec(message);
 		const entry = this.#add(ship.thread, {
 			type: 'event',
-			text: `${message}. Handing it back to the agent to ${conflict ? 'bring up to date' : 'fix'}.`
+			text: `${message}. Handing it back to the agent to ${conflict ? 'bring up to date' : 'fix'}.`,
+			tone: 'warning'
 		});
 		this.#setStatus(ship.thread, 'running');
 		await this.#converse(
@@ -1232,7 +1234,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const entry = this.#add(thread, {
 			type: 'event',
-			text: `Deploy checks failed on ${branch} after this shipped as ${culprit.sha.slice(0, 7)}: ${failed.join(', ')}. Handing it back to the agent to fix.`
+			text: `Deploy checks failed on ${branch} after this shipped as ${culprit.sha.slice(0, 7)}: ${failed.join(', ')}. Handing it back to the agent to fix.`,
+			tone: 'danger'
 		});
 		this.#setStatus(thread, 'running');
 		await this.#converse(
@@ -1252,7 +1255,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const shas = fixing.commits.map(({ sha }) => sha.slice(0, 7)).join(', ');
 		this.#add(thread, {
 			type: 'event',
-			text: `Reverting ${shas} on ${await this.#branch()}: ${reason}`
+			text: `Reverting ${shas} on ${await this.#branch()}: ${reason}`,
+			tone: 'danger'
 		});
 		const params = { id, repo: this.#repo(), thread, commits: fixing.commits, reason };
 		await this.env.REVERT_SHIP.create({ id, params }).catch((error: unknown) =>
@@ -1408,7 +1412,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				if (fresh.length)
 					this.#add(row.id, {
 						type: 'event',
-						text: `Conflicts with "${headline || 'New thread'}" in ${fresh.join(', ')}`
+						text: `Conflicts with "${headline || 'New thread'}" in ${fresh.join(', ')}`,
+						tone: 'warning'
 					});
 			}
 			this.#sql.exec(
@@ -1454,7 +1459,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (conflicts.length && JSON.stringify(was.behind?.conflicts) !== JSON.stringify(conflicts))
 			this.#add(thread, {
 				type: 'event',
-				text: `Conflicts with ${behind!.branch} in ${conflicts.join(', ')}`
+				text: `Conflicts with ${behind!.branch} in ${conflicts.join(', ')}`,
+				tone: 'warning'
 			});
 		this.#touch(thread);
 	}
@@ -1495,7 +1501,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			if (!unchanged)
 				this.#add(thread, {
 					type: 'event',
-					text: describeChecks(update.run.action, update.run.results)
+					text: describeChecks(update.run.action, update.run.results),
+					tone: checksTone(update.run.results)
 				});
 			this.#touch(thread);
 			return;
@@ -1566,7 +1573,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (!['finished', 'stopped', 'failed'].includes(update.status)) return;
 		this.#setActivity(thread, null);
 		if (update.status === 'stopped')
-			this.#add(thread, { type: 'event', text: 'The agent stopped at its step limit' });
+			this.#add(thread, {
+				type: 'event',
+				text: 'The agent stopped at its step limit',
+				tone: 'warning'
+			});
 		const running = this.#summary(thread)!.status === 'running';
 		if (running) this.#setStatus(thread, 'needs-you');
 		if (update.status === 'failed') {
@@ -1586,7 +1597,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			await this.#startShip(thread, handBack.input, handBack.handBacks);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			this.#add(thread, { type: 'event', text: `Couldn't ship again: ${message}` });
+			this.#add(thread, {
+				type: 'event',
+				text: `Couldn't ship again: ${message}`,
+				tone: 'danger'
+			});
 			await this.#revert(thread, `the agent couldn't fix them (${message})`);
 		}
 	}

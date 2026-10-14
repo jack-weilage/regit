@@ -110,6 +110,8 @@ export interface ThreadActivity {
 // What a thread's sandbox reports; the coordinator adds ship progress.
 export type AgentActivity = Omit<ThreadActivity, 'ship'>;
 
+export type EventTone = 'warning' | 'danger';
+
 export type Entry =
 	| {
 			type: 'message';
@@ -136,7 +138,7 @@ export type Entry =
 			outcome:
 				{ kind: 'dismissed'; by: string } | { kind: 'spun-off'; thread: string; by: string } | null;
 	  }
-	| { type: 'event'; id: string; at: number; text: string }
+	| { type: 'event'; id: string; at: number; text: string; tone?: EventTone }
 	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[]; checkpoint?: string }
 	| { type: 'startup'; id: string; at: number; stages: StartupStage[] }
 	| { type: 'recovered'; id: string; at: number; failures: RetryFailure[] }

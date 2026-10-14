@@ -49,6 +49,11 @@ test('sends failing handoff checks back to the agent and reuses passes whose inp
 	);
 	const fixed = await untilThread(repo, id, replied('Fixed.'));
 	expect(checkEvents(fixed)).toEqual(['Checks: title failed', 'Checks: title passed']);
+	expect(
+		fixed.entries.flatMap((entry) =>
+			entry.type === 'event' && entry.text.startsWith('Checks: ') ? [entry.tone] : []
+		)
+	).toEqual(['danger', undefined]);
 	expect(fixed.summary.checks).toMatchObject({
 		action: 'handoff',
 		results: [{ name: 'title', kind: 'run', status: 'passed', reused: false }]

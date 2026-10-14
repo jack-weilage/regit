@@ -89,7 +89,8 @@ test('hands a conflicting ship back to its agent to resolve, then ships again', 
 	expect(shipped.entries).toContainEqual(
 		expect.objectContaining({
 			type: 'event',
-			text: 'Ship conflicts with main in notes.md. Handing it back to the agent to bring up to date.'
+			text: 'Ship conflicts with main in notes.md. Handing it back to the agent to bring up to date.',
+			tone: 'warning'
 		})
 	);
 	const handedBack = JSON.stringify((await modelRequests('conflicting')).at(-2)!.query);

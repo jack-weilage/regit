@@ -33,6 +33,7 @@ export {
 	blockingFailures,
 	brokeMainNotice,
 	checksNotice,
+	checksTone,
 	describeChecks,
 	dueChecks,
 	runChecks,

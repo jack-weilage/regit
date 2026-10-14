@@ -76,7 +76,8 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 	});
 	expect(warned.entries.at(-1)).toMatchObject({
 		type: 'event',
-		text: 'Conflicts with main in notes.md'
+		text: 'Conflicts with main in notes.md',
+		tone: 'warning'
 	});
 	expect((await repo.thread(clean))!.summary.behind).toMatchObject({ commits: 1, conflicts: [] });
 	await repo.landed(landing);
