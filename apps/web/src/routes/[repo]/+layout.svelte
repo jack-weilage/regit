@@ -73,6 +73,7 @@
 			status: thread.status,
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.id}`,
+			parent: thread.parent ?? undefined,
 			actions: [
 				{
 					label: 'Copy link',
