@@ -4,5 +4,8 @@ set -euo pipefail
 
 : "${CLOUDFLARE_API_TOKEN:?Add a CLOUDFLARE_API_TOKEN deploy secret in ReGit}"
 
+# Wrangler hides why Docker didn't start, so start it here where its errors reach the deploy log.
+docker info >/dev/null
+
 mise exec -- bun run --filter @regit/forge deploy
 mise exec -- bun run --filter @regit/web deploy
