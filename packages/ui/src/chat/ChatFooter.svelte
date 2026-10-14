@@ -91,7 +91,7 @@
 						<tr><th>Task</th><th>Model</th><th>Tokens used</th><th>Cost</th></tr>
 					</thead>
 					<tbody>
-						{#each usage as row (row.task)}
+						{#each usage as row (`${row.task}:${row.model}`)}
 							<tr>
 								<td>{row.task}</td>
 								<td>{row.model}</td>

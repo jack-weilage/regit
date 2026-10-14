@@ -86,3 +86,20 @@
 		await expect(canvas.getByRole('button', { name: /0% context \$0\.00/ })).toBeVisible();
 	}}
 />
+
+<Story
+	name="One task on two models"
+	args={{
+		context: { used: 30_854, limit: 244_800 },
+		usage: [
+			{ task: 'Agent', model: 'gpt-6-luna', tokens: 83_607, cost: 0.0037 },
+			{ task: 'Agent', model: 'gpt-6.1-sol', tokens: 481_598, cost: 0.2178 },
+			{ task: 'Thread search', model: 'gpt-6-luna', tokens: 4_697, cost: 0.0006 }
+		]
+	}}
+	play={async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button'));
+		await waitFor(() => expect(canvas.getByRole('cell', { name: 'gpt-6.1-sol' })).toBeVisible());
+		await expect(canvas.getAllByRole('cell', { name: 'Agent' })).toHaveLength(2);
+	}}
+/>
