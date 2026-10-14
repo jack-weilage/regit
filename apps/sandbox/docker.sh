@@ -6,11 +6,13 @@ if ! /usr/bin/docker version >/dev/null 2>&1; then
 	flock 9
 	if ! /usr/bin/docker version >/dev/null 2>&1; then
 		setsid dockerd --iptables=false --ip6tables=false >/var/log/dockerd.log 2>&1 9>&- &
+		daemon=$!
 		tries=0
 		until /usr/bin/docker version >/dev/null 2>&1; do
 			tries=$((tries + 1))
-			if [ "$tries" -gt 120 ]; then
-				echo 'The Docker daemon did not start; see /var/log/dockerd.log' >&2
+			if ! kill -0 "$daemon" 2>/dev/null || [ "$tries" -gt 120 ]; then
+				echo 'The Docker daemon did not start:' >&2
+				grep -E 'level=(error|fatal)|^failed' /var/log/dockerd.log | tail -n 20 >&2
 				exit 1
 			fi
 			sleep 0.5
