@@ -5,11 +5,14 @@ export type Verdict = 'landed' | 'passed' | 'failed' | 'deployed' | 'reverted';
 
 export type VerifyStage = 'checking' | 'rechecking' | 'bisecting' | 'deploying' | 'reverting';
 
-export interface Culprit {
+// A commit on main and the thread that shipped it, if one did.
+export interface LandedCommit {
 	sha: string;
 	headline: string;
 	thread: string | null;
 }
+
+export type Culprit = LandedCommit;
 
 export interface Verifying {
 	sha: string;
@@ -23,6 +26,8 @@ export interface Verifying {
 export interface MainStatus {
 	branch: string | null;
 	verifying: Verifying | null;
+	// Commits that landed while a verification ran, oldest first; the next one checks and deploys them together.
+	waiting: LandedCommit[];
 	verified: {
 		sha: string;
 		at: number;

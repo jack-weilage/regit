@@ -13,17 +13,21 @@
 </script>
 
 <script lang="ts">
+	import Popover from './Popover.svelte';
 	import StatusIcon from './StatusIcon.svelte';
 	import { clock, stopwatch } from './chat/clock.svelte.ts';
 	import { formatAgo, formatDuration } from './chat/format.ts';
 
 	interface Props {
 		main: MainStatus;
-		culpritHref?: string;
+		threadHref?: (thread: string) => string | undefined;
 		now?: number;
 	}
 
-	let { main, culpritHref, now }: Props = $props();
+	let { main, threadHref, now }: Props = $props();
+
+	const id = $props.id();
+	let waitingButton: HTMLButtonElement | undefined = $state();
 
 	let branch = $derived(main.branch ?? 'main');
 	let red = $derived(main.verified && !main.verified.passed ? main.verified : null);
@@ -33,6 +37,7 @@
 			? main.deployFailure
 			: null
 	);
+	let culpritHref = $derived(red?.culprit?.thread ? threadHref?.(red.culprit.thread) : undefined);
 	let summary = $derived.by(() => {
 		if (red) return { icon: 'failed', text: `${branch} is failing`, at: red.at } as const;
 		if (deployFailed)
@@ -50,7 +55,7 @@
 		if (main.deployed)
 			return {
 				icon: 'passed',
-				text: `Deployed ${short(main.deployed.sha)}`,
+				text: `Live ${short(main.deployed.sha)}`,
 				at: main.deployed.at
 			} as const;
 		if (main.green)
@@ -59,8 +64,44 @@
 	});
 </script>
 
-{#if summary || main.verifying}
+{#if summary || main.verifying || main.waiting.length}
 	<section class="main" aria-label="{branch} checks and deploys">
+		{#if main.waiting.length}
+			<button bind:this={waitingButton} type="button" class="waiting" popovertarget="{id}-waiting">
+				<StatusIcon state="pending" />
+				<span class="text">{main.waiting.length} waiting to deploy</span>
+				<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"
+					><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg
+				>
+			</button>
+			<Popover id="{id}-waiting" anchor={waitingButton} align="start" matchWidth>
+				<ul class="queue" aria-label="Waiting to deploy">
+					{#each main.waiting as commit (commit.sha)}
+						{@const href = commit.thread ? threadHref?.(commit.thread) : undefined}
+						<li>
+							<StatusIcon state="pending" />
+							<span class="commit">
+								{#if href}<a {href}>{commit.headline || short(commit.sha)}</a>{:else}<span
+										class="headline">{commit.headline || short(commit.sha)}</span
+									>{/if}
+								<code>{short(commit.sha)}</code>
+							</span>
+						</li>
+					{/each}
+				</ul>
+			</Popover>
+		{/if}
+		{#if main.verifying}
+			{@const { stage, sha, note, started } = main.verifying}
+			<p class="activity">
+				<StatusIcon state="running" />
+				<span class="text"
+					>{stages[stage]}
+					{short(sha)}{#if note}<span class="note">{note}</span>{/if}</span
+				>
+				<span class="when">{formatDuration((now ?? stopwatch.now) - started)}</span>
+			</p>
+		{/if}
 		{#if summary}
 			<p class={['summary', summary.icon]}>
 				<StatusIcon state={summary.icon} />
@@ -103,17 +144,6 @@
 		{:else if main.failure}
 			<p class="detail muted">{main.failure.error}</p>
 		{/if}
-		{#if main.verifying}
-			{@const { stage, sha, note, started } = main.verifying}
-			<p class="activity">
-				<StatusIcon state="running" />
-				<span class="text"
-					>{stages[stage]}
-					{short(sha)}{#if note}<span class="note">{note}</span>{/if}</span
-				>
-				<span class="when">{formatDuration((now ?? stopwatch.now) - started)}</span>
-			</p>
-		{/if}
 	</section>
 {/if}
 
@@ -134,7 +164,8 @@
 	}
 
 	.summary,
-	.activity {
+	.activity,
+	.waiting {
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
@@ -159,6 +190,73 @@
 
 	.activity {
 		color: var(--color-muted);
+	}
+
+	.waiting {
+		inline-size: calc(100% + 2 * var(--space-3));
+		margin-inline: calc(-1 * var(--space-3));
+		padding: var(--space-2) var(--space-3);
+		border: 0;
+		border-radius: var(--radius);
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-align: start;
+		cursor: pointer;
+
+		&:hover,
+		&:has(+ :popover-open) {
+			background: var(--color-surface);
+		}
+
+		&:focus-visible {
+			outline: 2px solid var(--color-accent);
+			outline-offset: 2px;
+		}
+
+		:global(svg.status) {
+			color: var(--color-muted);
+		}
+	}
+
+	.chevron {
+		flex: none;
+		inline-size: 1em;
+		block-size: 1em;
+		fill: none;
+		stroke: var(--color-muted);
+		stroke-width: 1.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
+	.queue {
+		display: grid;
+		gap: var(--space-4);
+		padding: var(--space-5) var(--space-6);
+		font-size: var(--text-meta);
+		line-height: 1.5;
+
+		li {
+			display: grid;
+			grid-template-columns: auto minmax(0, 1fr);
+			column-gap: var(--space-4);
+			align-items: baseline;
+			color: var(--color-muted);
+		}
+	}
+
+	.commit {
+		display: grid;
+		min-inline-size: 0;
+
+		a,
+		.headline {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			color: var(--color-fg);
+		}
 	}
 
 	.text {

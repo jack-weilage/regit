@@ -24,6 +24,7 @@ import type {
 	CheckResult,
 	CheckRun,
 	Culprit,
+	LandedCommit,
 	DeploySecret,
 	Entry,
 	Failure,
@@ -131,6 +132,7 @@ const maxFixes = 1;
 const emptyMain: MainStatus = {
 	branch: null,
 	verifying: null,
+	waiting: [],
 	verified: null,
 	green: null,
 	deployed: null,
@@ -903,7 +905,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setStatus(ship.thread, 'shipped');
 		this.#add(ship.thread, { type: 'event', text: `Shipped ${sha.slice(0, 7)} to ${branch}` });
 		this.#checkOverlaps(ship.thread);
-		await this.#verify(sha);
+		await this.#verify({ sha, headline: title, thread: ship.thread });
 	}
 
 	async shipFailed(ship: Ship, message: string) {
@@ -1003,8 +1005,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	// Main moved: record how far behind each thread is and warn those that now conflict. Forks only take main when asked or handed back.
-	async landed({ ref, after }: Landing) {
-		if (ref === `refs/heads/${await this.#branch()}`) await this.#verify(after);
+	async landed(landing: Landing) {
+		const { ref, after } = landing;
+		if (ref === `refs/heads/${await this.#branch()}`)
+			await this.#verify({ sha: after, headline: landing.headline, thread: null });
 		if (this.#meta('main') === after) return;
 		const forks = [];
 		for (const thread of this.threads()) {
@@ -1043,13 +1047,24 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	// Checks a commit that landed on main. One verification runs at a time; of the commits that land meanwhile,
-	// only the newest is checked next.
-	async #verify(sha: string) {
-		if (this.#meta('verify-latest') === sha) return;
+	// only the newest is checked next. A shipped commit arrives twice, from its ship and from the push, in either order.
+	async #verify(commit: LandedCommit) {
+		const { sha } = commit;
+		if (this.#meta('verify-latest') === sha) {
+			const { waiting } = this.main();
+			if (commit.thread && waiting.some((landed) => landed.sha === sha && !landed.thread))
+				this.#setMain({
+					waiting: waiting.map((landed) => (landed.sha === sha ? commit : landed))
+				});
+			return;
+		}
 		this.#setMeta('verify-latest', sha);
 		const running = this.#verification();
-		if (running && (await this.#stillVerifying(running.id)))
-			return this.#setMeta('verify-next', sha);
+		if (running && (await this.#stillVerifying(running.id))) {
+			this.#setMeta('verify-next', sha);
+			this.#setMain({ waiting: [...this.main().waiting, commit] });
+			return;
+		}
 		await this.#startVerifying(sha);
 	}
 
@@ -1059,7 +1074,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const now = Date.now();
 		this.#setMeta('verify', JSON.stringify({ id, sha }));
 		const verifying = { sha, stage: 'checking' as const, note: null, since: now, started: now };
-		this.#setMain({ branch: await this.#branch(), verifying });
+		this.#setMain({ branch: await this.#branch(), verifying, waiting: [] });
 		try {
 			const params = { id, repo: this.#repo(), sha, green: this.green() };
 			await this.env.VERIFY_MAIN.create({ id, params });
@@ -1251,7 +1266,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			},
 			false
 		);
-		if (reverted) await this.#verify(reverted.sha);
+		if (reverted) {
+			const headline = `Revert "${this.#summary(thread)?.headline ?? thread}"`;
+			await this.#verify({ sha: reverted.sha, headline, thread });
+		}
 	}
 
 	revertFailed(id: string, error: string) {

@@ -11,6 +11,7 @@
 	const base: Main = {
 		branch: 'main',
 		verifying: null,
+		waiting: [],
 		verified: { sha: sha('a'), at: now - 3 * minute, passed: true, results: [], culprit: null },
 		green: { sha: sha('a'), at: now - 3 * minute },
 		deployed: { sha: sha('a'), at: now - 2 * minute },
@@ -29,7 +30,7 @@
 <Story
 	name="Deployed"
 	play={async ({ canvas }) => {
-		await expect(canvas.getByText('Deployed aaaaaaa')).toBeVisible();
+		await expect(canvas.getByText('Live aaaaaaa')).toBeVisible();
 		await expect(canvas.getByText('2 minutes ago')).toBeVisible();
 	}}
 />
@@ -55,9 +56,48 @@
 />
 
 <Story
+	name="Waiting to deploy"
+	args={{
+		threadHref: (thread: string) => (thread === 'e022fe03a0ef' ? `/regit/${thread}` : undefined),
+		main: {
+			...base,
+			verifying: {
+				sha: sha('b'),
+				stage: 'checking',
+				note: null,
+				since: now - 40_000,
+				started: now - 40_000
+			},
+			waiting: [
+				{
+					sha: sha('c'),
+					headline: 'feat(ui): show thread actions on sidebar hover',
+					thread: 'e022fe03a0ef'
+				},
+				{ sha: sha('d'), headline: 'Bump the toolchain', thread: null }
+			]
+		}
+	}}
+	play={async ({ canvas, userEvent }) => {
+		const waiting = canvas.getByRole('button', { name: '2 waiting to deploy' });
+		await expect(canvas.queryByRole('list', { name: 'Waiting to deploy' })).toBeNull();
+		await userEvent.click(waiting);
+		const queue = await waitFor(() => canvas.getByRole('list', { name: 'Waiting to deploy' }));
+		await waitFor(() => expect(queue).toBeVisible());
+		await expect(
+			canvas.getByRole('link', { name: 'feat(ui): show thread actions on sidebar hover' })
+		).toHaveAttribute('href', '/regit/e022fe03a0ef');
+		await expect(canvas.getByText('Bump the toolchain')).toBeVisible();
+		await expect(canvas.queryByRole('link', { name: 'Bump the toolchain' })).toBeNull();
+		await expect(canvas.getByText('Checking bbbbbbb')).toBeVisible();
+		await expect(canvas.getByText('Live aaaaaaa')).toBeVisible();
+	}}
+/>
+
+<Story
 	name="Failing"
 	args={{
-		culpritHref: '/regit/3f2a9c1b7d4e',
+		threadHref: (thread: string) => `/regit/${thread}`,
 		main: {
 			...base,
 			verified: {

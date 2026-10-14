@@ -166,7 +166,12 @@ test('checks only the newest of the commits that land while a check runs', async
 			headline: ''
 		});
 	}
+	expect((await repo.main()).waiting).toEqual([
+		{ sha: landed[1], headline: '', thread: null },
+		{ sha: landed[2], headline: '', thread: null }
+	]);
 	await untilMain(repo, (main) => main.green?.sha === landed[2] && !main.verifying);
+	expect((await repo.main()).waiting).toEqual([]);
 	const checked = await readFile(join(sandboxes!, 'main-queueing/.git/checked'), 'utf8');
 	expect(checked.trim().split('\n')).toEqual([seeded, landed[0], landed[2]]);
 });

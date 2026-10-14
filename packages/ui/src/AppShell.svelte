@@ -58,11 +58,7 @@
 	const id = $props.id();
 
 	let open = $state(false);
-	let culprit = $derived(
-		main?.verified?.culprit?.thread
-			? threads.find((thread) => thread.id === main.verified!.culprit!.thread)?.href
-			: undefined
-	);
+	const threadHref = (id: string) => threads.find((thread) => thread.id === id)?.href;
 </script>
 
 <div class={['shell', { open }]}>
@@ -111,7 +107,7 @@
 		</div>
 
 		{#if main}
-			<MainStatusView {main} culpritHref={culprit} {now} />
+			<MainStatusView {main} {threadHref} {now} />
 		{/if}
 
 		{#if account}
