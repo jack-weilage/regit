@@ -4,6 +4,7 @@
 
 	export interface ThreadListItem {
 		id: string;
+		number?: number;
 		headline: string;
 		status: ThreadStatus;
 		updatedAt: number;
@@ -158,6 +159,7 @@
 						aria-label={thread.failed ?? statuses[thread.status].label}
 						role="img"
 					/>
+					{#if thread.number}<span class="number">#{thread.number}</span>{/if}
 					<span class="headline">{thread.headline}</span>
 					{#if thread.parent && thread.parent.id !== parent?.id}
 						<svg
@@ -403,6 +405,13 @@
 			outline: 2px solid var(--color-accent);
 			outline-offset: -2px;
 		}
+	}
+
+	.number {
+		flex: none;
+		color: var(--color-muted);
+		font-size: var(--text-meta);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.headline {

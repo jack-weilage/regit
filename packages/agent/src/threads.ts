@@ -3,6 +3,7 @@ import type { ToolExecutor } from './types.ts';
 
 export interface ThreadListing {
 	id: string;
+	number: number;
 	headline: string;
 	status: ThreadStatus;
 }
@@ -42,7 +43,10 @@ export function threadTools(messaging: ThreadMessaging): ToolExecutor {
 				const threads = await messaging.list();
 				if (!threads.length) return 'There are no other threads in this repository.';
 				return threads
-					.map((thread) => `${thread.id} · ${thread.status} · ${thread.headline || 'New thread'}`)
+					.map(
+						(thread) =>
+							`#${thread.number} (${thread.id}) · ${thread.status} · ${thread.headline || 'New thread'}`
+					)
 					.join('\n');
 			}
 			const { thread, text } = JSON.parse(call.arguments) as { thread: string; text: string };

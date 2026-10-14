@@ -9,6 +9,7 @@
 
 	interface Props {
 		headline: string;
+		number?: number;
 		status: ThreadStatus;
 		parent?: Mentionable;
 		people?: Author[];
@@ -16,7 +17,7 @@
 		onpreview?: () => void;
 	}
 
-	let { headline, status, parent, people = [], actions = [], onpreview }: Props = $props();
+	let { headline, number, status, parent, people = [], actions = [], onpreview }: Props = $props();
 
 	let current = $derived(statuses[status]);
 </script>
@@ -25,6 +26,7 @@
 	<div class="main">
 		<h1 class="headline">{headline}</h1>
 		<p class="meta">
+			{#if number}<span class="number">#{number}</span>{/if}
 			<span class="status"><StatusIcon state={current.icon} />{current.label}</span>
 			{#if parent}
 				<span>Spun off from <ChatMention mention={parent} /></span>

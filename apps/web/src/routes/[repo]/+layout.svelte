@@ -16,14 +16,13 @@
 		countCheckpoints,
 		defaultMachine,
 		threadPurgeDelayMs,
-		type LiveMessage,
 		type Machine,
 		type MainStatus,
 		type ThreadActivity,
 		type ThreadSummary
 	} from '@regit/core';
 	import { setLiveActivity } from '#lib/activity.ts';
-	import { connectLive } from '#lib/live.ts';
+	import { connectLive, repoLiveHandlers } from '#lib/live.ts';
 	import {
 		assessRequest,
 		createGitAccessToken,
@@ -53,6 +52,7 @@
 	setLiveActivity(activities);
 
 	let repo = $derived(params.repo);
+	let current = $derived(page.params.thread ? page.data.threadRef?.id : undefined);
 	let user = $derived(await getUser());
 	let known = $derived(await getRepos());
 	let repos = $derived(known.map((repo) => repo.name));
@@ -69,16 +69,19 @@
 	let threads = $derived<ThreadListItem[]>(
 		summaries.map((thread) => ({
 			id: thread.id,
+			number: thread.number,
 			headline: thread.headline || 'New thread',
 			status: thread.status,
 			updatedAt: thread.updatedAt,
-			href: `/${repo}/${thread.id}`,
+			href: `/${repo}/${thread.number}`,
 			parent: thread.parent ?? undefined,
 			actions: [
 				{
 					label: 'Copy link',
 					onselect: () =>
-						navigator.clipboard.writeText(new URL(`/${repo}/${thread.id}`, location.origin).href)
+						navigator.clipboard.writeText(
+							new URL(`/${repo}/${thread.number}`, location.origin).href
+						)
 				},
 				thread.status === 'discarded'
 					? {
@@ -112,42 +115,28 @@
 	const alerted = new Map<string, number>();
 
 	// A thread that fails while someone looks elsewhere gets a toast; the thread list keeps the mark.
-	function notice({ id, headline, failure }: ThreadSummary) {
+	function notice({ id, number, headline, failure }: ThreadSummary) {
 		if (!failure || alerted.get(id) === failure.at) return;
 		alerted.set(id, failure.at);
-		if (id === page.params.thread || Date.now() - failure.at > 60_000) return;
-		alert = { thread: id, text: `${headline || 'New thread'}: ${failure.title.toLowerCase()}` };
+		if (id === current || Date.now() - failure.at > 60_000) return;
+		alert = {
+			thread: String(number),
+			text: `${headline || 'New thread'}: ${failure.title.toLowerCase()}`
+		};
 	}
 
 	const live: Attachment = () =>
 		connectLive(
 			`/${repo}/live`,
-			{
-				reconnected() {
-					for (const thread of Object.keys(activities)) delete activities[thread];
-					liveMain = null;
-					getMain(repo).refresh();
-					getThreads(repo).refresh();
-					if (page.params.thread) getThread({ repo, id: page.params.thread }).refresh();
-				},
-				message(data) {
-					const message = JSON.parse(data) as LiveMessage;
-					if (message.type === 'main') {
-						liveMain = { repo, main: message.main };
-						return;
-					}
-					if (message.type === 'activity') {
-						activities[message.thread] = message.activity;
-						return;
-					}
-					const thread = message.type === 'entry' ? message.thread : message.summary.id;
-					if (message.type === 'thread') {
-						notice(message.summary);
-						getThreads(repo).refresh();
-					}
-					if (thread === page.params.thread) getThread({ repo, id: thread }).refresh();
-				}
-			},
+			repoLiveHandlers({
+				activities,
+				current: () => current,
+				main: (main) => (liveMain = main ? { repo, main } : null),
+				reloadMain: () => getMain(repo).refresh(),
+				reloadThreads: () => getThreads(repo).refresh(),
+				reloadThread: (id) => getThread({ repo, id }).refresh(),
+				notice
+			}),
 			{
 				open: (url) => new EventSource(url),
 				page: window,
@@ -181,7 +170,7 @@
 		similar = [];
 		size = undefined;
 		const summary = await openThread({ repo, ...thread });
-		await goto(`/${repo}/${summary.id}`);
+		await goto(`/${repo}/${summary.number}`);
 	}
 </script>
 
@@ -194,7 +183,7 @@
 		{repo}
 		{repos}
 		{threads}
-		current={page.params.thread}
+		{current}
 		account={user}
 		bind:mode
 		bind:machine

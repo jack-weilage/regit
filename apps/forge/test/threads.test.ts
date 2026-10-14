@@ -12,13 +12,16 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	const env = await worker.getEnv();
 	const repo = env.REPOS.getByName('lifecycle');
 	const sam = { name: 'Sam', kind: 'person' as const };
-	const { id } = await repo.openThread({
+	const { id, number } = await repo.openThread({
 		repo: 'lifecycle',
 		author: sam,
 		text: 'Try something.',
 		mode: 'small',
 		machine: 'standard-1'
 	});
+	expect(number).toBe(1);
+	expect(await repo.resolveThread('1')).toEqual({ id, number: 1 });
+	expect(await repo.resolveThread(id)).toEqual({ id, number: 1 });
 	const pixels = Buffer.alloc(600_000);
 	for (let i = 0; i < pixels.length; i++) pixels[i] = i % 251;
 	const imageId = await repo.saveImage(id, `data:image/png;base64,${pixels.toString('base64')}`);
@@ -36,8 +39,9 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 	await repo.delete(id, sam);
 	expect(await repo.image(imageId)).toBeNull();
 	expect(await repo.threads()).toEqual([]);
+	expect(await repo.resolveThread('1')).toEqual({ id, number: 1 });
 	expect(await repo.thread(id)).toMatchObject({
-		summary: { deleted: { by: 'Sam' } },
+		summary: { number: 1, deleted: { by: 'Sam' } },
 		entries: []
 	});
 	await expect(
@@ -46,7 +50,7 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 
 	await repo.restore(id);
 	expect(Buffer.from((await repo.image(imageId))!.data).equals(pixels)).toBe(true);
-	expect(await repo.threads()).toMatchObject([{ id, deleted: null }]);
+	expect(await repo.threads()).toMatchObject([{ id, number: 1, deleted: null }]);
 
 	await repo.delete(id, sam);
 	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'lifecycle' });
@@ -58,12 +62,14 @@ test('discards, reopens, deletes, restores and purges a thread', async () => {
 		mode: 'small',
 		machine: 'standard-1'
 	});
+	expect(later.number).toBe(2);
 	await repo.delete(later.id, sam);
 
 	for (let i = 0; i < 50 && (await repo.thread(id)); i++) {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	expect(await repo.thread(id)).toBeNull();
+	expect(await repo.resolveThread('1')).toBeNull();
 	expect(await repo.image(imageId)).toBeNull();
 	expect(await repo.thread(later.id)).toMatchObject({ summary: { deleted: { by: 'Sam' } } });
 });
@@ -153,6 +159,7 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 		machine: 'standard-3'
 	});
 	expect(opened).toMatchObject({
+		number: 1,
 		status: 'running',
 		headline: 'The notes need a title.',
 		machine: 'standard-3'
@@ -395,4 +402,85 @@ test('answers a reply to a finished thread without changes', async () => {
 		text: 'Because readers asked for one.'
 	});
 	expect(detail.summary.changes).toEqual({ files: 0, additions: 0, deletions: 0 });
+});
+
+test('allocates repository-scoped numbers concurrently and never reuses purged numbers', async () => {
+	const name = 'numbered';
+	await seed(name, { 'notes.md': 'Notes\n' });
+	await script(
+		name,
+		Array.from({ length: 4 }, () => [{ type: 'response.output_text.delta', delta: 'Ok.' }])
+	);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName(name);
+	const author = { name: 'Sam', kind: 'person' as const };
+	const open = (text: string) =>
+		repo.openThread({
+			repo: name,
+			author,
+			text,
+			mode: 'small',
+			machine: 'standard-1'
+		});
+	const opened = await Promise.all([open('First'), open('Second'), open('Third')]);
+	expect(opened.map((thread) => thread.number).sort()).toEqual([1, 2, 3]);
+	for (const thread of opened) {
+		expect(thread.id).toMatch(/^[0-9a-f]{12}$/);
+		await untilThread(repo, thread.id, (detail) => detail.summary.status === 'needs-you');
+		expect((await repo.thread(thread.id))!.summary.number).toBe(thread.number);
+	}
+	const newest = opened.find((thread) => thread.number === 3)!;
+	await repo.delete(newest.id, author);
+	const sql = await worker.getDurableObjectStorage('REPOS', { name });
+	await sql.exec('UPDATE threads SET deleted_at = 1 WHERE id = ?', newest.id);
+	await repo.delete(opened[0]!.id === newest.id ? opened[1]!.id : opened[0]!.id, author);
+	for (let i = 0; i < 50 && (await repo.thread(newest.id)); i++) {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	expect(await repo.thread(newest.id)).toBeNull();
+	expect((await open('Fourth')).number).toBe(4);
+
+	const other = env.REPOS.getByName('numbered-other');
+	expect(
+		(
+			await other.openThread({
+				repo: 'numbered-other',
+				author,
+				text: 'Independent',
+				mode: 'small',
+				machine: 'standard-1'
+			})
+		).number
+	).toBe(1);
+});
+
+test('resolves numbered routes without confusing numeric legacy IDs or invalid numbers', async () => {
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('route-numbers');
+	await repo.threads();
+	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'route-numbers' });
+	await sql.exec(`INSERT INTO threads (id, number, headline, status, mode, updated_at)
+		VALUES ('abcdef012345', 42, 'First', 'needs-you', 'small', 0),
+		('123456789012', 7, 'Numeric hex ID', 'needs-you', 'small', 0)`);
+	expect(await repo.resolveThread('42')).toEqual({ id: 'abcdef012345', number: 42 });
+	expect(await repo.resolveThread('00042')).toEqual({ id: 'abcdef012345', number: 42 });
+	expect(await repo.resolveThread('abcdef012345')).toEqual({ id: 'abcdef012345', number: 42 });
+	expect(await repo.resolveThread('123456789012')).toEqual({ id: '123456789012', number: 7 });
+	for (const ref of [
+		'0',
+		'-42',
+		'4.2',
+		'4.2e1',
+		'+42',
+		'',
+		' 42',
+		'9007199254740993',
+		'43',
+		'ffffffffffff'
+	]) {
+		expect(await repo.resolveThread(ref)).toBeNull();
+	}
+	const other = env.REPOS.getByName('route-numbers-other');
+	expect(await other.resolveThread('42')).toBeNull();
+	expect(await other.resolveThread('abcdef012345')).toBeNull();
 });

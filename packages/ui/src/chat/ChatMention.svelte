@@ -17,6 +17,7 @@
 >
 	{#if mention.kind === 'thread'}
 		<ThreadIcon />
+		{#if mention.number}<span class="number">#{mention.number}</span>{/if}
 	{:else}
 		<Avatar name={mention.label} src={mention.avatar} aria-hidden="true" />
 	{/if}
@@ -47,6 +48,11 @@
 		& :global(.avatar) {
 			translate: 0 calc((var(--avatar-size) - 1cap) / 2);
 		}
+	}
+
+	.number {
+		flex: none;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.label {

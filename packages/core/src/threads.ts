@@ -136,7 +136,9 @@ export type Entry =
 			intent: Intent;
 			context: string;
 			outcome:
-				{ kind: 'dismissed'; by: string } | { kind: 'spun-off'; thread: string; by: string } | null;
+				| { kind: 'dismissed'; by: string }
+				| { kind: 'spun-off'; thread: string; number?: number; by: string }
+				| null;
 	  }
 	| { type: 'event'; id: string; at: number; text: string; tone?: EventTone }
 	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[]; checkpoint?: string }
@@ -149,6 +151,7 @@ export type Entry =
 			at: number;
 			direction: 'in' | 'out';
 			thread: string;
+			number?: number;
 			headline: string;
 			text: string;
 			steering?: { read: boolean };
@@ -165,6 +168,7 @@ export function countCheckpoints(entries: Entry[]) {
 
 export interface ThreadSummary {
 	id: string;
+	number: number;
 	headline: string;
 	status: ThreadStatus;
 	mode: Mode;
@@ -172,7 +176,7 @@ export interface ThreadSummary {
 	machine: Machine;
 	updatedAt: number;
 	deleted: { at: number; by: string } | null;
-	parent: { id: string; headline: string } | null;
+	parent: { id: string; number: number | null; headline: string } | null;
 	changes: DiffSummary | null;
 	shipped: { sha: string; by: string; at: number; verdict: Verdict } | null;
 	failure: { at: number; title: string; error: string; resumable: boolean } | null;
@@ -259,6 +263,7 @@ export interface RepoCoordinatorApi {
 	assess(text: string): Promise<{ similar: SimilarMatch[]; size: Mode }>;
 	forwardIntent(thread: string, to: string, by: Author): Promise<string>;
 	threads(): ThreadSummary[];
+	resolveThread(ref: string): Pick<ThreadSummary, 'id' | 'number'> | null;
 	thread(id: string): Promise<ThreadDetail | null>;
 	main(): MainStatus;
 	deploySecrets(by: Author): Promise<DeploySecret[]>;

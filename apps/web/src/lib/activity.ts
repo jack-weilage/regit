@@ -1,6 +1,5 @@
 import { createContext } from 'svelte';
-import type { ThreadActivity, ToolCallRecord } from '@regit/core';
-import type { ToolCallView } from '@regit/ui';
+import type { ThreadActivity, ThreadSummary, ToolCallRecord } from '@regit/core';
 
 export const [getLiveActivity, setLiveActivity] =
 	createContext<Record<string, ThreadActivity | null>>();
@@ -22,9 +21,23 @@ const verbs: Record<string, [running: string, done: string]> = {
 	load_skill: ['Loading skill', 'Loaded skill']
 };
 
-export function toolView(call: ToolCallRecord): ToolCallView {
+export function toolView(
+	call: ToolCallRecord,
+	threads: Pick<ThreadSummary, 'id' | 'number'>[] = []
+) {
 	const [running, done] = verbs[call.tool] ?? [call.tool, call.tool];
-	return { ...call, verb: call.status === 'running' ? running : done };
+	const thread =
+		call.tool === 'message_thread' && threads.find((thread) => thread.id === call.target);
+	return {
+		...call,
+		target:
+			call.tool === 'message_thread'
+				? thread
+					? `#${thread.number}`
+					: 'Unavailable thread'
+				: call.target,
+		verb: call.status === 'running' ? running : done
+	};
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;

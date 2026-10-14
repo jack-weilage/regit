@@ -9,6 +9,7 @@
 	const threads: ThreadListItem[] = [
 		{
 			id: 'members',
+			number: 42,
 			headline: 'perf(settings): load members lazily',
 			status: 'needs-you',
 			updatedAt: minutes(4),
@@ -30,6 +31,7 @@
 		},
 		{
 			id: 'sessions',
+			number: 7,
 			headline: 'fix(auth): refresh expired sessions',
 			status: 'needs-you',
 			updatedAt: minutes(60),
@@ -39,6 +41,7 @@
 		},
 		{
 			id: 'invoices',
+			number: 43,
 			headline: 'feat(billing): export invoices as CSV',
 			status: 'running',
 			updatedAt: minutes(0),
@@ -46,6 +49,7 @@
 		},
 		{
 			id: 'readme',
+			number: 41,
 			headline: 'docs(readme): document local setup',
 			status: 'running',
 			updatedAt: minutes(2),
@@ -53,6 +57,7 @@
 		},
 		{
 			id: 'router',
+			number: 30,
 			headline: 'refactor(api): split the router',
 			status: 'discarded',
 			updatedAt: minutes(180),
@@ -60,6 +65,7 @@
 		},
 		{
 			id: 'focus',
+			number: 29,
 			headline: 'fix(ui): keep focus in dialogs',
 			status: 'shipped',
 			updatedAt: minutes(60 * 26),
@@ -67,6 +73,7 @@
 		},
 		{
 			id: 'search',
+			number: 2,
 			headline: 'feat(search): fuzzy thread search',
 			status: 'discarded',
 			updatedAt: minutes(60 * 24 * 9),
@@ -84,6 +91,12 @@
 <Story
 	name="Default"
 	play={async ({ canvas }) => {
+		await expect(canvas.getByText('#42')).toBeVisible();
+		await expect(canvas.getByText('#7')).toBeVisible();
+		await expect(canvas.getByRole('link', { name: /#42.*load members lazily/ })).toHaveAttribute(
+			'href',
+			'#members'
+		);
 		const sections = ['Needs you', 'Running', 'Recent'].map((name) =>
 			canvas.getByRole('list', { name })
 		);

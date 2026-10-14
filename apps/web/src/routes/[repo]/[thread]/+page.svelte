@@ -94,7 +94,7 @@
 	};
 	const tasks = { agent: 'Agent', search: 'Thread search' };
 
-	let { params } = $props();
+	let { params, data } = $props();
 
 	let deleting = $state(false);
 	let open = $state(false);
@@ -131,8 +131,9 @@
 
 	const live = getLiveActivity();
 
-	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
-	let activity = $derived(params.thread in live ? live[params.thread] : (detail?.activity ?? null));
+	let ref = $derived({ repo: params.repo, id: data.threadRef.id });
+	let detail = $derived(await getThread(ref));
+	let activity = $derived(ref.id in live ? live[ref.id] : (detail?.activity ?? null));
 	let phase = $derived(activity?.agent ?? idlePhase);
 	let retry = $derived(activity?.retry ?? null);
 	let user = $derived(await getUser());
@@ -153,7 +154,6 @@
 		if (status === 'needs-you') return { status: 'needs-you' };
 		return {};
 	});
-	let ref = $derived({ repo: params.repo, id: params.thread });
 	let intentEntry = $derived(
 		detail?.entries.findLast(
 			(entry): entry is Extract<Entry, { type: 'intent' }> => entry.type === 'intent'
@@ -251,13 +251,15 @@
 			{#snippet header()}
 				<ChatHeader
 					headline={summary.headline || 'New thread'}
+					number={summary.number}
 					status={summary.status}
 					parent={summary.parent
 						? {
 								kind: 'thread',
 								handle: summary.parent.id,
+								number: summary.parent.number ?? undefined,
 								label: summary.parent.headline || 'New thread',
-								href: `/${params.repo}/${summary.parent.id}`
+								href: summary.parent.number ? `/${params.repo}/${summary.parent.number}` : undefined
 							}
 						: undefined}
 					{actions}
@@ -275,7 +277,7 @@
 								{#each block.messages as message (message.id)}
 									{#if message.calls}
 										<ChatTools
-											calls={message.calls.map(toolView)}
+											calls={message.calls.map((call) => toolView(call, threads))}
 											summary={summarizeTools(message.calls)}
 										/>
 									{:else}
@@ -310,8 +312,12 @@
 										mention={{
 											kind: 'thread',
 											handle: spun.thread,
+											number: child?.number ?? spun.number,
 											label: child?.headline || block.intent.headline,
-											href: `/${params.repo}/${spun.thread}`
+											href:
+												(child?.number ?? spun.number)
+													? `/${params.repo}/${child?.number ?? spun.number}`
+													: undefined
 										}}
 									/>{#if child}&nbsp;· {statuses[child.status].label.toLowerCase()}{/if}</ChatEvent
 								>
@@ -351,8 +357,12 @@
 								thread={{
 									kind: 'thread',
 									handle: block.thread,
+									number: other?.number ?? block.number,
 									label: other?.headline || block.headline || 'New thread',
-									href: `/${params.repo}/${block.thread}`,
+									href:
+										(other?.number ?? block.number)
+											? `/${params.repo}/${other?.number ?? block.number}`
+											: undefined,
 									deleted: !other
 								}}
 								pending={block.steering?.read === false}
@@ -395,7 +405,7 @@
 								<ChatMessage><Markdown source={phase.text} /></ChatMessage>
 							{/if}
 							{#if phase.calls.length}
-								<ChatTools calls={phase.calls.map(toolView)} />
+								<ChatTools calls={phase.calls.map((call) => toolView(call, threads))} />
 							{/if}
 						</ChatGroup>
 					{/if}
@@ -421,7 +431,7 @@
 					<ChatComposer
 						working={summary.status === 'running'}
 						onstop={() => stopThread(ref)}
-						onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
+						onsend={(text) => reply({ ...ref, text })}
 					/>
 				{/if}
 				<ErrorBoundary title="Couldn't show usage" resetOn={params.thread}>

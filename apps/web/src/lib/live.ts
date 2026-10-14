@@ -1,3 +1,5 @@
+import type { LiveMessage, MainStatus, ThreadActivity, ThreadSummary } from '@regit/core';
+
 export const liveHeartbeatMs = 25_000;
 
 const staleMs = 2 * liveHeartbeatMs + 10_000;
@@ -72,5 +74,43 @@ export function connectLive(url: string, handlers: LiveHandlers, env: LiveEnviro
 		clearTimeout(retry);
 		for (const event of events) env.page.removeEventListener(event, wake);
 		source?.close();
+	};
+}
+
+export function repoLiveHandlers(input: {
+	activities: Record<string, ThreadActivity | null>;
+	current(): string | undefined;
+	main(main: MainStatus | null): void;
+	reloadMain(): void;
+	reloadThreads(): void;
+	reloadThread(id: string): void;
+	notice(summary: ThreadSummary): void;
+}): LiveHandlers {
+	return {
+		reconnected() {
+			for (const thread of Object.keys(input.activities)) delete input.activities[thread];
+			input.main(null);
+			input.reloadMain();
+			input.reloadThreads();
+			const current = input.current();
+			if (current) input.reloadThread(current);
+		},
+		message(data) {
+			const message = JSON.parse(data) as LiveMessage;
+			if (message.type === 'main') {
+				input.main(message.main);
+				return;
+			}
+			if (message.type === 'activity') {
+				input.activities[message.thread] = message.activity;
+				return;
+			}
+			const thread = message.type === 'entry' ? message.thread : message.summary.id;
+			if (message.type === 'thread') {
+				input.notice(message.summary);
+				input.reloadThreads();
+			}
+			if (thread === input.current()) input.reloadThread(thread);
+		}
 	};
 }

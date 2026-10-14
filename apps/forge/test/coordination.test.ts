@@ -51,14 +51,23 @@ test('suggests separate work and spins it off into a linked thread that starts w
 	const child = await repo.spinOff(id, card.id, sam);
 	expect(child).toMatchObject({
 		headline: suggestion.headline,
+		number: 2,
 		status: 'running',
 		mode: 'small',
-		parent: { id, headline: 'Tidy the notes.' }
+		parent: { id, number: 1, headline: 'Tidy the notes.' }
 	});
 	expect((await repo.thread(id))!.entries.find((entry) => entry.id === card.id)).toMatchObject({
-		outcome: { kind: 'spun-off', thread: child.id, by: 'Sam' }
+		outcome: { kind: 'spun-off', thread: child.id, number: 2, by: 'Sam' }
 	});
 	await expect(repo.spinOff(id, card.id, sam)).rejects.toThrow();
+	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'suggesting' });
+	await sql.exec(
+		"UPDATE entries SET body = json_remove(body, '$.outcome.number') WHERE thread = ?",
+		id
+	);
+	expect((await repo.thread(id))!.entries.find((entry) => entry.id === card.id)).toMatchObject({
+		outcome: { thread: child.id, number: 2 }
+	});
 
 	const started = await untilThread(repo, child.id, (detail) =>
 		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Got it.')
@@ -135,7 +144,7 @@ test('starts a thread when a person asks for one', async () => {
 	const started = await untilThread(repo, child, (detail) =>
 		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'On it.')
 	);
-	expect(started.summary.parent).toEqual({ id, headline: parent.summary.headline });
+	expect(started.summary.parent).toEqual({ id, number: 1, headline: parent.summary.headline });
 	expect(started.entries).toContainEqual(
 		expect.objectContaining({ type: 'event', text: 'Started by Sam' })
 	);
@@ -213,7 +222,16 @@ test("delivers a thread's message to another thread's agent", async () => {
 	const delivered = (await modelRequests('pair')).filter(
 		(request) => (request.headers['cf-aig-metadata'] as { thread: string }).thread === ui.id
 	);
-	expect(JSON.stringify(delivered)).toContain(`Thread ${api.id} (`);
+	expect(JSON.stringify(delivered)).toContain(`Thread #${api.number} (`);
+	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'pair' });
+	await sql.exec("UPDATE entries SET body = json_remove(body, '$.number') WHERE thread = ?", ui.id);
+	expect((await repo.thread(ui.id))!.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'thread-message',
+			thread: api.id,
+			number: api.number
+		})
+	);
 });
 
 test('refuses thread messages to itself, unknown or idle threads, and past the limit', async () => {

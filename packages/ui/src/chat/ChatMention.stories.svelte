@@ -14,16 +14,33 @@
 
 <Story name="Person" args={{ mention: people[1]! }} />
 
-<Story name="Thread" args={{ mention: threads[0]! }} />
+<Story
+	name="Thread"
+	args={{ mention: { ...threads[0]!, number: 42, handle: 'a1b2c3d4e5f6' } }}
+	play={async ({ canvas }) => {
+		await expect(
+			canvas.getByRole('link', { name: '#42 Paginate the member list' })
+		).toHaveAttribute('href', '#');
+		await expect(canvas.queryByText('a1b2c3d4e5f6')).not.toBeInTheDocument();
+	}}
+/>
 
 <Story
 	name="Deleted thread"
 	args={{
-		mention: { kind: 'thread', handle: 'gone', label: 'Deleted thread', href: '#', deleted: true }
+		mention: {
+			kind: 'thread',
+			handle: 'gone',
+			number: 7,
+			label: 'Deleted thread',
+			href: '#',
+			deleted: true
+		}
 	}}
 	play={async ({ canvas }) => {
 		await expect(canvas.queryByRole('link')).toBeNull();
 		await expect(canvas.getByText('Deleted thread')).toBeVisible();
+		await expect(canvas.getByText('#7')).toBeVisible();
 	}}
 />
 
@@ -57,6 +74,7 @@
 					<ChatMention
 						mention={{
 							...threads[2]!,
+							number: 1234,
 							label: 'Audit log retention policy for enterprise organisations'
 						}}
 					/>.

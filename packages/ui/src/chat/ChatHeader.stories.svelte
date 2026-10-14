@@ -10,9 +10,10 @@
 		title: 'Chat/Header',
 		component: ChatHeader,
 		args: {
+			number: 1234,
 			headline: 'perf(settings): render org settings without loading every member',
 			status: 'running',
-			parent: threads[0],
+			parent: { ...threads[0]!, number: 7 },
 			people: [
 				{ name: 'Sam Rivera', kind: 'person' },
 				{ name: 'Lin Wei', kind: 'person' }
@@ -35,6 +36,8 @@
 <Story
 	name="Running"
 	play={async ({ args, canvas, userEvent }) => {
+		await expect(canvas.getByText('#1234')).toBeVisible();
+		await expect(canvas.getByRole('heading')).not.toHaveTextContent('1234');
 		await userEvent.click(canvas.getByRole('button', { name: 'Preview' }));
 		await expect(args.onpreview).toHaveBeenCalledOnce();
 		await userEvent.click(canvas.getByRole('button', { name: 'Thread actions' }));
@@ -57,9 +60,10 @@
 <Story name="Narrow" asChild>
 	<div style="inline-size: 22rem">
 		<ChatHeader
+			number={1234}
 			headline="perf(settings): stop loading the full audit log on the settings page"
 			status="shipping"
-			parent={threads[0]}
+			parent={{ ...threads[0]!, number: 7 }}
 			onpreview={fn()}
 			actions={[{ label: 'Copy link', onselect: fn() }]}
 		/>

@@ -10,6 +10,7 @@ export interface Author {
 
 export interface Mentionable {
 	kind: 'person' | 'thread';
+	number?: number;
 	handle: string;
 	label: string;
 	detail?: string;
