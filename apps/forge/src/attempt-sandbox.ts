@@ -544,11 +544,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 						this.#think('Compacting the context');
 				} else if (event.type === 'reply') {
 					const { reply, usage } = event;
-					this.#setMeta('inflight', JSON.stringify({ reply, usage, results: [] }));
+					// A resumed step keeps the model that produced its reply, which a mode change since may have replaced.
+					const replied = this.#inflight()?.model ?? model;
+					this.#setMeta('inflight', JSON.stringify({ reply, usage, model: replied, results: [] }));
 				} else if (event.type !== 'step') {
 					if (event.type === 'result') this.#keepResult(event.result);
 					this.#stream(step, event);
 				} else {
+					const stepModel = this.#inflight()?.model ?? model;
 					this.#sql.exec("DELETE FROM meta WHERE key = 'inflight'");
 					this.#saveStep(event);
 					await this.#recovered(attempt.repo);
@@ -556,6 +559,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					await this.#report(attempt.repo, {
 						type: 'step',
 						step: event,
+						model: stepModel,
 						tools: controller.signal.aborted ? [] : tools
 					});
 					this.#stepped(event.turns);
@@ -1165,7 +1169,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	#inflight() {
-		return JSON.parse(this.#meta('inflight') ?? 'null') as InflightStep | null;
+		return JSON.parse(this.#meta('inflight') ?? 'null') as
+			(InflightStep & { model?: string }) | null;
 	}
 
 	#keepResult(result: ToolResult) {

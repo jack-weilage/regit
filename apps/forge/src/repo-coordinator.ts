@@ -70,7 +70,7 @@ import { seal, type Sealed } from './secrets.ts';
 import type { Verified } from './verify-main.ts';
 
 export type AttemptUpdate =
-	| { type: 'step'; step: Step & { checkpoint?: string }; tools?: ToolCallRecord[] }
+	| { type: 'step'; step: Step & { checkpoint?: string }; model: string; tools?: ToolCallRecord[] }
 	| { type: 'status'; status: AttemptStatus; error: string | null; failures?: RetryFailure[] }
 	| { type: 'recovered'; failures: RetryFailure[] }
 	| { type: 'activity'; activity: AgentActivity }
@@ -1531,7 +1531,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 		if (update.type === 'step') {
 			if (update.step.usage) {
-				this.#recordUsage(thread, 'agent', modes[summary.mode].model, update.step.usage);
+				this.#recordUsage(thread, 'agent', update.model, update.step.usage);
 				this.#touch(thread);
 			}
 			for (const turn of update.step.turns) {
