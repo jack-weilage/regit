@@ -119,6 +119,25 @@ test('caches setup, reuses restored checkouts, and refreshes when tools change o
 	expect(aged!.id).not.toBe(refreshed!.id);
 }, 600_000);
 
+test('checks main in its own prepared container and snapshots it without failing the checks', async () => {
+	await seed('main-checked', {
+		'README.md': '# Main\n',
+		'.agents/setup': 'echo prepared > .prepared\n',
+		'.agents/checks.yml': `checks:
+  - name: prepared
+    run: test -s .prepared
+    before: [deploy]
+`
+	});
+	const env = await worker.getEnv();
+	const sha = sh(join(dir, 'main-checked.git'), 'rev-parse', 'main');
+	const main = env.MAIN.getByName('main-checked');
+	const emptyTree = sh(dir, 'hash-object', '-t', 'tree', '/dev/null');
+	const check = () => main.check({ repo: 'main-checked', sha, base: emptyTree });
+	expect(await check()).toMatchObject([{ name: 'prepared', status: 'passed', reused: false }]);
+	expect(await check()).toMatchObject([{ name: 'prepared', status: 'passed', reused: true }]);
+}, 600_000);
+
 test('records the stages of a cold start in the thread', async () => {
 	await seed('cold', { 'README.md': '# Cold\n', '.agents/setup': 'echo dependencies-ready\n' });
 	await script('cold', [[{ type: 'response.output_text.delta', delta: 'Hello.' }]]);

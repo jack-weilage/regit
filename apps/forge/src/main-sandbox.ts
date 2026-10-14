@@ -9,7 +9,7 @@ import {
 	type Fetch,
 	type PlannedCheck
 } from '@regit/agent';
-import { defaultDeployMachine, type CheckResult, type Machine } from '@regit/core';
+import { defaultDeployMachine, machines, type CheckResult, type Machine } from '@regit/core';
 import { db } from './db.ts';
 import { open } from './secrets.ts';
 
@@ -19,6 +19,16 @@ const sandboxPort = 8080;
 const idleTimeoutMs = 15 * 60 * 1000;
 const healthTimeoutMs = 5 * 60 * 1000;
 const evidenceTtlMs = 30 * 24 * 60 * 60 * 1000;
+const snapshotHeadroomBytes = 2e9;
+const snapshotRefreshMs = 24 * 60 * 60 * 1000;
+
+// The container with its toolchains and the check checkout's dependencies installed, which a cold start resumes from.
+interface Snapshot {
+	id: string;
+	image: string;
+	size: number;
+	at: number;
+}
 
 export interface MainCheck {
 	repo: string;
@@ -68,7 +78,7 @@ export class MainSandbox extends DurableObject<Env> {
 				];
 			const checks = only ? plan.checks.filter(({ name }) => only.includes(name)) : plan.checks;
 			if (!dueChecks(checks, 'deploy').length) return [];
-			return runChecks({
+			const results = await runChecks({
 				checks,
 				action: 'deploy',
 				environment: toolchain,
@@ -97,6 +107,8 @@ export class MainSandbox extends DurableObject<Env> {
 					}),
 				ask: () => Promise.reject(new Error('Ask checks only run before handoff'))
 			});
+			await this.#snapshot();
+			return results;
 		});
 	}
 
@@ -108,6 +120,7 @@ export class MainSandbox extends DurableObject<Env> {
 			const sealed = await coordinator.sealedDeploySecrets();
 			const env = sealed.length ? await open(this.env, repo, sealed) : {};
 			const deployed = (await coordinator.main()).deployed?.sha ?? null;
+			this.ctx.storage.kv.put('deployed-since-start', true);
 			return sandboxWorkspace(fetch).deploy({ commit: sha, env, deployed });
 		});
 	}
@@ -138,24 +151,71 @@ export class MainSandbox extends DurableObject<Env> {
 		const image = container.images.sandbox!;
 		// A running container keeps the image it started with; checks and deploys use the one forge deployed last.
 		if (container.running && this.ctx.storage.kv.get('image') !== image) await container.destroy();
-		if (!container.running) {
+		if (container.running) {
+			await container.setInactivityTimeout(idleTimeoutMs);
+			await healthy(fetch, container);
+		} else {
 			const [row] = await db
 				.select({ machine: repos.deployMachine })
 				.from(repos)
 				.where(eq(repos.name, repo));
-			container.start({
-				image,
-				instance: (row?.machine as Machine | undefined) ?? defaultDeployMachine,
-				enableInternet: true
-			});
+			const machine = (row?.machine as Machine | undefined) ?? defaultDeployMachine;
+			const saved = this.ctx.storage.kv.get<Snapshot>('snapshot');
+			const fits = !!saved && saved.size + snapshotHeadroomBytes <= machines[machine].diskGb * 1e9;
+			const restore = saved?.image === image && fits ? saved : null;
+			this.ctx.storage.kv.delete('deployed-since-start');
+			try {
+				await this.#start(
+					fetch,
+					machine,
+					restore ? { containerSnapshot: { id: restore.id } } : { image }
+				);
+			} catch (error) {
+				if (!restore) throw error;
+				console.warn('Could not restore the main sandbox snapshot', error);
+				this.ctx.storage.kv.delete('snapshot');
+				await this.#start(fetch, machine, { image });
+			}
 			this.ctx.storage.kv.put('image', image);
-			// TODO: restore the repository's toolchain snapshot, as thread sandboxes do, instead of installing from scratch.
 		}
-		await container.setInactivityTimeout(idleTimeoutMs);
-		await healthy(fetch, container);
 		if (!(await sandboxWorkspace(fetch).trust()))
 			throw new Error('The main sandbox has no HTTPS interception CA to trust');
 		return fetch;
+	}
+
+	async #start(
+		fetch: Fetch,
+		instance: Machine,
+		source: { image: string } | { containerSnapshot: { id: string } }
+	) {
+		const container = this.ctx.container!;
+		container.start({ ...source, instance, enableInternet: true });
+		await container.setInactivityTimeout(idleTimeoutMs);
+		await healthy(fetch, container);
+	}
+
+	// Snapshots the container once checks have prepared it, so cold starts skip installing toolchains and dependencies.
+	// A container that deployed may hold Docker's images, which don't belong in a snapshot.
+	async #snapshot() {
+		if (this.env.SANDBOX_URL || this.ctx.storage.kv.get('deployed-since-start')) return;
+		const container = this.ctx.container!;
+		const image = container.images.sandbox!;
+		const saved = this.ctx.storage.kv.get<Snapshot>('snapshot');
+		if (saved?.image === image && Date.now() - saved.at < snapshotRefreshMs) return;
+		try {
+			const snapshot = await container.snapshotContainer({
+				name: `main-${Date.now().toString(36)}`
+			});
+			// TODO: delete superseded snapshots, which share the account's image storage with deploy images.
+			this.ctx.storage.kv.put('snapshot', {
+				id: snapshot.id,
+				image,
+				size: snapshot.size,
+				at: Date.now()
+			});
+		} catch (error) {
+			console.warn('Could not snapshot the main sandbox', error);
+		}
 	}
 }
 
