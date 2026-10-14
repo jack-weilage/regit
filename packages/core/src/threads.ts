@@ -137,7 +137,7 @@ export type Entry =
 				{ kind: 'dismissed'; by: string } | { kind: 'spun-off'; thread: string; by: string } | null;
 	  }
 	| { type: 'event'; id: string; at: number; text: string }
-	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[] }
+	| { type: 'tools'; id: string; at: number; calls: ToolCallRecord[]; checkpoint?: string }
 	| { type: 'startup'; id: string; at: number; stages: StartupStage[] }
 	| { type: 'recovered'; id: string; at: number; failures: RetryFailure[] }
 	| ({ type: 'failure'; id: string; at: number; resumable: boolean } & Failure)
@@ -151,6 +151,15 @@ export type Entry =
 			text: string;
 			steering?: { read: boolean };
 	  };
+
+export function countCheckpoints(entries: Entry[]) {
+	return entries.filter((entry) =>
+		entry.type === 'tools'
+			? !!entry.checkpoint
+			: // TODO: drop once no thread has the old per-step "Checkpoint" events.
+				entry.type === 'event' && entry.text.startsWith('Checkpoint ')
+	).length;
+}
 
 export interface ThreadSummary {
 	id: string;

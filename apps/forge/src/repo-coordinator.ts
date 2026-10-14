@@ -171,7 +171,9 @@ function historyLines(entries: Entry[]) {
 				const calls = entry.calls.map((call) =>
 					`${pastTense[call.tool] ?? call.tool} ${call.target}${call.status === 'failed' ? ' (failed)' : ''}`.trim()
 				);
-				return [`ReGit: ${calls.join('; ')}`];
+				const lines = calls.length ? [`ReGit: ${calls.join('; ')}`] : [];
+				if (entry.checkpoint) lines.push(`· Checkpoint ${entry.checkpoint.slice(0, 7)}`);
+				return lines;
 			}
 			return [];
 		})
@@ -1534,16 +1536,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 					this.#add(thread, { type: 'message', author: agent, text: turn.text.trim() });
 				}
 			}
-			if (update.tools?.length) this.#add(thread, { type: 'tools', calls: update.tools });
+			const { checkpoint } = update.step;
+			if (update.tools?.length || checkpoint)
+				this.#add(thread, {
+					type: 'tools',
+					calls: update.tools ?? [],
+					...(checkpoint && { checkpoint })
+				});
 			const activity = this.#activities.get(thread);
 			if (activity?.agent.type === 'streaming')
 				this.#setActivity(thread, { ...activity, agent: idlePhase });
-			if (update.step.checkpoint) {
-				this.#add(thread, {
-					type: 'event',
-					text: `Checkpoint ${update.step.checkpoint.slice(0, 7)}`
-				});
-			}
 			return;
 		}
 

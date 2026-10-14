@@ -13,6 +13,7 @@
 	} from '@regit/ui';
 	import type { Attachment } from 'svelte/attachments';
 	import {
+		countCheckpoints,
 		defaultMachine,
 		threadPurgeDelayMs,
 		type LiveMessage,
@@ -226,9 +227,7 @@
 					bind:open={deleteOpen}
 					headline={detail.summary.headline || 'This thread'}
 					messages={detail.entries.filter((entry) => entry.type === 'message').length}
-					checkpoints={detail.entries.filter(
-						(entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint')
-					).length}
+					checkpoints={countCheckpoints(detail.entries)}
 					running={detail.summary.status === 'running'}
 					restoreDays={threadPurgeDelayMs / 86_400_000}
 					onconfirm={() => deleteThread({ repo, id })}

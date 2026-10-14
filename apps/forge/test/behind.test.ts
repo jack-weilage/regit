@@ -12,9 +12,12 @@ test('reads main once per turn while the thread is up to date, however often it 
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
 	const done = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	expect(done.entries.filter((entry) => entry.type === 'tools' && entry.checkpoint)).toHaveLength(
+		2
+	);
 	expect(
-		done.entries.filter((entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint'))
-	).toHaveLength(2);
+		done.entries.some((entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint'))
+	).toBe(false);
 	expect(done.summary.behind).toBeNull();
 	const mainReads = (await git.paths()).filter((path) =>
 		path.startsWith('GET /current.git/info/refs')

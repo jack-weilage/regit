@@ -181,9 +181,9 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 			entry.type === 'message'
 				? `${entry.author.name}: ${entry.text}`
 				: entry.type === 'event'
-					? entry.text.replace(/\b[0-9a-f]{7}$/, 'sha')
+					? entry.text
 					: entry.type === 'tools'
-						? `tools ${entry.calls.map((call) => `${call.tool} ${call.status}`).join(', ')}`
+						? `tools ${entry.calls.map((call) => `${call.tool} ${call.status}`).join(', ')}${entry.checkpoint?.match(/^[0-9a-f]{40}$/) ? ' checkpoint' : ''}`
 						: entry.type === 'intent'
 							? `intent ${entry.intent.headline}`
 							: entry.type
@@ -197,8 +197,7 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 		'intent docs(notes): add a title',
 		'tools update_intent done',
 		'ReGit: Adding the title',
-		'tools write_file done',
-		'Checkpoint sha',
+		'tools write_file done checkpoint',
 		'ReGit: Added the title.'
 	]);
 	const liveEntries = live.flatMap((message) =>

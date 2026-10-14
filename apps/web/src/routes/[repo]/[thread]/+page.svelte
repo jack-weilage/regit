@@ -35,6 +35,7 @@
 		type ThreadAction
 	} from '@regit/ui';
 	import {
+		countCheckpoints,
 		idlePhase,
 		threadPurgeDelayMs,
 		type Author,
@@ -215,6 +216,7 @@
 		(detail?.entries ?? []).reduce<Block[]>((blocks, entry) => {
 			const last = blocks.at(-1);
 			const batch = last?.type === 'group' ? last.messages.at(-1)?.calls : undefined;
+			if (entry.type === 'tools' && !entry.calls.length) return blocks;
 			if (entry.type === 'tools' && batch) {
 				batch.push(...entry.calls);
 				return blocks;
@@ -475,9 +477,7 @@
 		bind:open={deleting}
 		headline={summary.headline || 'This thread'}
 		messages={detail.entries.filter((entry) => entry.type === 'message').length}
-		checkpoints={detail.entries.filter(
-			(entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint')
-		).length}
+		checkpoints={countCheckpoints(detail.entries)}
 		running={summary.status === 'running'}
 		restoreDays={threadPurgeDelayMs / 86_400_000}
 		onconfirm={() => deleteThread(ref)}
