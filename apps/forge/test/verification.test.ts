@@ -96,6 +96,17 @@ test("reverts what a thread shipped when its agent can't fix what it broke", asy
 	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');
 	const main = await untilMain(repo, (main) => main.green?.sha !== seeded);
 	expect(main.green?.sha).toBe(sh(canonical, 'rev-parse', 'main'));
+
+	const broken = reverted.summary.shipped!.sha.slice(0, 7);
+	const revert = sh(canonical, 'rev-parse', '--short=7', 'main');
+	await script('unfixable', [say('Understood.')]);
+	await repo.reply(id, { author: sam, text: 'Where does it stand?' });
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Understood.')
+	);
+	expect(JSON.stringify((await modelRequests('unfixable')).at(-1)!.query)).toContain(
+		`What this thread shipped as ${broken} broke \`main\`'s deploy checks, so it was reverted in ${revert} and is no longer on \`main\`.`
+	);
 });
 
 test('bisects to the commit that broke main, rules out flakes, and starts new threads from the last green commit', async () => {

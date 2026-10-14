@@ -176,6 +176,18 @@ test('work after shipping builds on the shipped commit', async () => {
 	expect(sh(fork, 'show', 'main:footer.md')).toBe('A footer');
 	expect(later.summary.changes).toEqual({ files: 1, additions: 1, deletions: 0 });
 	expect(sh(canonical, 'rev-parse', 'main')).toBe(published);
+	const shippedNotice = `<system-notification>\\nThis thread shipped as ${published.slice(0, 7)} to \`main\``;
+	const opening = JSON.stringify((await modelRequests('ship-later')).at(-1)!.query);
+	expect(opening.split(shippedNotice)).toHaveLength(2);
+	expect(opening.indexOf(shippedNotice)).toBeLessThan(opening.indexOf('Add a footer too.'));
+
+	await script('ship-later', [say('Still here.')]);
+	await repo.reply(id, { author: owner, text: 'Anything else?' });
+	await until(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Still here.')
+	);
+	const next = JSON.stringify((await modelRequests('ship-later')).at(-1)!.query);
+	expect(next.split(shippedNotice)).toHaveLength(2);
 });
 
 test('work since shipping that no longer applies on the shipped commit is merged for the agent to resolve', async () => {
@@ -203,6 +215,7 @@ test('work since shipping that no longer applies on the shipped commit is merged
 		`This thread shipped as ${shipped.slice(0, 7)}, but the work done since it was captured couldn't be replayed on top of it.`
 	);
 	expect(notice).toContain('merging it into this thread conflicts in notes.md');
+	expect(notice.split('This thread shipped as')).toHaveLength(2);
 	const fork = join(dir, `ship-replay--${id}.git`);
 	expect(sh(fork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(shipped);
 	expect(sh(fork, 'show', 'main:notes.md')).toBe('# Merged notes');

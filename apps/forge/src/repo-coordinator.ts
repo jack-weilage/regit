@@ -171,6 +171,20 @@ const pastTense: Record<string, string> = {
 	cancel_automation: 'Cancelled automation'
 };
 
+function verdictNotice(
+	verdict: 'passed' | 'deployed' | 'reverted',
+	sha: string,
+	branch: string,
+	revert?: string
+) {
+	const short = sha.slice(0, 7);
+	if (verdict === 'passed')
+		return `What this thread shipped as ${short} passed \`${branch}\`'s deploy checks.`;
+	if (verdict === 'deployed') return `What this thread shipped as ${short} is deployed.`;
+	const where = revert ? ` in ${revert.slice(0, 7)}` : '';
+	return `What this thread shipped as ${short} broke \`${branch}\`'s deploy checks, so it was reverted${where} and is no longer on \`${branch}\`.`;
+}
+
 function historyLines(entries: Entry[]) {
 	return entries
 		.flatMap((entry): string[] => {
@@ -1214,7 +1228,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		for (const commit of proven) {
 			const thread = this.#shippedAs(commit);
 			if (!thread) continue;
-			this.#setVerdict(thread, 'passed', ['landed', 'failed']);
+			await this.#setVerdict(thread, 'passed', ['landed', 'failed']);
 			this.#sql.exec('DELETE FROM meta WHERE key = ?', `fixing:${thread}`);
 		}
 		if (passed) return { deploy: true };
@@ -1240,7 +1254,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#setMain({ deployed: { sha, at }, deployFailure: null });
 			for (const commit of commits) {
 				const thread = this.#shippedAs(commit);
-				if (thread) this.#setVerdict(thread, 'deployed', ['landed', 'passed']);
+				if (thread) await this.#setVerdict(thread, 'deployed', ['landed', 'passed']);
 			}
 		} else if (deploy.ran) this.#setMain({ deployFailure: { sha, at, output: deploy.output } });
 		await this.#doneVerifying(id);
@@ -1263,12 +1277,19 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return row?.id ?? null;
 	}
 
-	#setVerdict(thread: string, verdict: Verdict, from?: Verdict[]) {
-		const was = this.#summary(thread)?.shipped?.verdict;
+	async #setVerdict(thread: string, verdict: Verdict, from?: Verdict[], revert?: string) {
+		const shipped = this.#summary(thread)?.shipped;
+		const was = shipped?.verdict;
 		if (!was || was === verdict || (from && !from.includes(was))) return;
 		this.#sql.exec('UPDATE threads SET verdict = ? WHERE id = ?', verdict, thread);
 		this.#threadEvent(thread, verdict);
 		this.#touch(thread);
+		// A failure reaches the agent as its hand-back or, failing that, the revert.
+		if (verdict === 'landed' || verdict === 'failed') return;
+		const notice = verdictNotice(verdict, shipped.sha, await this.#branch(), revert);
+		await this.#agent(thread)
+			.verdict(notice)
+			.catch((error: unknown) => console.warn('Could not tell the agent the verdict', error));
 	}
 
 	#fixing(thread: string) {
@@ -1288,7 +1309,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (known && !(fixing.fixed && range.includes(fixing.fixed))) return;
 		if (!known) fixing.commits.push({ sha: culprit.sha, headline: culprit.headline });
 		this.#saveFixing(thread, fixing);
-		this.#setVerdict(thread, 'failed');
+		await this.#setVerdict(thread, 'failed');
 		const branch = await this.#branch();
 		const failed = blockingFailures(results).map(({ name }) => name);
 		const summary = this.#summary(thread);
@@ -1345,7 +1366,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const thread = this.#meta(`revert:${id}`);
 		if (!thread) return;
 		this.#sql.exec('DELETE FROM meta WHERE key IN (?, ?)', `revert:${id}`, `fixing:${thread}`);
-		this.#setVerdict(thread, 'reverted');
+		await this.#setVerdict(thread, 'reverted', undefined, reverted?.sha);
 		const where = reverted ? ` in ${reverted.sha.slice(0, 7)}` : '';
 		this.#fail(
 			thread,

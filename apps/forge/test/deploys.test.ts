@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { setup, untilMain, untilThread, writeNotes } from './support.ts';
 
-const { dir, sh, commit, startedThread } = await setup();
+const { dir, sh, commit, script, modelRequests, startedThread } = await setup();
 
 const say = (delta: string) => [{ type: 'response.output_text.delta', delta }];
 
@@ -43,6 +43,23 @@ test('deploys green commits with the repository secrets, keeping them out of wha
 	expect(deployed.deployFailure).toBeNull();
 	expect(await readFile(token, 'utf8')).toBe('sekrit-value');
 	await untilThread(repo, id, (detail) => detail.summary.shipped?.verdict === 'deployed');
+	const short = deployed.deployed!.sha.slice(0, 7);
+	const notices = [
+		`What this thread shipped as ${short} passed \`main\`'s deploy checks.`,
+		`What this thread shipped as ${short} is deployed.`
+	];
+	for (const [text, reply] of [
+		['Is it live?', 'Yes.'],
+		['Anything else?', 'No.']
+	]) {
+		await script('deploying', [say(reply!)]);
+		await repo.reply(id, { author: sam, text: text! });
+		await untilThread(repo, id, (detail) =>
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === reply)
+		);
+		const query = JSON.stringify((await modelRequests('deploying')).at(-1)!.query);
+		for (const notice of notices) expect(query.split(notice)).toHaveLength(2);
+	}
 
 	const work = join(dir, 'deploying-work');
 	sh(work, 'pull', '--quiet', canonical, 'main');

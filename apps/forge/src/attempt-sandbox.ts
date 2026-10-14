@@ -318,6 +318,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 	published(publication: { sha: string; branch: string; from: string }) {
 		this.#setMeta('rebase', JSON.stringify(publication));
 		this.#setMeta('changes', '[]');
+		this.#setMeta(
+			'shipped-notice',
+			`This thread shipped as ${publication.sha.slice(0, 7)} to \`${publication.branch}\`, so its changes are on \`${publication.branch}\` now and no longer need shipping. Anything this thread does from here builds on that commit and ships separately.`
+		);
+	}
+
+	// What became of what this thread shipped once it landed, told on its agent's next turn.
+	verdict(notice: string) {
+		if (!this.#agent()) return;
+		const notices = JSON.parse(this.#meta('verdict-notices') ?? '[]') as string[];
+		this.#setMeta('verdict-notices', JSON.stringify([...notices, notice]));
 	}
 
 	async stop() {
@@ -459,6 +470,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const opening: Turn[] = [
 				...this.#rebuiltNotes(),
 				...this.#retriedNotes(),
+				...this.#shippedNotes(),
 				...(synced ? [] : await this.#conflictNotes(attempt, fetch)),
 				...this.#checkNotes(),
 				...this.#overlapNotes(),
@@ -808,7 +820,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const rebased = await this.#shell(fetch, `${gitAsReGit} rebase --onto ${sha} ${from}`);
 		if (!rebased.ok) {
 			await this.#shell(fetch, 'git rebase --abort');
-			this.#sql.exec("DELETE FROM meta WHERE key = 'rebase'");
+			this.#sql.exec("DELETE FROM meta WHERE key IN ('rebase', 'shipped-notice')");
 			this.#setMeta('sync', '1');
 			return sha;
 		}
@@ -873,6 +885,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 				text: "Your sandbox was rebuilt from this thread's branch since your last turn. Your checkpointed changes are intact, but files Git ignores (installed dependencies, build output, local databases), anything outside the workspace and processes you started are gone. The workspace was prepared again and saved services were restarted; recreate anything else you still need."
 			}
 		];
+	}
+
+	#shippedNotes(): Turn[] {
+		const shipped = this.#meta('shipped-notice');
+		const verdicts = JSON.parse(this.#meta('verdict-notices') ?? '[]') as string[];
+		this.#sql.exec("DELETE FROM meta WHERE key IN ('shipped-notice', 'verdict-notices')");
+		return [...(shipped ? [shipped] : []), ...verdicts].map((text) => ({
+			role: 'notification' as const,
+			text
+		}));
 	}
 
 	#retriedNotes(): Turn[] {
