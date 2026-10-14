@@ -133,16 +133,20 @@ export class MainSandbox extends DurableObject<Env> {
 		const { plaintext: token } = await canonical.createToken('read', 60 * 60);
 		const proxy = this.ctx.exports.GitProxy({ props: { remote, token, push: false } });
 		await container.interceptOutboundHttps(new URL(remote).hostname, proxy);
+		const image = container.images.sandbox!;
+		// A running container keeps the image it started with; checks and deploys use the one forge deployed last.
+		if (container.running && this.ctx.storage.kv.get('image') !== image) await container.destroy();
 		if (!container.running) {
 			const [row] = await db
 				.select({ machine: repos.deployMachine })
 				.from(repos)
 				.where(eq(repos.name, repo));
 			container.start({
-				image: container.images.sandbox!,
+				image,
 				instance: (row?.machine as Machine | undefined) ?? defaultDeployMachine,
 				enableInternet: true
 			});
+			this.ctx.storage.kv.put('image', image);
 			// TODO: restore the repository's toolchain snapshot, as thread sandboxes do, instead of installing from scratch.
 		}
 		await container.setInactivityTimeout(idleTimeoutMs);
