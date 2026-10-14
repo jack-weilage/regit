@@ -23,6 +23,9 @@ RUN echo 'export PATH="/opt/mise/shims:$PATH"' > /etc/profile.d/mise.sh \
 	&& agent-browser install --with-deps \
 	&& rm -rf /var/lib/apt/lists/*
 
+# Plain, non-interactive output without telemetry, for agents, checks and deploys alike.
+ENV NO_COLOR=1 FORCE_COLOR=0 GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat DEBIAN_FRONTEND=noninteractive \
+	DO_NOT_TRACK=1 REGIT=1
 ENV SANDBOX_ROOT=/workspace PORT=8080
 EXPOSE 8080
 CMD ["regit-start"]

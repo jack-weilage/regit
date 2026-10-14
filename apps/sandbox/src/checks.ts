@@ -305,7 +305,7 @@ export function deploy(
 			if (prepared.failed) return { ran: true, ...prepared.failed };
 			const result = await exec('bash', ['-e', deployScript], {
 				cwd: prepared.dir,
-				env: { ...env, REGIT_DEPLOYED_SHA: deployed ?? '' },
+				env: { ...env, REGIT_COMMIT_SHA: commit, REGIT_DEPLOYED_SHA: deployed ?? '' },
 				timeout: timeoutSeconds * 1000,
 				signal: controller.signal
 			});

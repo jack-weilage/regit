@@ -186,7 +186,7 @@ test('runs native commands with the workspace environment, bounded output and pr
 	const calls = [
 		{
 			command:
-				'printf "%s\\n" "$PWD" "$MISE_DATA_DIR" "$MISE_CACHE_DIR" "$REGIT_PREVIEW_HOST"; jq -n 42; printf diagnostic >&2; exit 7'
+				'printf "%s\\n" "$PWD" "$MISE_DATA_DIR" "$MISE_CACHE_DIR" "$REGIT_PREVIEW_HOST" "$AI_AGENT" "$REGIT_THREAD" "$NO_COLOR"; jq -n 42; printf diagnostic >&2; exit 7'
 		},
 		{
 			command: "printf HEAD; printf 'α%.0s' {1..11000}; printf 'β%.0s' {1..23001}; printf TAIL"
@@ -220,7 +220,7 @@ test('runs native commands with the workspace environment, bounded output and pr
 	);
 	expect(outputs).toHaveLength(calls.length);
 	expect(outputs[0]).toMatch(
-		/^exit code 7\n\/workspace\n\/opt\/mise\n\/opt\/mise\/cache\n\w+-\{name\}\.regit\.run\n/
+		/^exit code 7\n\/workspace\n\/opt\/mise\n\/opt\/mise\/cache\n\w+-\{name\}\.regit\.run\nregit\nnative-run-thread\n1\n/
 	);
 	expect(outputs[0]).toContain('42');
 	expect(outputs[0]).toContain('diagnostic');

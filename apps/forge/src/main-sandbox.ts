@@ -167,6 +167,7 @@ export class MainSandbox extends DurableObject<Env> {
 			try {
 				await this.#start(
 					fetch,
+					repo,
 					machine,
 					restore ? { containerSnapshot: { id: restore.id } } : { image }
 				);
@@ -174,7 +175,7 @@ export class MainSandbox extends DurableObject<Env> {
 				if (!restore) throw error;
 				console.warn('Could not restore the main sandbox snapshot', error);
 				this.ctx.storage.kv.delete('snapshot');
-				await this.#start(fetch, machine, { image });
+				await this.#start(fetch, repo, machine, { image });
 			}
 			this.ctx.storage.kv.put('image', image);
 		}
@@ -185,11 +186,13 @@ export class MainSandbox extends DurableObject<Env> {
 
 	async #start(
 		fetch: Fetch,
+		repo: string,
 		instance: Machine,
 		source: { image: string } | { containerSnapshot: { id: string } }
 	) {
 		const container = this.ctx.container!;
-		container.start({ ...source, instance, enableInternet: true });
+		const env = { CI: 'true', REGIT_REPO: repo };
+		container.start({ ...source, instance, enableInternet: true, env });
 		await container.setInactivityTimeout(idleTimeoutMs);
 		await healthy(fetch, container);
 	}

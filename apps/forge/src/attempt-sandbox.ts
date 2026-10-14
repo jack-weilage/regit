@@ -1271,7 +1271,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 							return await containerRun(
 								container,
 								args,
-								{ REGIT_PREVIEW_HOST: await this.#previewHost(this.#meta('repo')!) },
+								await this.#environment(this.#meta('repo')!),
 								signal
 							);
 						} catch (error) {
@@ -1344,6 +1344,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	#thread() {
 		return this.ctx.id.name!;
+	}
+
+	// What the sandbox tells programs about where they run: an AI agent's thread, by the AI_AGENT convention.
+	async #environment(repo: string) {
+		return {
+			AI_AGENT: 'regit',
+			REGIT_REPO: repo,
+			REGIT_THREAD: this.#thread(),
+			REGIT_PREVIEW_HOST: await this.#previewHost(repo)
+		};
 	}
 
 	#meta(key: string) {
@@ -1631,7 +1641,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			...source,
 			enableInternet: true,
 			instance: this.#machine(),
-			...(repo && { env: { REGIT_PREVIEW_HOST: await this.#previewHost(repo) } })
+			...(repo && { env: await this.#environment(repo) })
 		});
 		await container.setInactivityTimeout(idleTimeoutMs);
 		// TODO: observe startup failures with container.monitor(), accounting for its eviction delay in the idle policy.
