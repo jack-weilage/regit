@@ -2,9 +2,69 @@ checks:
   - name: check
     run: bun run check
     before: [handoff, deploy]
-  - name: test
-    run: bun run test
-    timeout: 1800
+  # One check per package's tests, so a pass is reused until that package or one it uses changes.
+  - name: test-agent
+    run: bun run --filter @regit/agent test
+    inputs:
+      - packages/agent
+      - packages/core
+      - package.json
+      - bun.lock
+      - tsconfig.base.json
+      - mise.toml
+      - .agents/setup
+    before: [deploy]
+  - name: test-sandbox
+    run: bun run --filter @regit/sandbox test
+    inputs:
+      - apps/sandbox
+      - packages/agent
+      - packages/core
+      - package.json
+      - bun.lock
+      - tsconfig.base.json
+      - mise.toml
+      - .agents/setup
+    before: [deploy]
+  - name: test-ui
+    run: bun run --filter @regit/ui test
+    inputs:
+      - packages/ui
+      - packages/core
+      - package.json
+      - bun.lock
+      - tsconfig.base.json
+      - mise.toml
+      - .agents/setup
+    before: [deploy]
+  - name: test-web
+    run: bun run --filter @regit/web test
+    inputs:
+      - apps/web
+      - packages/ui
+      - packages/core
+      - packages/db
+      - package.json
+      - bun.lock
+      - tsconfig.base.json
+      - mise.toml
+      - .agents/setup
+    before: [deploy]
+  # Forge's tests run the sandbox server as a local process.
+  - name: test-forge
+    run: bun run --filter @regit/forge test
+    inputs:
+      - apps/forge
+      - apps/sandbox
+      - packages/agent
+      - packages/core
+      - packages/db
+      - package.json
+      - bun.lock
+      - tsconfig.base.json
+      - mise.toml
+      - .agents/setup
+    timeout: 1200
     before: [deploy]
   - name: migrations
     when: ['packages/db/src/schema.ts']
