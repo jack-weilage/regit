@@ -289,9 +289,10 @@ export function runCheck(
 // out of its output and log.
 export function deploy(
 	root: string,
-	{ commit, env, timeoutSeconds = deployTimeoutSeconds }: DeployRequest
+	{ commit, env, deployed, timeoutSeconds = deployTimeoutSeconds }: DeployRequest
 ): Promise<DeployResponse> {
 	commitRef(commit);
+	if (deployed) commitRef(deployed);
 	return serial(root, async () => {
 		if ((await exec('git', ['cat-file', '-e', `${commit}:${deployScript}`], { cwd: root })).code)
 			return { ran: false };
@@ -304,7 +305,7 @@ export function deploy(
 			if (prepared.failed) return { ran: true, ...prepared.failed };
 			const result = await exec('bash', ['-e', deployScript], {
 				cwd: prepared.dir,
-				env,
+				env: { ...env, REGIT_DEPLOYED_SHA: deployed ?? '' },
 				timeout: timeoutSeconds * 1000,
 				signal: controller.signal
 			});

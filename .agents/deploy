@@ -4,8 +4,15 @@ set -euo pipefail
 
 : "${CLOUDFLARE_API_TOKEN:?Add a CLOUDFLARE_API_TOKEN deploy secret in ReGit}"
 
-# Wrangler hides why Docker didn't start, so start it here where its errors reach the deploy log.
-docker info >/dev/null
+# Building the sandbox image takes minutes and restarts every sandbox on the new one, so forge keeps the deployed
+# image while apps/sandbox is unchanged since ReGit's last deploy.
+forge=()
+if [ -n "${REGIT_DEPLOYED_SHA:-}" ] && git diff --quiet "$REGIT_DEPLOYED_SHA" HEAD -- apps/sandbox 2>/dev/null; then
+	forge=(--containers-rollout none)
+else
+	# Wrangler hides why Docker didn't start, so start it here where its errors reach the deploy log.
+	docker info >/dev/null
+fi
 
-mise exec -- bun run --filter @regit/forge deploy
+mise exec -- bun run --filter @regit/forge deploy "${forge[@]}"
 mise exec -- bun run --filter @regit/web deploy

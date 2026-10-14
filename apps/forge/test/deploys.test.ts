@@ -48,14 +48,16 @@ test('deploys green commits with the repository secrets, keeping them out of wha
 	sh(work, 'pull', '--quiet', canonical, 'main');
 	await commit(
 		work,
-		{ '.agents/deploy': 'echo "leaking $API_TOKEN"; exit 3\n' },
+		{ '.agents/deploy': 'echo "leaking $API_TOKEN after $REGIT_DEPLOYED_SHA"; exit 3\n' },
 		'Break the deploy'
 	);
 	sh(work, 'push', '--quiet', canonical, 'main');
 	const broken = sh(canonical, 'rev-parse', 'main');
 	await repo.landed({ repo: 'deploying', ref: 'refs/heads/main', after: broken, headline: '' });
 	const failed = await untilMain(repo, (main) => main.deployFailure?.sha === broken);
-	expect(failed.deployFailure?.output).toBe('exit code 3\nleaking [secret]');
+	expect(failed.deployFailure?.output).toBe(
+		`exit code 3\nleaking [secret] after ${deployed.deployed?.sha}`
+	);
 	expect(failed.deployed?.sha).toBe(deployed.deployed?.sha);
 	expect(failed.green?.sha).toBe(broken);
 	expect(JSON.stringify(await repo.main())).not.toContain('sekrit');

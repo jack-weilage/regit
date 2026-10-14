@@ -104,9 +104,11 @@ export class MainSandbox extends DurableObject<Env> {
 	deploy({ repo, sha }: { repo: string; sha: string }): Promise<DeployResponse> {
 		return this.#serial(async () => {
 			const { fetch } = await this.#workspace(repo);
-			const sealed = await this.env.REPOS.getByName(repo).sealedDeploySecrets();
+			const coordinator = this.env.REPOS.getByName(repo);
+			const sealed = await coordinator.sealedDeploySecrets();
 			const env = sealed.length ? await open(this.env, repo, sealed) : {};
-			return sandboxWorkspace(fetch).deploy({ commit: sha, env });
+			const deployed = (await coordinator.main()).deployed?.sha ?? null;
+			return sandboxWorkspace(fetch).deploy({ commit: sha, env, deployed });
 		});
 	}
 

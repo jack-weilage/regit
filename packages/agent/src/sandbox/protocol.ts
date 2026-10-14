@@ -236,6 +236,8 @@ export interface RunCheckResponse {
 export interface DeployRequest {
 	commit: string;
 	env: Record<string, string>;
+	// The commit ReGit deployed last, which the script gets as REGIT_DEPLOYED_SHA (empty before the first deploy).
+	deployed?: string | null;
 	timeoutSeconds?: number;
 }
 

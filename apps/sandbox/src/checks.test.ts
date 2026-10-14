@@ -266,14 +266,19 @@ describe('deploying', () => {
 		expect(await workspace.deploy({ commit: none, env: {} })).toEqual({ ran: false });
 
 		const ok = await commit({
-			'.agents/deploy': 'echo "deploying $(cat greeting.ts) with $API_TOKEN"\n'
+			'.agents/deploy':
+				'echo "deploying $(cat greeting.ts) with $API_TOKEN since $REGIT_DEPLOYED_SHA"\n'
 		});
 		await writeFile(join(root, 'greeting.ts'), 'uncommitted\n');
-		const deployed = await workspace.deploy({ commit: ok, env: { API_TOKEN: 'sekrit-value' } });
+		const deployed = await workspace.deploy({
+			commit: ok,
+			env: { API_TOKEN: 'sekrit-value' },
+			deployed: none
+		});
 		expect(deployed).toEqual({
 			ran: true,
 			ok: true,
-			output: "exit code 0\ndeploying export const greeting = 'hello'; with [secret]",
+			output: `exit code 0\ndeploying export const greeting = 'hello'; with [secret] since ${none}`,
 			log: '.git/regit-checks/deploy.log'
 		});
 		const log = await readFile(join(root, '.git/regit-checks/deploy.log'), 'utf8');
