@@ -1,10 +1,8 @@
 <script lang="ts">
-	function refresh() {
-		window.location.reload();
-	}
+	let { onrefresh }: { onrefresh: () => void } = $props();
 </script>
 
-<button class="prompt pill" type="button" onclick={refresh}>
+<button class="pill" type="button" onclick={onrefresh}>
 	<svg viewBox="0 0 16 16" aria-hidden="true">
 		<path d="M13.2 5.5A5.5 5.5 0 1 0 13.5 8M13 2.5v3.5H9.5" />
 	</svg>
@@ -13,39 +11,28 @@
 </button>
 
 <style>
-	.prompt {
-		position: fixed;
-		inset-block-end: calc(var(--space-7) + 2em);
-		inset-inline-start: var(--space-7);
-		z-index: 20;
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-4);
+		padding: 1em 1.35em;
+		border: 0;
+		border-radius: 999px;
+		background: var(--color-fg);
+		color: var(--color-bg);
 		font: inherit;
 		font-size: var(--text-meta);
-		box-shadow: var(--shadow-floating);
-	}
-
-	button {
-		border: 0;
+		font-weight: 500;
 		cursor: pointer;
-		font: inherit;
+
+		&:hover {
+			background: color-mix(in oklab, var(--color-fg) 88%, var(--color-bg));
+		}
 
 		&:focus-visible {
 			outline: 2px solid var(--color-accent);
 			outline-offset: 3px;
-		}
-	}
-
-	.pill {
-		display: flex;
-		align-items: center;
-		gap: var(--space-4);
-		padding: 1em 1.35em;
-		border-radius: 999px;
-		background: var(--color-fg);
-		color: var(--color-bg);
-		font-weight: 500;
-
-		&:hover {
-			background: color-mix(in oklab, var(--color-fg) 88%, var(--color-bg));
 		}
 
 		svg {
@@ -60,13 +47,7 @@
 	}
 
 	.action {
-		color: light-dark(#fdba74, #fb923c);
+		color: light-dark(#fdba74, #c2410c);
 		font-weight: 600;
-	}
-
-	@media (max-width: 48rem) {
-		.prompt {
-			inset-block-end: calc(var(--space-7) + 6em);
-		}
 	}
 </style>

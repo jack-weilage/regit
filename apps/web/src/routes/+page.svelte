@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Button, NewRepoPalette } from '@regit/ui';
+	import { updated } from '$app/state';
+	import { Button, NewRepoPalette, UpdatePrompt } from '@regit/ui';
 	import { getRepos } from '#lib/data.remote.ts';
 	import { createAndOpen } from '#lib/repos.ts';
 
@@ -21,6 +22,9 @@
 	<div>
 		<Button variant="primary" popovertarget="new-repo">New repository</Button>
 	</div>
+	{#if updated.current}
+		<div><UpdatePrompt onrefresh={() => window.location.reload()} /></div>
+	{/if}
 	<NewRepoPalette id="new-repo" repos={repos.map((repo) => repo.name)} oncreate={createAndOpen} />
 </main>
 

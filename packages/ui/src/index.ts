@@ -11,6 +11,7 @@ export { default as NewRepoPalette, type NewRepo } from './NewRepoPalette.svelte
 export { default as Popover } from './Popover.svelte';
 export { default as StatusIcon } from './StatusIcon.svelte';
 export { default as Toast } from './Toast.svelte';
+export { default as UpdatePrompt } from './UpdatePrompt.svelte';
 export { default as ShipPanel } from './chat/ShipPanel.svelte';
 export { default as ChangesPanel } from './chat/ChangesPanel.svelte';
 export { default as ChatActivity } from './chat/ChatActivity.svelte';

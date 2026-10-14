@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
+	import { page, updated } from '$app/state';
 	import {
 		AppShell,
 		CloneDialog,
@@ -204,6 +204,7 @@
 		{similar}
 		{size}
 		{main}
+		onupdate={updated.current ? () => window.location.reload() : undefined}
 		ondeploys={owner ? () => (managingDeploys = true) : undefined}
 		onclone={() => {
 			created = null;

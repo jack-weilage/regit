@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import type { ComponentProps } from 'svelte';
+	import type { MainStatus } from '@regit/core';
 	import { expect, fn, waitFor } from 'storybook/test';
 	import AppShell from './AppShell.svelte';
 	import ChatComposer from './chat/ChatComposer.svelte';
@@ -51,6 +52,22 @@
 			href: '#focus'
 		}
 	];
+	const main: MainStatus = {
+		branch: 'main',
+		verifying: {
+			sha: 'b'.repeat(40),
+			stage: 'deploying',
+			note: null,
+			since: minutes(1),
+			started: minutes(1)
+		},
+		waiting: [{ sha: 'c'.repeat(40), headline: 'Update dependencies', thread: null }],
+		verified: null,
+		green: { sha: 'a'.repeat(40), at: minutes(3) },
+		deployed: { sha: 'a'.repeat(40), at: minutes(2) },
+		deployFailure: null,
+		failure: null
+	};
 	const sam = { name: 'Sam Rivera', kind: 'person' as const };
 	const agent = { name: 'ReGit', kind: 'agent' as const };
 
@@ -167,3 +184,91 @@
 		{@render shell(args, '24rem')}
 	{/snippet}
 </Story>
+
+<Story
+	name="Current UI with deploy status"
+	args={{ main }}
+	play={async ({ canvas }) => {
+		await expect(
+			canvas.queryByRole('button', { name: 'New version available Refresh' })
+		).toBeNull();
+		await expect(canvas.getByRole('region', { name: 'main checks and deploys' })).toBeVisible();
+		await expect(canvas.getByText('jack@regit.dev')).toBeVisible();
+	}}
+	template={page}
+/>
+
+<Story
+	name="Update available above deploys"
+	args={{ main, onupdate: fn() }}
+	play={async ({ args, canvas, userEvent }) => {
+		const update = canvas.getByRole('button', { name: 'New version available Refresh' });
+		const sidebar = canvas.getByRole('complementary', { name: 'Navigation' });
+		const padding = parseFloat(getComputedStyle(update.parentElement!).paddingLeft);
+		await expect(update.getBoundingClientRect().width).toBeCloseTo(
+			sidebar.clientWidth - 2 * padding
+		);
+		await expect(update.getBoundingClientRect().left).toBeCloseTo(
+			sidebar.getBoundingClientRect().left + sidebar.clientLeft + padding
+		);
+		const deploys = canvas.getByRole('region', { name: 'main checks and deploys' });
+		await expect(update).toBeVisible();
+		await expect(deploys).toBeVisible();
+		await expect(update.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			deploys.getBoundingClientRect().top
+		);
+		await expect(deploys.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			canvas.getByText('jack@regit.dev').getBoundingClientRect().top
+		);
+		await userEvent.click(update);
+		await expect(args.onupdate).toHaveBeenCalledOnce();
+	}}
+	template={page}
+/>
+
+<Story
+	name="Update available narrow"
+	args={{ main, onupdate: fn() }}
+	play={async ({ args, canvas, userEvent }) => {
+		await expect(
+			canvas.queryByRole('button', { name: 'New version available Refresh' })
+		).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: 'Threads' }));
+		const update = await waitFor(() =>
+			canvas.getByRole('button', { name: 'New version available Refresh' })
+		);
+		await waitFor(() => expect(update).toBeVisible());
+		const sidebar = canvas.getByRole('complementary', { name: 'Navigation' });
+		const padding = parseFloat(getComputedStyle(update.parentElement!).paddingLeft);
+		await expect(update.getBoundingClientRect().width).toBeCloseTo(
+			sidebar.clientWidth - 2 * padding
+		);
+		await expect(update.getBoundingClientRect().left).toBeCloseTo(
+			sidebar.getBoundingClientRect().left + sidebar.clientLeft + padding
+		);
+		const deploys = canvas.getByRole('region', { name: 'main checks and deploys' });
+		await expect(update.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+			deploys.getBoundingClientRect().top
+		);
+		await expect(deploys).toBeVisible();
+		await userEvent.click(update);
+		await expect(args.onupdate).toHaveBeenCalledOnce();
+	}}
+>
+	{#snippet template(args)}
+		{@render shell(args, '24rem')}
+	{/snippet}
+</Story>
+
+<Story
+	name="Update available without deploy status"
+	args={{ main: null, onupdate: fn() }}
+	play={async ({ canvas }) => {
+		await expect(
+			canvas.getByRole('button', { name: 'New version available Refresh' })
+		).toBeVisible();
+		await expect(canvas.queryByRole('region', { name: 'main checks and deploys' })).toBeNull();
+		await expect(canvas.getByText('jack@regit.dev')).toBeVisible();
+	}}
+	template={page}
+/>

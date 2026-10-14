@@ -3,6 +3,7 @@
 	import Avatar from './Avatar.svelte';
 	import Button from './Button.svelte';
 	import MainStatusView from './MainStatus.svelte';
+	import UpdatePrompt from './UpdatePrompt.svelte';
 	import Menu from './Menu.svelte';
 	import NewRepoPalette, { type NewRepo } from './NewRepoPalette.svelte';
 	import type { MainStatus, Machine } from '@regit/core';
@@ -27,6 +28,7 @@
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onclone?: () => void;
 		ondeploys?: () => void;
+		onupdate?: () => void;
 		onquery?: (text: string) => void;
 		onstart: (thread: { text: string; mode: Mode; machine: Machine }) => void;
 		onopenthread?: (thread: Mentionable) => void;
@@ -49,6 +51,7 @@
 		oncreaterepo,
 		onclone,
 		ondeploys,
+		onupdate,
 		onquery,
 		onstart,
 		onopenthread,
@@ -106,16 +109,20 @@
 			<ThreadList {threads} {current} {now} newThread="{id}-new-thread" />
 		</div>
 
-		{#if main}
-			<MainStatusView {main} {threadHref} {now} />
-		{/if}
-
-		{#if account}
-			<div class="account">
-				<Avatar name={account.name} src={account.avatar} />
-				<span>{account.email}</span>
-			</div>
-		{/if}
+		<div class="bottom">
+			{#if onupdate}
+				<div class="update"><UpdatePrompt onrefresh={onupdate} /></div>
+			{/if}
+			{#if main}
+				<MainStatusView {main} {threadHref} {now} />
+			{/if}
+			{#if account}
+				<div class="account">
+					<Avatar name={account.name} src={account.avatar} />
+					<span>{account.email}</span>
+				</div>
+			{/if}
+		</div>
 	</aside>
 
 	<button
@@ -172,7 +179,7 @@
 
 	.sidebar {
 		display: grid;
-		grid-template-rows: auto minmax(0, 1fr) auto auto;
+		grid-template-rows: auto minmax(0, 1fr) auto;
 		grid-template-columns: minmax(0, 1fr);
 		min-inline-size: 0;
 		border-inline-end: 1px solid var(--color-border);
@@ -230,6 +237,11 @@
 	.list {
 		overflow-y: auto;
 		padding: var(--space-2) var(--space-3);
+	}
+
+	.update {
+		display: grid;
+		padding: var(--space-5);
 	}
 
 	.account {
