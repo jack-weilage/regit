@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { services } from './cli.ts';
-import { createSandbox } from './server.ts';
+import { serveSandbox } from './serve.ts';
 
 const port = Number(process.env.PORT ?? 8080);
 
@@ -16,5 +16,5 @@ if (process.argv[2] === 'services') {
 const root = resolve(process.env.SANDBOX_ROOT ?? '/workspace');
 await mkdir(root, { recursive: true });
 
-const server = Bun.serve({ port, fetch: createSandbox(root) });
+const server = serveSandbox(root, port);
 console.log(`Sandbox serving ${root} on ${server.url}`);

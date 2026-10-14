@@ -1,6 +1,8 @@
 import { readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { sandboxWorkspace } from '@regit/agent';
 import { describe, expect, test } from 'bun:test';
+import { serveSandbox } from './serve.ts';
 import {
 	call,
 	dir,
@@ -55,6 +57,19 @@ test('streams lifecycle script output while the script runs', async () => {
 	expect(await finished).toEqual({ ran: true, output: 'first\nsecond' });
 	expect(chunks.join('')).toBe('first\nsecond\n');
 });
+
+test('keeps streaming a lifecycle script that stays quiet past the idle timeout', async () => {
+	await call('write_file', { path: '.agents/setup', content: 'echo start\nsleep 13\necho done\n' });
+	const server = serveSandbox(root, 0);
+	try {
+		const served = sandboxWorkspace((url, init) =>
+			globalThis.fetch(new URL(new URL(String(url)).pathname, server.url), init)
+		);
+		expect(await served.hook('setup')).toEqual({ ran: true, output: 'start\ndone' });
+	} finally {
+		await server.stop(true);
+	}
+}, 20_000);
 
 describe('tools', () => {
 	test('reads image pixels, rejects unsupported or oversized files and resolves path boundaries', async () => {
