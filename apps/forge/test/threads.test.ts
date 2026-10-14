@@ -235,7 +235,7 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 			'edit_file',
 			'run',
 			'update_intent',
-			'suggest_thread',
+			'launch_thread',
 			'list_threads',
 			'message_thread',
 			'ask_threads'

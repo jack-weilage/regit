@@ -51,6 +51,7 @@ import {
 	repositoryGuidance,
 	withSkills,
 	intentTools,
+	launchTools,
 	modelClient,
 	modes,
 	openaiModel,
@@ -60,7 +61,6 @@ import {
 	sandboxWorkspace,
 	searcher,
 	StepActivity,
-	suggestTools,
 	threadInstructions,
 	threadTools,
 	type AgentOutcome,
@@ -509,8 +509,8 @@ export class AttemptSandbox extends DurableObject<Env> {
 								await this.#tree(fetch)
 							)
 					}),
-					suggestTools((suggestion) =>
-						this.env.REPOS.getByName(attempt.repo).suggestThread(this.#thread(), suggestion)
+					launchTools((suggestion, start) =>
+						this.env.REPOS.getByName(attempt.repo).launchThread(this.#thread(), suggestion, start)
 					),
 					threadTools({
 						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.#thread()),

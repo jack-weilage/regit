@@ -87,4 +87,15 @@ describe('StepActivity', () => {
 		expect(output.length).toBeLessThanOrEqual(4000);
 		expect(output.endsWith('done')).toBe(true);
 	});
+
+	test('shows a launch that only suggests as a suggestion', () => {
+		const activity = new StepActivity(() => 0);
+		activity.apply(call('a', 'launch_thread', { headline: 'fix: a', start: false }));
+		activity.apply(call('b', 'launch_thread', { headline: 'fix: b', start: true }));
+
+		expect(activity.calls.map(({ tool, target }) => ({ tool, target }))).toEqual([
+			{ tool: 'suggest_thread', target: 'fix: a' },
+			{ tool: 'launch_thread', target: 'fix: b' }
+		]);
+	});
 });
