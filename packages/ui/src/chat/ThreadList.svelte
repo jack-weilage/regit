@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import type { ThreadPreviewProps } from './ThreadPreview.svelte';
-	import type { ThreadStatus } from './types.ts';
+	import type { ThreadAction, ThreadStatus } from './types.ts';
 
 	export interface ThreadListItem {
 		id: string;
@@ -11,6 +11,7 @@
 		conflictsWith?: string;
 		failed?: string;
 		preview?: Omit<ThreadPreviewProps, 'headline'>;
+		actions?: ThreadAction[];
 	}
 
 	const groups: { title: string; statuses: ThreadStatus[] }[] = [
@@ -25,6 +26,7 @@
 
 <script lang="ts">
 	import Button from '../Button.svelte';
+	import Menu from '../Menu.svelte';
 	import Popover from '../Popover.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
@@ -95,7 +97,7 @@
 		<p id="{id}-section-{index}" class="title">{section.title}</p>
 		<ul aria-labelledby="{id}-section-{index}">
 			{#each section.threads as thread (thread.id)}
-				<li>
+				<li class:has-actions={!!thread.actions?.length}>
 					<a
 						href={thread.href}
 						aria-current={thread.id === current ? 'page' : undefined}
@@ -126,6 +128,27 @@
 							>{formatAge(thread.updatedAt, time)}</time
 						>
 					</a>
+					{#if thread.actions?.length}
+						<div class="actions">
+							<Menu label="Thread actions: {thread.headline}" items={thread.actions}>
+								{#snippet trigger(props)}
+									<Button
+										variant="ghost"
+										size="sm"
+										icon
+										aria-label="Thread actions: {thread.headline}"
+										{...props}
+										onpointerenter={hide}
+										onfocus={hide}
+									>
+										<svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
+											<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" />
+										</svg>
+									</Button>
+								{/snippet}
+							</Menu>
+						</div>
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -201,6 +224,49 @@
 		list-style: none;
 	}
 
+	li {
+		position: relative;
+
+		&:hover a,
+		&:focus-within a {
+			background: var(--color-surface);
+			color: var(--color-fg);
+		}
+	}
+
+	.actions {
+		position: absolute;
+		inset-inline-end: var(--space-2);
+		inset-block-start: 50%;
+		translate: 0 -50%;
+		opacity: 0;
+		pointer-events: none;
+		color: var(--color-muted);
+	}
+
+	li:hover .actions,
+	li:focus-within .actions,
+	.actions:has(:global(:popover-open)) {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	.has-actions:hover time,
+	.has-actions:focus-within time,
+	.has-actions:has(:global(:popover-open)) time {
+		visibility: hidden;
+	}
+
+	.icon {
+		inline-size: 1.25em;
+		block-size: 1.25em;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
 	a {
 		--icon-size: 0.9em;
 
@@ -252,6 +318,22 @@
 		stroke-width: 1.5;
 		stroke-linecap: round;
 		stroke-linejoin: round;
+	}
+
+	.has-actions time {
+		min-inline-size: 2em;
+		text-align: end;
+	}
+
+	@media (hover: none) {
+		.actions {
+			opacity: 1;
+			pointer-events: auto;
+		}
+
+		.has-actions time {
+			visibility: hidden;
+		}
 	}
 
 	time {

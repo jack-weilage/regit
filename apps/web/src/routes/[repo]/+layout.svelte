@@ -5,6 +5,7 @@
 		AppShell,
 		CloneDialog,
 		DeployDialog,
+		DeleteThreadDialog,
 		Toast,
 		type Mode,
 		type SimilarThread,
@@ -13,6 +14,7 @@
 	import type { Attachment } from 'svelte/attachments';
 	import {
 		defaultMachine,
+		threadPurgeDelayMs,
 		type LiveMessage,
 		type Machine,
 		type MainStatus,
@@ -25,6 +27,9 @@
 		assessRequest,
 		createGitAccessToken,
 		deleteDeploySecret,
+		deleteThread,
+		discardThread,
+		reopenThread,
 		getDeploySettings,
 		getGitAccess,
 		getMain,
@@ -58,6 +63,11 @@
 	let fetchedMain = $derived(await getMain(repo));
 	let liveMain = $state<{ repo: string; main: MainStatus } | null>(null);
 	let main = $derived(liveMain?.repo === repo ? liveMain.main : fetchedMain);
+	let deleting = $state<string | null>(null);
+	let deleteOpen = $state(false);
+	let deleteDetail = $derived(
+		deleting && deleteOpen ? await getThread({ repo, id: deleting }) : null
+	);
 	let threads = $derived<ThreadListItem[]>(
 		summaries.map((thread) => ({
 			id: thread.id,
@@ -65,6 +75,33 @@
 			status: thread.status,
 			updatedAt: thread.updatedAt,
 			href: `/${repo}/${thread.id}`,
+			actions: [
+				{
+					label: 'Copy link',
+					onselect: () =>
+						navigator.clipboard.writeText(new URL(`/${repo}/${thread.id}`, location.origin).href)
+				},
+				thread.status === 'discarded'
+					? {
+							label: 'Reopen thread',
+							detail: 'Pick up where it left off',
+							onselect: () => reopenThread({ repo, id: thread.id })
+						}
+					: {
+							label: 'Discard thread',
+							detail: 'Stops the attempt, keeps the conversation',
+							onselect: () => discardThread({ repo, id: thread.id })
+						},
+				{
+					label: 'Delete thread…',
+					separated: true,
+					danger: true,
+					onselect: () => {
+						deleting = thread.id;
+						deleteOpen = true;
+					}
+				}
+			],
 			conflictsWith: thread.behind?.conflicts.length ? thread.behind.branch : undefined,
 			failed:
 				thread.failure?.title ??
@@ -185,6 +222,19 @@
 	>
 		{@render children()}
 	</AppShell>
+	{#if deleteDetail}
+		<DeleteThreadDialog
+			bind:open={deleteOpen}
+			headline={deleteDetail.summary.headline || 'This thread'}
+			messages={deleteDetail.entries.filter((entry) => entry.type === 'message').length}
+			checkpoints={deleteDetail.entries.filter(
+				(entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint')
+			).length}
+			running={deleteDetail.summary.status === 'running'}
+			restoreDays={threadPurgeDelayMs / 86_400_000}
+			onconfirm={() => deleteThread({ repo, id: deleteDetail!.summary.id })}
+		/>
+	{/if}
 	{#if alert}
 		{@const { thread } = alert}
 		<Toast

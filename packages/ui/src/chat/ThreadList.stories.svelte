@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, waitFor, within } from 'storybook/test';
+	import { expect, fn, waitFor, within } from 'storybook/test';
 	import ThreadList, { type ThreadListItem } from './ThreadList.svelte';
 
 	const now = Date.UTC(2026, 9, 2, 18);
@@ -105,6 +105,70 @@
 				name: 'The agent stopped'
 			})
 		).toBeVisible();
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem; block-size: 30rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Actions"
+	args={{
+		threads: threads.map((thread) => ({
+			...thread,
+			actions: [
+				{ label: 'Copy link', onselect: fn() },
+				{
+					label: thread.status === 'discarded' ? 'Reopen thread' : 'Discard thread',
+					onselect: fn()
+				},
+				{ label: 'Delete thread…', danger: true, separated: true, onselect: fn() }
+			]
+		}))
+	}}
+	play={async ({ canvas, userEvent, args }) => {
+		const link = canvas.getByRole('link', { name: /load members lazily/ });
+		const button = canvas.getByRole('button', {
+			name: 'Thread actions: perf(settings): load members lazily'
+		});
+		await userEvent.unhover(link);
+		await expect(getComputedStyle(button.parentElement!).opacity).toBe('0');
+		const width = link.getBoundingClientRect().width;
+		await userEvent.hover(link);
+		link.focus();
+		await expect(getComputedStyle(button.parentElement!).opacity).toBe('1');
+		await expect(link.getBoundingClientRect().width).toBe(width);
+		const href = location.href;
+		await userEvent.click(button);
+		const menu = await canvas.findByRole('menu', { name: /Thread actions: perf/ });
+		await waitFor(() => expect(menu).toBeVisible());
+		await expect(canvas.queryByRole('group', { name: 'Thread preview' })).not.toBeInTheDocument();
+		await expect(location.href).toBe(href);
+		await userEvent.click(within(menu).getByRole('menuitem', { name: 'Copy link' }));
+		await expect(args.threads[0]!.actions![0]!.onselect).toHaveBeenCalledOnce();
+		await expect(location.href).toBe(href);
+		await userEvent.unhover(button);
+		link.focus();
+		await userEvent.tab();
+		await expect(button).toHaveFocus();
+		await expect(getComputedStyle(button.parentElement!).opacity).toBe('1');
+		await userEvent.keyboard('{Enter}');
+		await waitFor(() => expect(menu).toBeVisible());
+		await userEvent.keyboard('{Escape}');
+
+		const discarded = canvas.getByRole('button', {
+			name: 'Thread actions: refactor(api): split the router'
+		});
+		await userEvent.hover(canvas.getByRole('link', { name: /split the router/ }));
+		discarded.focus();
+		await userEvent.click(discarded);
+		await waitFor(() =>
+			expect(canvas.getByRole('menuitem', { name: 'Reopen thread' })).toBeVisible()
+		);
+		await userEvent.keyboard('{Escape}');
 	}}
 >
 	{#snippet template(args)}
