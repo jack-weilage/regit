@@ -274,6 +274,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				/* Already added. */
 			}
 		}
+		// TODO: remove once no coordinator has threads in the removed draft and reviewing statuses.
+		this.#sql.exec(`
+			UPDATE threads SET status = 'needs-you' WHERE status IN ('draft', 'reviewing');
+			UPDATE threads SET reopen_status = 'needs-you' WHERE reopen_status IN ('draft', 'reviewing');
+		`);
 	}
 
 	async openThread({
