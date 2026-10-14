@@ -147,6 +147,8 @@ const maxStoredChanges = 1_500_000;
 const turnRetries: RetryPolicy = { limit: 5, baseMs: 15_000, maxMs: 5 * 60 * 1000 };
 const pushRetries: RetryPolicy = { limit: 4, baseMs: 1000, maxMs: 8000 };
 const reportRetries: RetryPolicy = { limit: 3, baseMs: 250, maxMs: 2000 };
+const mainTokenTtlS = 60 * 60;
+const mainTokenRefreshMs = 20 * 60 * 1000;
 
 // The models modes had before threads pinned theirs.
 // TODO: drop once threads started before 2026-10-14 have all settled
@@ -170,6 +172,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	#publishing?: ReturnType<typeof setTimeout>;
 	#capturing = false;
 	#wakeRetry?: () => void;
+	#main?: { remote: string; token: string; expires: number };
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -251,6 +254,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const { fetch } = await this.#wake();
 			const sha = await this.#head(fetch);
 			if (!sha) return null;
+			await this.#advanceBase(attempt, fetch);
 			return {
 				proposal: this.#thread(),
 				repository: attempt.fork,
@@ -449,12 +453,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const pending = await this.#drain(attempt.repo);
 			const syncing = !!this.#meta('sync');
 			const synced = syncing ? await this.#sync(attempt, fetch, fork, token, unrebased) : null;
-			if (synced) await this.#recheckBehind(attempt, fetch, fork, token);
-			else await this.#reportBehind(attempt, fetch, fork, token);
+			if (synced) await this.#recheckBehind(attempt, fetch);
+			else await this.#reportBehind(attempt, fetch);
 			const opening: Turn[] = [
 				...this.#rebuiltNotes(),
 				...this.#retriedNotes(),
-				...(synced ? [] : this.#conflictNotes()),
+				...(synced ? [] : await this.#conflictNotes(attempt, fetch)),
 				...this.#checkNotes(),
 				...this.#overlapNotes(),
 				...pending,
@@ -533,7 +537,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				wait: (ms, signal) => this.#wait(ms, signal),
 				steer: async () => [
 					...carried.splice(0),
-					...this.#conflictNotes(),
+					...(await this.#conflictNotes(attempt, fetch)),
 					...this.#overlapNotes(),
 					...(await this.#drain(attempt.repo))
 				]
@@ -571,7 +575,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 						tools: controller.signal.aborted ? [] : tools
 					});
 					this.#stepped(event.turns);
-					if (event.checkpoint) await this.#recheckBehind(attempt, fetch, fork, token);
+					if (event.checkpoint) await this.#recheckBehind(attempt, fetch);
 					await this.#syncServices(fetch, attempt.repo);
 					if (Date.now() > deadline) {
 						await run.return('aborted');
@@ -750,6 +754,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async #saveChanges(attempt: AgentRow, fetch: Fetch) {
 		if (!attempt.base) return;
 		try {
+			await this.#advanceBase(attempt, fetch);
 			let files = parseDiff(await sandboxWorkspace(fetch).diff({ base: attempt.base }));
 			if (JSON.stringify(files).length > maxStoredChanges) {
 				files = files.map((file) => ({ ...file, hunks: [], tooLarge: true }));
@@ -788,7 +793,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			branch: string;
 			from: string;
 		};
-		await this.#fetchMain(attempt, fetch, fork, token, branch);
+		await this.#fetchMain(attempt, fetch, branch);
 		const rebased = await this.#shell(fetch, `${gitAsReGit} rebase --onto ${sha} ${from}`);
 		if (!rebased.ok) {
 			await this.#shell(fetch, 'git rebase --abort');
@@ -814,13 +819,13 @@ export class AttemptSandbox extends DurableObject<Env> {
 		shipped: string | null = null
 	) {
 		this.#sql.exec("DELETE FROM meta WHERE key = 'sync'");
-		const branch = await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
-		if ((await this.#shell(fetch, 'git merge-base --is-ancestor FETCH_HEAD HEAD')).ok) return null;
-		const head = (await this.#git(fetch, 'git rev-parse FETCH_HEAD')).trim();
+		const { branch, ref } = await this.#fetchMain(attempt, fetch);
+		if ((await this.#shell(fetch, `git merge-base --is-ancestor ${ref} HEAD`)).ok) return null;
+		const head = (await this.#git(fetch, `git rev-parse ${ref}`)).trim();
 		const landed = (
-			await this.#git(fetch, `git log --format='- %h %s' -20 ${attempt.base}..FETCH_HEAD`)
+			await this.#git(fetch, `git log --format='- %h %s' -20 ${attempt.base}..${ref}`)
 		).trim();
-		const merged = await this.#shell(fetch, `${gitAsReGit} merge --no-edit FETCH_HEAD`);
+		const merged = await this.#shell(fetch, `${gitAsReGit} merge --no-edit ${ref}`);
 		const conflicts = merged.ok
 			? []
 			: (await this.#git(fetch, 'git diff --name-only --diff-filter=U'))
@@ -871,20 +876,43 @@ export class AttemptSandbox extends DurableObject<Env> {
 		];
 	}
 
-	// Tells the agent once about each file that newly conflicts with main; its workspace is left as is.
-	#conflictNotes(): Turn[] {
+	// Tells the agent once about each file that newly conflicts with main, fetching main so it can inspect it; its workspace is left as is.
+	async #conflictNotes(attempt: AgentRow, fetch: Fetch): Promise<Turn[]> {
 		const behind = JSON.parse(this.#meta('behind') ?? 'null') as ThreadSummary['behind'];
 		const conflicts = behind?.conflicts ?? [];
 		const told = JSON.parse(this.#meta('notified') ?? '[]') as string[];
 		this.#setMeta('notified', JSON.stringify(conflicts));
 		if (!behind || conflicts.every((file) => told.includes(file))) return [];
 		const commits = behind.commits === 1 ? '1 new commit' : `${behind.commits} new commits`;
+		const main = await this.#hasMain(attempt, fetch, behind.sha);
+		const inspect = main
+			? ` See what landed with \`git log HEAD..${main}\` and \`git diff HEAD...${main} -- ${conflicts.join(' ')}\`.`
+			: '';
 		return [
 			{
 				role: 'notification',
-				text: `\`${behind.branch}\` has ${commits} (latest ${behind.sha.slice(0, 7)} "${behind.headline}") that conflict with this thread's changes in ${conflicts.join(', ')}. \`${behind.branch}\` has not been merged into your workspace, so your files are unchanged. Avoid deepening the conflict in those files where you can, and mention it in your reply; a person can bring the thread up to date.`
+				text: `\`${behind.branch}\` has ${commits} (latest ${behind.sha.slice(0, 7)} "${behind.headline}") that conflict with this thread's changes in ${conflicts.join(', ')}. \`${behind.branch}\` has not been merged into your workspace, so your files are unchanged.${inspect} Avoid deepening the conflict in those files where you can, and mention it in your reply; a person can bring the thread up to date.`
 			}
 		];
+	}
+
+	// Makes sure the workspace's copy of main includes the given commit, fetching it when it doesn't, and names that copy.
+	async #hasMain(attempt: AgentRow, fetch: Fetch, sha: string) {
+		const has = async () => {
+			const ref = this.#meta('main-ref');
+			const ok =
+				!!ref && (await this.#shell(fetch, `git merge-base --is-ancestor ${sha} ${ref}`)).ok;
+			return ok ? ref.replace('refs/remotes/', '') : null;
+		};
+		const known = await has();
+		if (known) return known;
+		try {
+			await this.#fetchMain(attempt, fetch);
+			return await has();
+		} catch (error) {
+			console.warn('Could not fetch the default branch for a conflict notice', error);
+			return null;
+		}
 	}
 
 	overlapping(overlaps: ThreadOverlap[]) {
@@ -922,18 +950,18 @@ export class AttemptSandbox extends DurableObject<Env> {
 		];
 	}
 
-	async #reportBehind(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+	async #reportBehind(attempt: AgentRow, fetch: Fetch) {
 		try {
-			const branch = await this.#fetchMain(attempt, fetch, fork, token, 'HEAD');
-			const commits = Number(await this.#git(fetch, 'git rev-list --count HEAD..FETCH_HEAD'));
+			const { branch, ref } = await this.#fetchMain(attempt, fetch);
+			const commits = Number(await this.#git(fetch, `git rev-list --count HEAD..${ref}`));
 			let behind = null;
 			if (commits) {
 				const [sha = '', ...subject] = (
-					await this.#git(fetch, 'git log -1 --format="%H %s" FETCH_HEAD')
+					await this.#git(fetch, `git log -1 --format="%H %s" ${ref}`)
 				)
 					.trim()
 					.split(' ');
-				const conflicts = await this.#conflictsWith(fetch, 'FETCH_HEAD');
+				const conflicts = await this.#conflictsWith(fetch, ref);
 				behind = { branch, commits, sha, headline: subject.join(' '), conflicts };
 			}
 			this.#setMeta('behind', JSON.stringify(behind));
@@ -944,12 +972,12 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	// Landings report main's moves, so after the thread's own commits it only rechecks against the main it already knows.
-	async #recheckBehind(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
+	async #recheckBehind(attempt: AgentRow, fetch: Fetch) {
 		const known = JSON.parse(this.#meta('behind') ?? 'null') as ThreadSummary['behind'];
 		if (!known) return;
 		try {
 			if (!(await this.#shell(fetch, `git cat-file -e ${known.sha}^{commit}`)).ok)
-				return await this.#reportBehind(attempt, fetch, fork, token);
+				return await this.#reportBehind(attempt, fetch);
 			const commits = Number(await this.#git(fetch, `git rev-list --count HEAD..${known.sha}`));
 			const behind = commits
 				? { ...known, commits, conflicts: await this.#conflictsWith(fetch, known.sha) }
@@ -970,18 +998,35 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return merged.ok ? [] : merged.output.trim().split('\n').slice(1).filter(Boolean);
 	}
 
-	async #fetchMain(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string, ref: string) {
+	// Points the workspace's upstream remote at main's repository and fetches its default branch, or the given one.
+	async #fetchMain(attempt: AgentRow, fetch: Fetch, branch?: string) {
 		using canonical = await this.env.ARTIFACTS.get(attempt.repo);
 		const info = await canonical.info();
-		const { plaintext } = await canonical.createToken('read', 60 * 60);
-		await this.#allowGit(info, plaintext, false);
-		try {
-			await this.#git(fetch, `git fetch --no-tags ${info.remote} ${ref}`);
-			const head = await this.#shell(fetch, `git ls-remote --symref ${info.remote} HEAD`);
-			return /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(head.output)?.[1] ?? info.defaultBranch;
-		} finally {
-			await this.#allowGit(fork, token, false);
+		await this.#git(
+			fetch,
+			`git remote set-url ${upstream} '${info.remote}' 2>/dev/null || git remote add ${upstream} '${info.remote}'`
+		);
+		if (!branch) {
+			const head = await this.#shell(fetch, `git ls-remote --symref ${upstream} HEAD`);
+			branch = /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(head.output)?.[1] ?? info.defaultBranch;
 		}
+		const ref = `refs/remotes/${upstream}/${branch}`;
+		await this.#git(fetch, `git fetch --no-tags ${upstream} '+refs/heads/${branch}:${ref}'`);
+		this.#setMeta('main-ref', ref);
+		return { branch, ref };
+	}
+
+	// Moves the base up to main when the agent merged main in itself, so main's commits don't count as the thread's changes.
+	async #advanceBase(attempt: AgentRow, fetch: Fetch) {
+		const main = this.#meta('main-ref');
+		if (!attempt.base || !main) return;
+		const merged = await this.#shell(fetch, `git merge-base HEAD ${main}`);
+		const base = merged.output.trim();
+		if (!merged.ok || base === attempt.base) return;
+		if (!(await this.#shell(fetch, `git merge-base --is-ancestor ${attempt.base} ${base}`)).ok)
+			return;
+		attempt.base = base;
+		this.#sql.exec('UPDATE agent SET base = ?', base);
 	}
 
 	async #shell(fetch: Fetch, command: string) {
@@ -1460,11 +1505,27 @@ export class AttemptSandbox extends DurableObject<Env> {
 		return plaintext;
 	}
 
+	// The fork is pushed to only while a checkpoint is pushed; main stays readable so the agent can fetch it.
 	async #allowGit(target: { remote: string }, token: string, push: boolean) {
-		const remote = new URL(target.remote);
-		if (remote.protocol !== 'https:') return;
-		const proxy = this.ctx.exports.GitProxy({ props: { remote: target.remote, token, push } });
-		await this.ctx.container!.interceptOutboundHttps(remote.hostname, proxy);
+		if (new URL(target.remote).protocol !== 'https:') return;
+		const targets = [{ remote: target.remote, token, push }];
+		const main = await this.#mainAccess();
+		if (main) targets.push({ ...main, push: false });
+		for (const host of new Set(targets.map(({ remote }) => new URL(remote).hostname))) {
+			const proxy = this.ctx.exports.GitProxy({ props: { targets } });
+			await this.ctx.container!.interceptOutboundHttps(host, proxy);
+		}
+	}
+
+	async #mainAccess() {
+		const repo = this.#meta('repo');
+		if (!repo) return null;
+		if (this.#main && this.#main.expires - Date.now() > mainTokenRefreshMs) return this.#main;
+		using canonical = await this.env.ARTIFACTS.get(repo);
+		const { remote } = await canonical.info();
+		const { plaintext } = await canonical.createToken('read', mainTokenTtlS);
+		this.#main = { remote, token: plaintext, expires: Date.now() + mainTokenTtlS * 1000 };
+		return this.#main;
 	}
 
 	async #push(fork: Fork, token: string, push: () => Promise<unknown>) {
@@ -1684,6 +1745,8 @@ const governs: Record<string, string> = {
 		"This thread changes .agents/deploy, which runs with the repository's deploy secrets once this ships."
 };
 const maxCheckRounds = 3;
+// The workspace's remote for main's repository, beside origin, the thread's fork.
+const upstream = 'upstream';
 const evidenceTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 const gitAsReGit = `git -c core.hooksPath=/dev/null -c user.name='${author.name}' -c user.email=${author.email}`;

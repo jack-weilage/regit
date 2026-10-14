@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import type { ThreadDetail } from '@regit/core';
@@ -166,6 +167,90 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		conflicts: ['notes.md']
 	});
 	expect((await env.ATTEMPTS.getByName(clean).snapshot())!.status).toBe('finished');
+});
+
+test('fetches main for a conflict notice that arrives mid-turn so the agent can inspect it', async () => {
+	const { repo, sam, id } = await startedThread('midturn', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const go = join(dir, 'midturn-go');
+	await script('midturn', [
+		write(`while [ ! -f ${go} ]; do sleep 0.1; done`),
+		write('git rev-parse upstream/main'),
+		done('Looked at main.')
+	]);
+	await repo.reply(id, { author: sam, text: 'Keep going.' });
+	await untilThread(repo, id, (detail) => detail.summary.status === 'running');
+
+	const work = join(dir, 'midturn-work');
+	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
+	sh(work, 'push', '--quiet', join(dir, 'midturn.git'), 'main');
+	const main = sh(join(dir, 'midturn.git'), 'rev-parse', 'main');
+	await repo.landed({
+		repo: 'midturn',
+		ref: 'refs/heads/main',
+		after: main,
+		headline: 'Better notes'
+	});
+	expect((await repo.thread(id))!.summary.behind).toMatchObject({
+		sha: main,
+		conflicts: ['notes.md']
+	});
+	await writeFile(go, '');
+
+	await untilThread(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Looked at main.')
+	);
+	const requests = await modelRequests('midturn');
+	const notice = JSON.stringify(requests.at(-2)!.query);
+	expect(notice).toContain("that conflict with this thread's changes in notes.md");
+	expect(notice).toContain(
+		'See what landed with `git log HEAD..upstream/main` and `git diff HEAD...upstream/main -- notes.md`.'
+	);
+	expect(JSON.stringify(requests.at(-1)!.query)).toContain(main);
+	expect(sh(join(dir, `midturn--${id}.git`), 'rev-list', 'main')).not.toContain(main);
+});
+
+test('lets the agent fetch and merge main itself without counting main as its changes', async () => {
+	const { env, repo, sam, id } = await startedThread('self-merge', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const go = join(dir, 'self-merge-go');
+	await script('self-merge', [
+		write(`while [ ! -f ${go} ]; do sleep 0.1; done`),
+		write(
+			'git fetch upstream && git -c user.name=Sam -c user.email=sam@example.com merge --no-edit upstream/main'
+		),
+		done('Merged main.')
+	]);
+	await repo.reply(id, { author: sam, text: 'Pull in main.' });
+	await untilThread(repo, id, (detail) => detail.summary.status === 'running');
+	const work = join(dir, 'self-merge-work');
+	await commit(work, { 'other.md': 'Landed\n' }, 'Add other.md');
+	sh(work, 'push', '--quiet', join(dir, 'self-merge.git'), 'main');
+	const main = sh(join(dir, 'self-merge.git'), 'rev-parse', 'main');
+	await writeFile(go, '');
+
+	await untilThread(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' &&
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Merged main.')
+	);
+	const fork = join(dir, `self-merge--${id}.git`);
+	expect(sh(fork, 'rev-list', 'main')).toContain(main);
+	const attempt = env.ATTEMPTS.getByName(id);
+	expect((await attempt.changes())!.map(({ path }) => path)).toEqual(['notes.md']);
+	expect((await attempt.revision())!.base).toBe(main);
 });
 
 test('tells an idle thread about conflicts with main even without a push event', async () => {

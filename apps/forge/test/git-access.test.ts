@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { proxyGit, type GitAccess } from '../src/git-access.ts';
+import { proxyGit, proxyGitTargets, type GitAccess } from '../src/git-access.ts';
 
 const remote = 'https://account.artifacts.cloudflare.net/git/regit/greeting--thread-1.git';
 const access: GitAccess = { remote, token: 'fork-token', push: false };
@@ -45,6 +45,38 @@ describe('proxyGit', () => {
 			).status
 		).toBe(403);
 		expect(requests).toHaveLength(0);
+	});
+
+	test('reaches several repositories, each with its own token, pushing only where allowed', async () => {
+		const { fetch, requests } = upstream();
+		const main = remote.replace('greeting--thread-1', 'greeting');
+		const targets: GitAccess[] = [
+			{ ...access, push: true },
+			{ remote: main, token: 'main-token', push: false }
+		];
+		const read = await proxyGitTargets(
+			new Request(`${main}/info/refs?service=git-upload-pack`),
+			targets,
+			fetch
+		);
+		expect(read.status).toBe(200);
+		expect(requests[0]!.headers.get('authorization')).toBe('Bearer main-token');
+
+		const push = (repo: string) =>
+			proxyGitTargets(
+				new Request(`${repo}/git-receive-pack`, { method: 'POST', body: 'pack' }),
+				targets,
+				fetch
+			);
+		expect((await push(main)).status).toBe(403);
+		expect((await push(remote)).status).toBe(200);
+		expect(requests[1]!.headers.get('authorization')).toBe('Bearer fork-token');
+
+		const other = remote.replace('greeting--thread-1', 'greeting--thread-2');
+		expect((await proxyGitTargets(new Request(`${other}/info/refs`), targets, fetch)).status).toBe(
+			403
+		);
+		expect(requests).toHaveLength(2);
 	});
 
 	test('only lets pushes through while a checkpoint is being pushed', async () => {

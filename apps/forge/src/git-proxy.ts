@@ -1,8 +1,8 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import { proxyGit, type GitAccess } from './git-access.ts';
+import { proxyGitTargets, type GitAccess } from './git-access.ts';
 
-export class GitProxy extends WorkerEntrypoint<Env, GitAccess> {
+export class GitProxy extends WorkerEntrypoint<Env, { targets: GitAccess[] }> {
 	override fetch(request: Request) {
-		return proxyGit(request, this.ctx.props);
+		return proxyGitTargets(request, this.ctx.props.targets);
 	}
 }

@@ -1,20 +1,11 @@
 import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import { sandboxWorkspace, type Fetch } from '@regit/agent';
 import { defaultMachine, type Ship, type ShipStage } from '@regit/core';
-import { proxyGit, type GitAccess } from './git-access.ts';
+import { proxyGitTargets, type GitAccess } from './git-access.ts';
 
 export class PublisherGitProxy extends WorkerEntrypoint<Env, { targets: GitAccess[] }> {
 	override fetch(request: Request) {
-		const url = new URL(request.url);
-		const target = this.ctx.props.targets.find(({ remote }) => {
-			const repo = new URL(remote);
-			return (
-				url.host === repo.host &&
-				(url.pathname === repo.pathname || url.pathname.startsWith(`${repo.pathname}/`))
-			);
-		});
-		if (!target) return new Response('Repository is not authorized', { status: 403 });
-		return proxyGit(request, target);
+		return proxyGitTargets(request, this.ctx.props.targets);
 	}
 }
 

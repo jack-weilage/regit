@@ -146,7 +146,9 @@ export class MainSandbox extends DurableObject<Env> {
 		const container = this.ctx.container!;
 		const fetch: Fetch = (url, init) => container.getTcpPort(sandboxPort).fetch(url, init);
 		const { plaintext: token } = await canonical.createToken('read', 60 * 60);
-		const proxy = this.ctx.exports.GitProxy({ props: { remote, token, push: false } });
+		const proxy = this.ctx.exports.GitProxy({
+			props: { targets: [{ remote, token, push: false }] }
+		});
 		await container.interceptOutboundHttps(new URL(remote).hostname, proxy);
 		const image = container.images.sandbox!;
 		// A running container keeps the image it started with; checks and deploys use the one forge deployed last.

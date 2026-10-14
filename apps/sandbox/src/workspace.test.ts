@@ -161,6 +161,26 @@ fi
 		);
 	});
 
+	test('reports commits the agent made itself as a checkpoint until they are pushed', async () => {
+		await writeFile(join(root, 'merged.ts'), 'export {};\n');
+		await git(root, ['add', '.']);
+		await git(root, [
+			'-c',
+			'user.name=Sam',
+			'-c',
+			'user.email=sam@example.com',
+			'commit',
+			'-m',
+			'Merge upstream'
+		]);
+		const head = await git(root, ['rev-parse', 'HEAD']);
+		expect(await workspace.commit({ message: 'nothing new', author })).toBe(head);
+		expect(await git(root, ['rev-parse', 'HEAD'])).toBe(head);
+
+		await workspace.push({ ref: 'thread/merged' });
+		expect(await workspace.commit({ message: 'nothing new', author })).toBeNull();
+	});
+
 	test("commits and pushes without running the repository's git hooks", async () => {
 		for (const hook of ['pre-commit', 'pre-push']) {
 			await writeFile(join(root, '.git/hooks', hook), '#!/bin/sh\necho "hook ran"; exit 1\n');

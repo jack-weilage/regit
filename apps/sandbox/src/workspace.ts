@@ -105,7 +105,7 @@ export async function commit(root: string, { message, author }: CommitRequest) {
 		}
 	}
 	await git(root, ['add', '--all']);
-	if (!merging && !(await git(root, ['status', '--porcelain']))) return null;
+	if (!merging && !(await git(root, ['status', '--porcelain']))) return unpushed(root);
 	await git(root, [
 		'-c',
 		`user.name=${author.name}`,
@@ -116,6 +116,12 @@ export async function commit(root: string, { message, author }: CommitRequest) {
 		message
 	]);
 	return git(root, ['rev-parse', 'HEAD']);
+}
+
+// Commits the agent made itself, such as merging upstream, still need pushing when nothing is left to commit.
+async function unpushed(root: string) {
+	const ahead = await git(root, ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']);
+	return Number(ahead) ? git(root, ['rev-parse', 'HEAD']) : null;
 }
 
 export async function push(root: string, { ref, remote = 'origin', force }: PushRequest) {
