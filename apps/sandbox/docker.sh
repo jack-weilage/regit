@@ -1,11 +1,11 @@
 #!/bin/sh
-# Docker in a Cloudflare Container: the daemon starts on first use and can't manage iptables, so containers on
-# Docker's bridge network have no internet. Builds use the host network instead.
+# Docker in a Cloudflare Container: the daemon starts on first use and can't manage iptables or IP forwarding
+# (/proc/sys is read-only), so there is no bridge network. Builds use the host network instead.
 if ! /usr/bin/docker version >/dev/null 2>&1; then
 	exec 9>/run/regit-dockerd.lock
 	flock 9
 	if ! /usr/bin/docker version >/dev/null 2>&1; then
-		setsid dockerd --iptables=false --ip6tables=false >/var/log/dockerd.log 2>&1 9>&- &
+		setsid dockerd --iptables=false --ip6tables=false --ip-forward=false --bridge=none >/var/log/dockerd.log 2>&1 9>&- &
 		daemon=$!
 		tries=0
 		until /usr/bin/docker version >/dev/null 2>&1; do
