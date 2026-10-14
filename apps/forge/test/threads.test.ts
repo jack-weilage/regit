@@ -82,6 +82,23 @@ test('answers live connection pings', async () => {
 	socket!.close();
 });
 
+test('tells live clients the agent is idle even when the coordinator forgot its activity', async () => {
+	const { repo, id } = await startedThread('forgotten-activity', [
+		[{ type: 'response.output_text.delta', delta: 'Done.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const live: LiveMessage[] = [];
+	const { webSocket: socket } = await repo.fetch('https://repo/live', {
+		headers: { Upgrade: 'websocket' }
+	});
+	socket!.accept();
+	socket!.addEventListener('message', (event) => live.push(JSON.parse(String(event.data))));
+	await repo.attemptUpdated(id, { type: 'status', status: 'finished', error: null });
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	socket!.close();
+	expect(live).toContainEqual({ type: 'activity', thread: id, activity: null });
+});
+
 test('coordinates a thread from a request to recorded changes, live', async () => {
 	await seed('notes', { 'notes.md': 'Some notes\n' });
 	const propose = (name: string, headline: string) => [

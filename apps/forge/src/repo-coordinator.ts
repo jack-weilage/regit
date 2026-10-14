@@ -1696,7 +1696,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	#setActivity(thread: string, activity: ThreadActivity | null) {
 		const idle = !activity || (activity.agent.type === 'idle' && !activity.retry && !activity.ship);
-		if (idle && !this.#activities.has(thread)) return;
+		// Activity is kept in memory, which hibernation clears while clients stay connected, so idle is always sent.
 		if (idle) this.#activities.delete(thread);
 		else this.#activities.set(thread, activity);
 		this.#broadcast({ type: 'activity', thread, activity: idle ? null : activity });
