@@ -92,14 +92,23 @@ export interface StartupStage {
 	output?: string;
 }
 
+// What the thread's agent is doing right now: starting its sandbox, streaming a step, or between steps.
+export type AgentPhase =
+	| { type: 'idle' }
+	| { type: 'starting'; stages: StartupStage[] }
+	| { type: 'streaming'; text: string; calls: ToolCallRecord[] }
+	| { type: 'thinking'; label: string; since: number };
+
+export const idlePhase: AgentPhase = { type: 'idle' };
+
 export interface ThreadActivity {
-	startup: { cold: boolean; stages: StartupStage[] } | null;
-	status: { label: string; since: number } | null;
-	text: string;
-	calls: ToolCallRecord[];
-	retry?: Retry | null;
-	ship?: import('./ships.ts').ShipProgress;
+	agent: AgentPhase;
+	retry: Retry | null;
+	ship: import('./ships.ts').ShipProgress | null;
 }
+
+// What a thread's sandbox reports; the coordinator adds ship progress.
+export type AgentActivity = Omit<ThreadActivity, 'ship'>;
 
 export type Entry =
 	| {

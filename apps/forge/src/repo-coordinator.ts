@@ -19,6 +19,7 @@ import {
 	type Usage
 } from '@regit/agent';
 import type {
+	AgentActivity,
 	Author,
 	CheckResult,
 	CheckRun,
@@ -54,6 +55,7 @@ import type {
 import {
 	defaultMachine,
 	deploySecretName,
+	idlePhase,
 	maxDeploySecretBytes,
 	threadPurgeDelayMs
 } from '@regit/core';
@@ -70,7 +72,7 @@ export type AttemptUpdate =
 	| { type: 'step'; step: Step & { checkpoint?: string }; tools?: ToolCallRecord[] }
 	| { type: 'status'; status: AttemptStatus; error: string | null; failures?: RetryFailure[] }
 	| { type: 'recovered'; failures: RetryFailure[] }
-	| { type: 'activity'; activity: ThreadActivity }
+	| { type: 'activity'; activity: AgentActivity }
 	| { type: 'startup'; stages: StartupStage[] }
 	| { type: 'read'; entries: string[] }
 	| { type: 'changes'; tree: string | null; summary: DiffSummary; paths: string[] }
@@ -868,19 +870,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return this.#activities.get(thread)?.ship?.retry?.failures ?? [];
 	}
 
-	#setShipProgress(thread: string, ship: ShipProgress | undefined) {
-		const activity = this.#activities.get(thread);
-		this.#setActivity(
-			thread,
-			activity ? { ...activity, ship } : { startup: null, status: null, text: '', calls: [], ship }
-		);
+	#setShipProgress(thread: string, ship: ShipProgress | null) {
+		const activity = this.#activities.get(thread) ?? { agent: idlePhase, retry: null };
+		this.#setActivity(thread, { ...activity, ship });
 	}
 
 	async shipped(ship: Ship, { sha, branch }: { sha: string; branch: string }) {
 		if (!this.#takeShip(ship)) return;
 		const failures = this.#shipFailures(ship.thread);
 		if (failures.length) this.#add(ship.thread, { type: 'recovered', failures });
-		this.#setShipProgress(ship.thread, undefined);
+		this.#setShipProgress(ship.thread, null);
 		this.#setMeta('branch', branch);
 		await this.#agent(ship.thread).published({ sha, branch, from: ship.source.sha });
 		this.#sql.exec(
@@ -908,7 +907,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async shipFailed(ship: Ship, message: string) {
 		if (!this.#takeShip(ship)) return;
 		const failures = this.#shipFailures(ship.thread);
-		this.#setShipProgress(ship.thread, undefined);
+		this.#setShipProgress(ship.thread, null);
 		const summary = this.#summary(ship.thread)!;
 		const fixable = message.startsWith('Ship conflicts with ');
 		if (fixable && ship.handBacks < maxHandBacks && !summary.deleted)
@@ -941,7 +940,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	#stopShipping(thread: string, reason: string, failures: RetryFailure[] = []) {
 		this.#sql.exec('DELETE FROM meta WHERE key = ?', `ship:${thread}`);
-		this.#setShipProgress(thread, undefined);
+		this.#setShipProgress(thread, null);
 		this.#setStatus(thread, 'needs-you');
 		this.#fail(thread, { title: 'Shipping stopped', error: reason, failures }, false);
 	}
@@ -1496,7 +1495,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			return;
 		}
 		if (update.type === 'activity') {
-			this.#setActivity(thread, update.activity);
+			this.#setActivity(thread, {
+				...update.activity,
+				ship: this.#activities.get(thread)?.ship ?? null
+			});
 			return;
 		}
 		if (update.type === 'startup') {
@@ -1521,7 +1523,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			}
 			if (update.tools?.length) this.#add(thread, { type: 'tools', calls: update.tools });
 			const activity = this.#activities.get(thread);
-			if (activity) this.#setActivity(thread, { ...activity, text: '', calls: [] });
+			if (activity?.agent.type === 'streaming')
+				this.#setActivity(thread, { ...activity, agent: idlePhase });
 			if (update.step.checkpoint) {
 				this.#add(thread, {
 					type: 'event',
@@ -1648,14 +1651,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	#setActivity(thread: string, activity: ThreadActivity | null) {
-		const idle =
-			!activity ||
-			(!activity.startup &&
-				!activity.status &&
-				!activity.text &&
-				!activity.calls.length &&
-				!activity.retry &&
-				!activity.ship);
+		const idle = !activity || (activity.agent.type === 'idle' && !activity.retry && !activity.ship);
 		if (idle && !this.#activities.has(thread)) return;
 		if (idle) this.#activities.delete(thread);
 		else this.#activities.set(thread, activity);

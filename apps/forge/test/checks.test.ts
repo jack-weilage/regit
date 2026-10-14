@@ -117,7 +117,10 @@ test('stopping the agent cancels running handoff checks and starts no further tu
 `
 		}
 	);
-	await untilThread(repo, id, (detail) => detail.activity?.status?.label === 'Running checks');
+	await untilThread(repo, id, (detail) => {
+		const agent = detail.activity?.agent;
+		return agent?.type === 'thinking' && agent.label === 'Running checks';
+	});
 	const started = Date.now();
 	await repo.stop(id, sam);
 	const stopped = await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');

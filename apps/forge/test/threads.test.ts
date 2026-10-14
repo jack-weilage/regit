@@ -194,10 +194,15 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 	const activity = live.flatMap((message) =>
 		message.type === 'activity' && message.thread === opened.id ? [message.activity] : []
 	);
-	expect(activity.some((update) => update?.status?.label === 'Thinking')).toBe(true);
+	const phases = activity.flatMap((update) => (update ? [update.agent] : []));
+	expect(phases.some((agent) => agent.type === 'thinking' && agent.label === 'Thinking')).toBe(
+		true
+	);
 	expect(
-		activity.some((update) =>
-			update?.calls.some((call) => call.tool === 'write_file' && call.status === 'running')
+		phases.some(
+			(agent) =>
+				agent.type === 'streaming' &&
+				agent.calls.some((call) => call.tool === 'write_file' && call.status === 'running')
 		)
 	).toBe(true);
 	expect(activity.at(-1)).toBeNull();

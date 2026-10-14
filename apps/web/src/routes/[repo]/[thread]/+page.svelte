@@ -33,6 +33,7 @@
 		type ThreadAction
 	} from '@regit/ui';
 	import {
+		idlePhase,
 		threadPurgeDelayMs,
 		type Author,
 		type Entry,
@@ -129,6 +130,8 @@
 
 	let detail = $derived(await getThread({ repo: params.repo, id: params.thread }));
 	let activity = $derived(params.thread in live ? live[params.thread] : (detail?.activity ?? null));
+	let phase = $derived(activity?.agent ?? idlePhase);
+	let retry = $derived(activity?.retry ?? null);
 	let user = $derived(await getUser());
 	let threads = $derived(await getThreads(params.repo));
 
@@ -375,24 +378,23 @@
 						onship={(commit) => shipThread({ ...ref, ...commit })}
 					/>
 				{/if}
-				{#if activity?.startup}
-					<ChatStartup stages={activity.startup.stages} />
-				{/if}
-				{#if activity && (activity.text || activity.calls.length)}
+				{#if phase.type === 'starting'}
+					<ChatStartup stages={phase.stages} />
+				{:else if phase.type === 'streaming'}
 					<ChatGroup author={agent}>
-						{#if activity.text}
-							<ChatMessage><Markdown source={activity.text} /></ChatMessage>
+						{#if phase.text}
+							<ChatMessage><Markdown source={phase.text} /></ChatMessage>
 						{/if}
-						{#if activity.calls.length}
-							<ChatTools calls={activity.calls.map(toolView)} />
+						{#if phase.calls.length}
+							<ChatTools calls={phase.calls.map(toolView)} />
 						{/if}
 					</ChatGroup>
 				{/if}
-				{#if activity?.retry}
-					<ChatRetry retry={activity.retry} onretrynow={() => retryThreadNow(ref)} />
+				{#if retry}
+					<ChatRetry {retry} onretrynow={() => retryThreadNow(ref)} />
 				{/if}
-				{#if activity?.status && !activity.startup}
-					<ChatActivity since={activity.status.since}>{activity.status.label}</ChatActivity>
+				{#if phase.type === 'thinking'}
+					<ChatActivity since={phase.since}>{phase.label}</ChatActivity>
 				{:else if !activity && summary.status === 'running'}
 					<ChatActivity>ReGit is working</ChatActivity>
 				{/if}

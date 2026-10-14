@@ -14,7 +14,9 @@ import {
 	type Retry,
 	type RetryFailure,
 	type StartupStage,
-	type ThreadActivity,
+	type AgentActivity,
+	type ToolCallRecord,
+	idlePhase,
 	type ThreadOverlap,
 	type ThreadSummary,
 	type CheckResult
@@ -153,7 +155,7 @@ const outcomes: Record<AgentOutcome, AttemptStatus> = {
 export class AttemptSandbox extends DurableObject<Env> {
 	#sql = this.ctx.storage.sql;
 	#controller?: AbortController;
-	#activity: ThreadActivity = idle();
+	#activity: AgentWork = idle();
 	#published = 0;
 	#publishing?: ReturnType<typeof setTimeout>;
 	#capturing = false;
@@ -1221,7 +1223,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		this.#published = Date.now();
 		const repo = this.#meta('repo');
 		if (!repo) return;
-		void this.#report(repo, { type: 'activity', activity: structuredClone(this.#activity) });
+		void this.#report(repo, {
+			type: 'activity',
+			activity: structuredClone(published(this.#activity))
+		});
 	}
 
 	async #previewHost(repo: string) {
@@ -1643,8 +1648,29 @@ const evidenceTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 const gitAsReGit = `git -c core.hooksPath=/dev/null -c user.name='${author.name}' -c user.email=${author.email}`;
 
-function idle(): ThreadActivity {
+// The agent's activity as the turn changes it. A status outlasts sandbox startup, so it's kept apart from the
+// published phase, which shows one of them at a time.
+interface AgentWork {
+	startup: { cold: boolean; stages: StartupStage[] } | null;
+	status: { label: string; since: number } | null;
+	text: string;
+	calls: ToolCallRecord[];
+	retry: Retry | null;
+}
+
+function idle(): AgentWork {
 	return { startup: null, status: null, text: '', calls: [], retry: null };
+}
+
+function published({ startup, status, text, calls, retry }: AgentWork): AgentActivity {
+	const agent = startup
+		? { type: 'starting' as const, stages: startup.stages }
+		: text || calls.length
+			? { type: 'streaming' as const, text, calls }
+			: status
+				? { type: 'thinking' as const, ...status }
+				: idlePhase;
+	return { agent, retry };
 }
 
 function failureLabel(error: unknown) {
