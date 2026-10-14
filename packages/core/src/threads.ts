@@ -1,3 +1,4 @@
+import type { Automation } from './automations.ts';
 import type { DiffFile, DiffSummary } from './diff.ts';
 import type { DeploySecret, MainStatus, Verdict } from './main.ts';
 import type { Failure, Retry, RetryFailure } from './retries.ts';
@@ -155,6 +156,19 @@ export type Entry =
 			headline: string;
 			text: string;
 			steering?: { read: boolean };
+	  }
+	// A message one of this thread's automations delivered to it.
+	| {
+			type: 'automation';
+			id: string;
+			at: number;
+			automation: string;
+			name: string;
+			trigger: string;
+			text: string;
+			run: number;
+			limit: number;
+			steering?: { read: boolean };
 	  };
 
 export function countCheckpoints(entries: Entry[]) {
@@ -227,6 +241,7 @@ export interface ThreadDetail {
 	entries: Entry[];
 	usage: ThreadUsage;
 	services: ThreadService[];
+	automations: Automation[];
 	activity: ThreadActivity | null;
 }
 
@@ -262,6 +277,8 @@ export interface RepoCoordinatorApi {
 	serviceLogs(thread: string, name: string): Promise<string>;
 	assess(text: string): Promise<{ similar: SimilarMatch[]; size: Mode }>;
 	forwardIntent(thread: string, to: string, by: Author): Promise<string>;
+	automations(thread: string): Automation[];
+	cancelAutomation(thread: string, id: string, by: Author): Promise<Automation>;
 	threads(): ThreadSummary[];
 	resolveThread(ref: string): Pick<ThreadSummary, 'id' | 'number'> | null;
 	thread(id: string): Promise<ThreadDetail | null>;

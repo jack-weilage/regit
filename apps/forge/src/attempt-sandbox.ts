@@ -27,6 +27,7 @@ import {
 	askThreads,
 	askThreadsTools,
 	askVerdict,
+	automationTools,
 	checksNotice,
 	dueChecks,
 	runChecks,
@@ -520,6 +521,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 						list: () => this.env.REPOS.getByName(attempt.repo).otherThreads(this.#thread()),
 						send: (to, text) =>
 							this.env.REPOS.getByName(attempt.repo).messageThread(this.#thread(), to, text)
+					}),
+					automationTools({
+						create: (spec) =>
+							this.env.REPOS.getByName(attempt.repo).createAutomation(this.#thread(), spec),
+						list: () => this.env.REPOS.getByName(attempt.repo).automations(this.#thread()),
+						cancel: (id) =>
+							this.env.REPOS.getByName(attempt.repo).cancelAutomation(this.#thread(), id, {
+								name: 'ReGit',
+								kind: 'agent'
+							})
 					}),
 					askThreadsTools((question) => this.#askThreads(attempt.repo, question))
 				),

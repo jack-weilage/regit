@@ -1,7 +1,9 @@
 <script lang="ts">
 	import {
+		AutomationsPanel,
 		ChangesPanel,
 		ChatActivity,
+		ChatAutomation,
 		ChatBanner,
 		ChatBehindMain,
 		ChatComposer,
@@ -47,6 +49,7 @@
 	import { similarThreads } from '#lib/similar.ts';
 	import {
 		bringThreadUpToDate,
+		cancelAutomation,
 		shipThread,
 		deleteThread,
 		discardThread,
@@ -170,6 +173,17 @@
 			failure = error instanceof Error ? error.message : String(error);
 		} finally {
 			busy = null;
+		}
+	}
+
+	let cancelling = $state<string | null>(null);
+
+	async function cancel(automation: string) {
+		cancelling = automation;
+		try {
+			await cancelAutomation({ ...ref, automation });
+		} finally {
+			cancelling = null;
 		}
 	}
 
@@ -369,6 +383,17 @@
 							>
 								<ChatMessage><Markdown source={block.text} /></ChatMessage>
 							</ChatThreadMessage>
+						{:else if block.type === 'automation'}
+							<ChatAutomation
+								name={block.name}
+								trigger={block.trigger}
+								run={block.run}
+								limit={block.limit}
+								time={new Date(block.at)}
+								pending={block.steering?.read === false}
+							>
+								<ChatMessage><Markdown source={block.text} /></ChatMessage>
+							</ChatAutomation>
 						{:else if block.type === 'event'}
 							<ChatEvent time={new Date(block.at)} tone={block.tone}>{block.text}</ChatEvent>
 						{/if}
@@ -428,6 +453,16 @@
 						{/snippet}
 					</ChatBanner>
 				{:else}
+					{#if detail.automations.some((automation) => !automation.ended)}
+						<ErrorBoundary title="Couldn't show automations" resetOn={params.thread}>
+							<AutomationsPanel
+								automations={detail.automations}
+								compact
+								busy={cancelling}
+								oncancel={cancel}
+							/>
+						</ErrorBoundary>
+					{/if}
 					<ChatComposer
 						working={summary.status === 'running'}
 						onstop={() => stopThread(ref)}

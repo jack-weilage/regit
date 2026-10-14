@@ -196,6 +196,14 @@ export const serviceAction = command(
 	}
 );
 
+export const cancelAutomation = command(
+	v.object({ ...thread.entries, automation: v.pipe(v.string(), v.regex(/^[0-9a-f-]{1,36}$/)) }),
+	async ({ repo, id, automation }) => {
+		await (await coordinator(repo, 'editor')).cancelAutomation(id, automation, author());
+		getThread({ repo, id }).refresh();
+	}
+);
+
 export const readServiceLogs = command(service, async ({ repo, id, name }) =>
 	(await coordinator(repo)).serviceLogs(id, name)
 );

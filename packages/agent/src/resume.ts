@@ -6,6 +6,8 @@ const external = new Set([
 	'record_done_when',
 	'launch_thread',
 	'message_thread',
+	'create_automation',
+	'cancel_automation',
 	'ask_threads'
 ]);
 

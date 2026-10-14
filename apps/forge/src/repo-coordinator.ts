@@ -44,6 +44,7 @@ import type {
 	StartupStage,
 	ThreadActivity,
 	ThreadDetail,
+	ThreadEvent,
 	ThreadOverlap,
 	ThreadService,
 	ThreadStatus,
@@ -57,14 +58,17 @@ import type {
 import {
 	defaultMachine,
 	deploySecretName,
+	describeTrigger,
 	idlePhase,
 	maxDeploySecretBytes,
+	normalizeAutomation,
 	threadPurgeDelayMs
 } from '@regit/core';
 import { canAccessRepository } from '@regit/db';
 import { db } from './db.ts';
 import { retrying, RetriesExhausted } from './retrying.ts';
 import { Images } from './images.ts';
+import { Automations, type DueAutomation } from './automations.ts';
 import { initializeThreadNumbers } from './thread-numbers.ts';
 import type { AttemptStatus } from './attempt-sandbox.ts';
 import type { Landing } from './landing.ts';
@@ -133,6 +137,13 @@ const shipSteps: Record<ShipProgress['stage'], string> = {
 const maxThreadMessages = 5;
 const maxHandBacks = 3;
 const maxFixes = 1;
+const verdictNotes: Record<ThreadEvent, string> = {
+	shipped: 'landed on main',
+	passed: "passed main's checks",
+	failed: "failed main's checks",
+	deployed: 'deployed',
+	reverted: 'was reverted'
+};
 const emptyMain: MainStatus = {
 	branch: null,
 	verifying: null,
@@ -155,7 +166,9 @@ const pastTense: Record<string, string> = {
 	search: 'Searched for',
 	run: 'Ran',
 	ask_threads: 'Asked about threads:',
-	message_thread: 'Messaged thread'
+	message_thread: 'Messaged thread',
+	create_automation: 'Set up automation',
+	cancel_automation: 'Cancelled automation'
 };
 
 function historyLines(entries: Entry[]) {
@@ -167,6 +180,7 @@ function historyLines(entries: Entry[]) {
 				return [`${way} thread ${entry.thread} (${entry.headline || 'New thread'}): ${entry.text}`];
 			}
 			if (entry.type === 'event') return [`· ${entry.text}`];
+			if (entry.type === 'automation') return [`Automation "${entry.name}": ${entry.text}`];
 			if (entry.type === 'failure') return [`· ${entry.title}: ${entry.error}`];
 			if (entry.type === 'intent')
 				return [`Intent: ${entry.intent.headline} — ${entry.intent.purpose}`];
@@ -219,6 +233,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	#sql = this.ctx.storage.sql;
 	#activities = new Map<string, ThreadActivity>();
 	#images = new Images(this.#sql);
+	#automations = new Automations(this.#sql);
 	#overlapChecks: Promise<void> = Promise.resolve();
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -365,6 +380,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
 		this.#add(thread, { type: 'event', text: `Discarded by ${by.name}` });
 		this.#setStatus(thread, 'discarded');
+		this.#automations.endThread(thread, Date.now());
 		this.#checkOverlaps(thread);
 		await this.#agent(thread).cancel();
 	}
@@ -394,8 +410,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			by.name,
 			thread
 		);
+		this.#automations.endThread(thread, Date.now());
 		this.#touch(thread);
-		await this.#schedulePurge();
+		await this.#scheduleAlarm();
 		this.#checkOverlaps(thread);
 		await this.#agent(thread).cancel();
 	}
@@ -454,11 +471,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		for (const { id } of due) {
 			await this.#agent(id).destroy();
 			this.#images.purge(id);
+			this.#automations.purge(id);
 			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM usage WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM threads WHERE id = ?', id);
 		}
-		await this.#schedulePurge();
+		await this.#runAutomations();
+		await this.#scheduleAlarm();
 	}
 
 	saveImage(thread: string, dataUrl: string) {
@@ -481,6 +500,35 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return this.threads()
 			.filter((thread) => thread.id !== from && thread.status !== 'discarded')
 			.map(({ id, number, headline, status }) => ({ id, number, headline, status }));
+	}
+
+	async createAutomation(thread: string, spec: unknown) {
+		const summary = this.#active(thread);
+		if (summary.status === 'discarded') throw new Error('This thread is discarded');
+		const now = Date.now();
+		const automation = this.#automations.create(thread, normalizeAutomation(spec, now), now);
+		this.#touch(thread);
+		await this.#scheduleAlarm();
+		return automation;
+	}
+
+	automations(thread: string) {
+		this.#require(thread);
+		return this.#automations.list(thread);
+	}
+
+	async cancelAutomation(thread: string, id: string, by: Author) {
+		this.#require(thread);
+		const was = this.#automations.get(thread, id);
+		const automation = this.#automations.cancel(thread, id, by.name, Date.now());
+		if (was && !was.ended && by.kind === 'person')
+			this.#add(thread, {
+				type: 'event',
+				text: `${by.name} cancelled the automation "${automation.name}"`
+			});
+		this.#touch(thread);
+		await this.#scheduleAlarm();
+		return automation;
 	}
 
 	async messageThread(from: string, to: string, text: string) {
@@ -632,6 +680,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				entries: [],
 				usage: this.#usage(id, summary.mode, []),
 				services: [],
+				automations: [],
 				activity: null
 			};
 		}
@@ -652,6 +701,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			}),
 			usage: this.#usage(id, summary.mode),
 			services: this.#services(id),
+			automations: this.#automations.list(id),
 			activity: this.#activities.get(id) ?? null
 		};
 	}
@@ -937,6 +987,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			});
 		this.#setStatus(ship.thread, 'shipped');
 		this.#add(ship.thread, { type: 'event', text: `Shipped ${sha.slice(0, 7)} to ${branch}` });
+		this.#threadEvent(ship.thread, 'landed');
 		this.#checkOverlaps(ship.thread);
 		await this.#verify({ sha, headline: title, thread: ship.thread });
 	}
@@ -1214,6 +1265,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const was = this.#summary(thread)?.shipped?.verdict;
 		if (!was || was === verdict || (from && !from.includes(was))) return;
 		this.#sql.exec('UPDATE threads SET verdict = ? WHERE id = ?', verdict, thread);
+		this.#threadEvent(thread, verdict);
 		this.#touch(thread);
 	}
 
@@ -1710,7 +1762,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.toArray();
 		if (!row) return;
 		const entry = JSON.parse(row.body) as Entry;
-		if (entry.type !== 'message' && entry.type !== 'thread-message') return;
+		if (entry.type !== 'message' && entry.type !== 'thread-message' && entry.type !== 'automation')
+			return;
 		if (!entry.steering || entry.steering.read) return;
 		const read = { ...entry, steering: { read: true } };
 		this.#sql.exec('UPDATE entries SET body = ? WHERE seq = ?', JSON.stringify(read), seq);
@@ -1894,13 +1947,69 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return summary;
 	}
 
-	async #schedulePurge() {
+	#threadEvent(thread: string, verdict: Verdict) {
+		const event = verdict === 'landed' ? 'shipped' : verdict;
+		const sha = this.#summary(thread)?.shipped?.sha;
+		const note = `${sha ? sha.slice(0, 7) : 'What it shipped'} ${verdictNotes[event]}`;
+		if (this.#automations.event(thread, event, note, Date.now())) void this.#scheduleAlarm();
+	}
+
+	async #runAutomations() {
+		const now = Date.now();
+		for (const automation of this.#automations.due(now)) {
+			if (automation.nextAt === null || automation.nextAt > now) {
+				this.#automations.expire(automation.id, now);
+				if (this.#summary(automation.thread)) this.#touch(automation.thread);
+				continue;
+			}
+			await this.#fireAutomation(automation, now);
+		}
+	}
+
+	async #fireAutomation(automation: DueAutomation, now: number) {
+		const { thread } = automation;
+		const summary = this.#summary(thread);
+		if (!summary || summary.deleted || summary.status === 'discarded')
+			return this.#automations.endThread(thread, now);
+		const pending = automation.pendingEntry && this.#entry(thread, automation.pendingEntry);
+		if (pending && pending.type === 'automation' && pending.steering?.read === false) {
+			this.#automations.skipped(automation, now);
+			return this.#touch(thread);
+		}
+		const run = automation.runs.done + 1;
+		const trigger = describeTrigger(automation.on, automation.delayMs);
+		const steering = summary.status === 'running';
+		const entry = this.#add(thread, {
+			type: 'automation',
+			automation: automation.id,
+			name: automation.name,
+			trigger,
+			text: automation.message,
+			run,
+			limit: automation.runs.limit,
+			...(steering && { steering: { read: false } })
+		});
+		this.#automations.ran(automation, entry, now);
+		this.#touch(thread);
+		if (['needs-you', 'shipped'].includes(summary.status)) this.#setStatus(thread, 'running');
+		const why = `${trigger}${automation.note ? `: ${automation.note}` : ''}; run ${run} of ${automation.runs.limit}`;
+		const author = { name: `Automation "${automation.name}"`, kind: 'agent' as const };
+		const text = `(${why}; you set this automation up in this thread) ${automation.message}`;
+		// An unreachable agent is recorded on the thread; the other automations still run.
+		await this.#converse(thread, author, text, entry).catch(() => {});
+	}
+
+	// One alarm serves both purging deleted threads and running automations, whichever is due first.
+	async #scheduleAlarm() {
 		const [next] = this.#sql
 			.exec<{ at: number | null }>(
 				'SELECT MIN(deleted_at) AS at FROM threads WHERE deleted_at IS NOT NULL'
 			)
 			.toArray();
-		if (next?.at) await this.ctx.storage.setAlarm(next.at + threadPurgeDelayMs);
+		const times = [next?.at ? next.at + threadPurgeDelayMs : null, this.#automations.next()].filter(
+			(at): at is number => at !== null
+		);
+		if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
 		else await this.ctx.storage.deleteAlarm();
 	}
 

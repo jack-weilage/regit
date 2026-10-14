@@ -1,5 +1,5 @@
 import type { DiffFile, DiffHunk, Mentionable, SimilarThread } from './types.ts';
-import type { Intent } from '@regit/core';
+import type { Automation, Intent } from '@regit/core';
 
 export const intent: Intent = {
 	headline: 'perf(settings): load members lazily',
@@ -226,5 +226,77 @@ export const unusualDiffFiles: DiffFile[] = [
 		additions: 0,
 		deletions: 2,
 		hunks: [hunk(0, [1, 0], ['- # Settings', '- Loads every member up front.'])]
+	}
+];
+
+const minute = 60_000;
+const hour = 60 * minute;
+const day = 24 * hour;
+
+// A fixed moment, so stories render the same relative times.
+export const automationsNow = Date.parse('2026-10-14T10:00:00Z');
+
+export const automations: Automation[] = [
+	{
+		id: 'a1b2c3d4',
+		thread: 't1',
+		name: 'post-deploy-check',
+		on: { event: 'deployed' },
+		delayMs: 15 * minute,
+		message: 'Check error rates and how long the settings page takes to load against the deploy.',
+		runs: { done: 0, limit: 1 },
+		createdAt: automationsNow - hour,
+		expiresAt: automationsNow + 30 * day - hour,
+		nextAt: null,
+		lastRunAt: null,
+		ended: null
+	},
+	{
+		id: 'e5f6a7b8',
+		thread: 't1',
+		name: 'flaky-e2e',
+		on: { schedule: '0 9 * * 1-5', timezone: 'Europe/Berlin' },
+		delayMs: 0,
+		message: 'Re-run the e2e suite on main and report whether login.spec is still flaky.',
+		runs: { done: 2, limit: 5 },
+		createdAt: automationsNow - 2 * day,
+		expiresAt: automationsNow + 12 * day,
+		nextAt: automationsNow + 21 * hour,
+		lastRunAt: automationsNow - 3 * hour,
+		ended: null
+	},
+	{
+		id: 'c9d0e1f2',
+		thread: 't1',
+		name: 'flag-cleanup',
+		on: { after: '3d' },
+		delayMs: 0,
+		message: 'Remove the lazy-members feature flag if nobody reported problems.',
+		runs: { done: 0, limit: 1 },
+		createdAt: automationsNow - day,
+		expiresAt: automationsNow + 29 * day,
+		nextAt: automationsNow + 2 * day,
+		lastRunAt: null,
+		ended: null
+	}
+];
+
+export const endedAutomations: Automation[] = [
+	{
+		...automations[0]!,
+		id: 'f3a4b5c6',
+		name: 'ship-check',
+		on: { event: 'shipped' },
+		delayMs: 0,
+		runs: { done: 1, limit: 1 },
+		ended: { at: automationsNow - 5 * hour, reason: 'runs' }
+	},
+	{
+		...automations[2]!,
+		id: 'd7e8f9a0',
+		name: 'nightly-bench',
+		on: { schedule: '0 2 * * *' },
+		runs: { done: 0, limit: 50 },
+		ended: { at: automationsNow - 2 * hour, reason: 'cancelled', by: 'Sam Rivera' }
 	}
 ];

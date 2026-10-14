@@ -12,6 +12,8 @@ const targets: Record<string, string> = {
 	update_intent: 'headline',
 	launch_thread: 'headline',
 	message_thread: 'thread',
+	create_automation: 'name',
+	cancel_automation: 'id',
 	ask_threads: 'question',
 	load_skill: 'name'
 };

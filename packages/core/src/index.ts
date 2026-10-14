@@ -3,6 +3,7 @@ export * from './threads.ts';
 export * from './ships.ts';
 export * from './main.ts';
 export * from './retries.ts';
+export * from './automations.ts';
 
 export const repoNamePattern = /^(?!.*--)[A-Za-z0-9._-]+$/;
 export const repoNameRule =

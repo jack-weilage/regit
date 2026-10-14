@@ -5,6 +5,7 @@ export { intentTools, type DoneWhenReport, type Intent } from './intent.ts';
 export { parseDiff } from './diff.ts';
 export { launchTools, type Suggestion } from './launch.ts';
 export { threadTools } from './threads.ts';
+export { automationTools, describeAutomation, type AutomationControl } from './automations.ts';
 export {
 	assessRequest,
 	maxSimilarCandidates,
