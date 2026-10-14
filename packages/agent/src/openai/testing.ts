@@ -1,4 +1,4 @@
-import type { Gateway, GatewayRequest } from './gateway.ts';
+export { fakeGateway } from '../testing.ts';
 
 export const completed = {
 	type: 'response.completed',
@@ -15,17 +15,4 @@ export function eventStream(events: object[]) {
 	return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
 		headers: { 'Content-Type': 'text/event-stream' }
 	});
-}
-
-export function fakeGateway(...responses: Response[]) {
-	const requests: GatewayRequest[] = [];
-	const gateway: Gateway = {
-		async run(request) {
-			requests.push(request);
-			const response = responses.shift();
-			if (!response) throw new Error('The fake gateway ran out of responses');
-			return response;
-		}
-	};
-	return { gateway, requests };
 }

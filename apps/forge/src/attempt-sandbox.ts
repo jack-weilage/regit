@@ -51,6 +51,7 @@ import {
 	repositoryGuidance,
 	withSkills,
 	intentTools,
+	modelClient,
 	modes,
 	openaiModel,
 	parseDiff,
@@ -69,6 +70,7 @@ import {
 	type ServiceInfo,
 	type Skill,
 	type Mode,
+	type ModelChoice,
 	type Step,
 	type ToolExecutor,
 	type ToolName,
@@ -146,6 +148,14 @@ const turnRetries: RetryPolicy = { limit: 5, baseMs: 15_000, maxMs: 5 * 60 * 100
 const pushRetries: RetryPolicy = { limit: 4, baseMs: 1000, maxMs: 8000 };
 const reportRetries: RetryPolicy = { limit: 3, baseMs: 250, maxMs: 2000 };
 
+// The models modes had before threads pinned theirs.
+// TODO: drop once threads started before 2026-10-14 have all settled
+const unpinned: Record<Mode, ModelChoice> = {
+	small: { model: 'gpt-6-luna', effort: 'medium' },
+	medium: { model: 'gpt-6.1-sol', effort: 'medium' },
+	large: { model: 'gpt-6.1-sol', effort: 'high' }
+};
+
 const outcomes: Record<AgentOutcome, AttemptStatus> = {
 	finished: 'finished',
 	'step-limit': 'stopped',
@@ -216,6 +226,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				mode,
 				repo
 			);
+			this.#setMeta('model', JSON.stringify(modes[mode]));
 			if (context) {
 				const seed = `This thread was spun off from another one. What it found:\n\n${context}`;
 				this.#saveStep({ turns: [{ role: 'user', text: seed }] });
@@ -461,7 +472,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 				return await this.#finish(attempt, 'finished');
 			}
 			const workspace = sandboxWorkspace(fetch);
-			const { model, effort } = modes[attempt.mode];
+			const { model, effort } = this.#model(attempt.mode);
 			const skills = await this.#skills(fetch, [
 				threadsSkill,
 				servicesSkill,
@@ -471,7 +482,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			]);
 			const guidance = await repositoryGuidance(this.#tools(fetch));
 			const run = runAttempt({
-				model: openaiModel({
+				model: modelClient({
 					resolveImage: (url) => this.#resolveImage(attempt.repo, url),
 					gateway: { run: (request) => this.env.MODELS.run(request) },
 					model,
@@ -544,14 +555,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 						this.#think('Compacting the context');
 				} else if (event.type === 'reply') {
 					const { reply, usage } = event;
-					// A resumed step keeps the model that produced its reply, which a mode change since may have replaced.
-					const replied = this.#inflight()?.model ?? model;
-					this.#setMeta('inflight', JSON.stringify({ reply, usage, model: replied, results: [] }));
+					this.#setMeta('inflight', JSON.stringify({ reply, usage, results: [] }));
 				} else if (event.type !== 'step') {
 					if (event.type === 'result') this.#keepResult(event.result);
 					this.#stream(step, event);
 				} else {
-					const stepModel = this.#inflight()?.model ?? model;
 					this.#sql.exec("DELETE FROM meta WHERE key = 'inflight'");
 					this.#saveStep(event);
 					await this.#recovered(attempt.repo);
@@ -559,7 +567,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 					await this.#report(attempt.repo, {
 						type: 'step',
 						step: event,
-						model: stepModel,
+						model,
 						tools: controller.signal.aborted ? [] : tools
 					});
 					this.#stepped(event.turns);
@@ -1169,8 +1177,16 @@ export class AttemptSandbox extends DurableObject<Env> {
 	}
 
 	#inflight() {
-		return JSON.parse(this.#meta('inflight') ?? 'null') as
-			(InflightStep & { model?: string }) | null;
+		return JSON.parse(this.#meta('inflight') ?? 'null') as InflightStep | null;
+	}
+
+	// A thread keeps the model it started with, so its history always replays to the model that wrote it.
+	#model(mode: Mode): ModelChoice {
+		const pinned = this.#meta('model');
+		if (pinned) return JSON.parse(pinned) as ModelChoice;
+		const choice = unpinned[mode];
+		this.#setMeta('model', JSON.stringify(choice));
+		return choice;
 	}
 
 	#keepResult(result: ToolResult) {

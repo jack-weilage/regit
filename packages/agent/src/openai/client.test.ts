@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ModelEvent, ModelRequest } from '../types.ts';
-import { ModelError, openaiModel } from './client.ts';
+import { openaiModel } from './client.ts';
+import { ModelError } from '../model-error.ts';
 import { completed, eventStream, fakeGateway } from './testing.ts';
 import { runAgent } from '../loop.ts';
 import { isTransient } from '../transient.ts';
