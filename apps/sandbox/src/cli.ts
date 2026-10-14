@@ -68,7 +68,7 @@ export async function services(
 			const { service } = await call<{ service: ServiceInfo }>('start', {
 				name,
 				port,
-				command: line.join(' '),
+				command: line.length === 1 ? line[0]! : line.map(quote).join(' '),
 				...(flag('cwd') && { cwd: flag('cwd') })
 			});
 			return { code: 0, output: describe(service) };
@@ -86,4 +86,8 @@ export async function services(
 	} catch (cause) {
 		return { code: 1, output: cause instanceof Error ? cause.message : String(cause) };
 	}
+}
+
+function quote(arg: string) {
+	return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`;
 }
