@@ -65,9 +65,6 @@
 	let main = $derived(liveMain?.repo === repo ? liveMain.main : fetchedMain);
 	let deleting = $state<string | null>(null);
 	let deleteOpen = $state(false);
-	let deleteDetail = $derived(
-		deleting && deleteOpen ? await getThread({ repo, id: deleting }) : null
-	);
 	let threads = $derived<ThreadListItem[]>(
 		summaries.map((thread) => ({
 			id: thread.id,
@@ -157,11 +154,9 @@
 		);
 
 	let managingDeploys = $state(false);
-	let deploys = $derived(managingDeploys ? await getDeploySettings(repo) : null);
 
 	let cloning = $state(false);
 	let created = $state<{ label: string; secret: string } | null>(null);
-	let access = $derived(cloning ? await getGitAccess(repo) : null);
 
 	let similar = $state<SimilarThread[]>([]);
 	let size = $state<Exclude<Mode, 'auto'>>();
@@ -222,18 +217,27 @@
 	>
 		{@render children()}
 	</AppShell>
-	{#if deleteDetail}
-		<DeleteThreadDialog
-			bind:open={deleteOpen}
-			headline={deleteDetail.summary.headline || 'This thread'}
-			messages={deleteDetail.entries.filter((entry) => entry.type === 'message').length}
-			checkpoints={deleteDetail.entries.filter(
-				(entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint')
-			).length}
-			running={deleteDetail.summary.status === 'running'}
-			restoreDays={threadPurgeDelayMs / 86_400_000}
-			onconfirm={() => deleteThread({ repo, id: deleteDetail!.summary.id })}
-		/>
+	{#if deleting && deleteOpen}
+		{@const id = deleting}
+		<svelte:boundary>
+			{@const detail = await getThread({ repo, id })}
+			{#if detail}
+				<DeleteThreadDialog
+					bind:open={deleteOpen}
+					headline={detail.summary.headline || 'This thread'}
+					messages={detail.entries.filter((entry) => entry.type === 'message').length}
+					checkpoints={detail.entries.filter(
+						(entry) => entry.type === 'event' && entry.text.startsWith('Checkpoint')
+					).length}
+					running={detail.summary.status === 'running'}
+					restoreDays={threadPurgeDelayMs / 86_400_000}
+					onconfirm={() => deleteThread({ repo, id })}
+				/>
+			{/if}
+			{#snippet failed()}
+				<Toast ondismiss={() => (deleteOpen = false)}>Couldn't load that thread</Toast>
+			{/snippet}
+		</svelte:boundary>
 	{/if}
 	{#if alert}
 		{@const { thread } = alert}
@@ -242,27 +246,39 @@
 			ondismiss={() => (alert = null)}>{alert.text}</Toast
 		>
 	{/if}
-	{#if deploys}
-		<DeployDialog
-			bind:open={managingDeploys}
-			{repo}
-			secrets={deploys.secrets}
-			machine={deploys.machine}
-			onmachine={(machine) => setDeployMachine({ repo, machine })}
-			onsave={(secret) => setDeploySecret({ repo, ...secret })}
-			onremove={(name) => deleteDeploySecret({ repo, name })}
-		/>
+	{#if managingDeploys}
+		<svelte:boundary>
+			{@const deploys = await getDeploySettings(repo)}
+			<DeployDialog
+				bind:open={managingDeploys}
+				{repo}
+				secrets={deploys.secrets}
+				machine={deploys.machine}
+				onmachine={(machine) => setDeployMachine({ repo, machine })}
+				onsave={(secret) => setDeploySecret({ repo, ...secret })}
+				onremove={(name) => deleteDeploySecret({ repo, name })}
+			/>
+			{#snippet failed()}
+				<Toast ondismiss={() => (managingDeploys = false)}>Couldn't load deploy settings</Toast>
+			{/snippet}
+		</svelte:boundary>
 	{/if}
-	{#if access}
-		<CloneDialog
-			bind:open={cloning}
-			{repo}
-			url={access.url}
-			tokens={access.tokens}
-			{created}
-			oncreate={async (token) => (created = await createGitAccessToken({ repo, ...token }))}
-			onrevoke={(id) => revokeGitAccessToken({ repo, id })}
-		/>
+	{#if cloning}
+		<svelte:boundary>
+			{@const access = await getGitAccess(repo)}
+			<CloneDialog
+				bind:open={cloning}
+				{repo}
+				url={access.url}
+				tokens={access.tokens}
+				{created}
+				oncreate={async (token) => (created = await createGitAccessToken({ repo, ...token }))}
+				onrevoke={(id) => revokeGitAccessToken({ repo, id })}
+			/>
+			{#snippet failed()}
+				<Toast ondismiss={() => (cloning = false)}>Couldn't load clone access</Toast>
+			{/snippet}
+		</svelte:boundary>
 	{/if}
 </div>
 

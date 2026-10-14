@@ -23,6 +23,8 @@
 		ShipPanel,
 		Markdown,
 		DeleteThreadDialog,
+		ErrorBoundary,
+		ErrorNotice,
 		statuses,
 		ServicesPanel,
 		ThreadSidebar,
@@ -261,143 +263,149 @@
 			{/snippet}
 			<ChatLog label="Thread messages">
 				{#each blocks as block (block.id)}
-					{#if block.type === 'group'}
-						<ChatGroup
-							author={block.author}
-							time={new Date(block.at)}
-							own={block.author.kind === 'person' && block.author.name === user.name}
-						>
-							{#each block.messages as message (message.id)}
-								{#if message.calls}
-									<ChatTools
-										calls={message.calls.map(toolView)}
-										summary={summarizeTools(message.calls)}
-									/>
-								{:else}
-									<ChatMessage
-										steering={!!message.steering}
-										pending={message.steering?.read === false}
-										><Markdown source={message.text ?? ''} /></ChatMessage
-									>
-								{/if}
-							{/each}
-						</ChatGroup>
-					{:else if block.type === 'intent'}
-						<ChatIntent
-							{...block.intent}
-							results={block.results}
-							superseded={block.id !== latestIntent}
-							sticky={block.id === latestIntent}
-							{...block.id === latestIntent ? progress : {}}
-							changes={block.id === latestIntent ? (summary.changes ?? undefined) : undefined}
-							similar={block.id === latestIntent
-								? similarThreads(params.repo, block.similar ?? [], threads)
-								: []}
-							onmessage={(other) => forwardIntent({ ...ref, to: other.handle })}
-							onchanges={view}
-						/>
-					{:else if block.type === 'suggestion'}
-						{#if block.outcome?.kind === 'spun-off'}
-							{@const spun = block.outcome}
-							{@const child = threads.find((thread) => thread.id === spun.thread)}
-							<ChatEvent time={new Date(block.at)}
-								>Spun off <ChatMention
-									mention={{
-										kind: 'thread',
-										handle: spun.thread,
-										label: child?.headline || block.intent.headline,
-										href: `/${params.repo}/${spun.thread}`
-									}}
-								/>{#if child}&nbsp;· {statuses[child.status].label.toLowerCase()}{/if}</ChatEvent
+					<ErrorBoundary title="Couldn't show this entry">
+						{#if block.type === 'group'}
+							<ChatGroup
+								author={block.author}
+								time={new Date(block.at)}
+								own={block.author.kind === 'person' && block.author.name === user.name}
 							>
-						{:else if block.outcome?.kind === 'dismissed'}
-							<ChatEvent time={new Date(block.at)}
-								>Dismissed separate work: <code>{block.intent.headline}</code></ChatEvent
-							>
-						{:else}
+								{#each block.messages as message (message.id)}
+									{#if message.calls}
+										<ChatTools
+											calls={message.calls.map(toolView)}
+											summary={summarizeTools(message.calls)}
+										/>
+									{:else}
+										<ChatMessage
+											steering={!!message.steering}
+											pending={message.steering?.read === false}
+											><Markdown source={message.text ?? ''} /></ChatMessage
+										>
+									{/if}
+								{/each}
+							</ChatGroup>
+						{:else if block.type === 'intent'}
 							<ChatIntent
 								{...block.intent}
-								handoff
-								onstart={() => spinOff({ ...ref, entry: block.id })}
-								ondismiss={() => dismissSuggestion({ ...ref, entry: block.id })}
+								results={block.results}
+								superseded={block.id !== latestIntent}
+								sticky={block.id === latestIntent}
+								{...block.id === latestIntent ? progress : {}}
+								changes={block.id === latestIntent ? (summary.changes ?? undefined) : undefined}
+								similar={block.id === latestIntent
+									? similarThreads(params.repo, block.similar ?? [], threads)
+									: []}
+								onmessage={(other) => forwardIntent({ ...ref, to: other.handle })}
+								onchanges={view}
 							/>
+						{:else if block.type === 'suggestion'}
+							{#if block.outcome?.kind === 'spun-off'}
+								{@const spun = block.outcome}
+								{@const child = threads.find((thread) => thread.id === spun.thread)}
+								<ChatEvent time={new Date(block.at)}
+									>Spun off <ChatMention
+										mention={{
+											kind: 'thread',
+											handle: spun.thread,
+											label: child?.headline || block.intent.headline,
+											href: `/${params.repo}/${spun.thread}`
+										}}
+									/>{#if child}&nbsp;· {statuses[child.status].label.toLowerCase()}{/if}</ChatEvent
+								>
+							{:else if block.outcome?.kind === 'dismissed'}
+								<ChatEvent time={new Date(block.at)}
+									>Dismissed separate work: <code>{block.intent.headline}</code></ChatEvent
+								>
+							{:else}
+								<ChatIntent
+									{...block.intent}
+									handoff
+									onstart={() => spinOff({ ...ref, entry: block.id })}
+									ondismiss={() => dismissSuggestion({ ...ref, entry: block.id })}
+								/>
+							{/if}
+						{:else if block.type === 'startup'}
+							<ChatStartup stages={block.stages} finished />
+						{:else if block.type === 'recovered'}
+							<ChatRecovered failures={block.failures} />
+						{:else if block.type === 'failure'}
+							<ChatFailure
+								title={block.title}
+								error={block.error}
+								failures={block.failures}
+								time={new Date(block.at)}
+								onresume={block.id === latestFailure &&
+								block.resumable &&
+								summary.failure?.resumable &&
+								summary.status === 'needs-you'
+									? () => resumeThread(ref)
+									: undefined}
+							/>
+						{:else if block.type === 'thread-message'}
+							{@const other = threads.find((thread) => thread.id === block.thread)}
+							<ChatThreadMessage
+								direction={block.direction}
+								thread={{
+									kind: 'thread',
+									handle: block.thread,
+									label: other?.headline || block.headline || 'New thread',
+									href: `/${params.repo}/${block.thread}`,
+									deleted: !other
+								}}
+								pending={block.steering?.read === false}
+							>
+								<ChatMessage><Markdown source={block.text} /></ChatMessage>
+							</ChatThreadMessage>
+						{:else if block.type === 'event'}
+							<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
 						{/if}
-					{:else if block.type === 'startup'}
-						<ChatStartup stages={block.stages} finished />
-					{:else if block.type === 'recovered'}
-						<ChatRecovered failures={block.failures} />
-					{:else if block.type === 'failure'}
-						<ChatFailure
-							title={block.title}
-							error={block.error}
-							failures={block.failures}
-							time={new Date(block.at)}
-							onresume={block.id === latestFailure &&
-							block.resumable &&
-							summary.failure?.resumable &&
-							summary.status === 'needs-you'
-								? () => resumeThread(ref)
-								: undefined}
-						/>
-					{:else if block.type === 'thread-message'}
-						{@const other = threads.find((thread) => thread.id === block.thread)}
-						<ChatThreadMessage
-							direction={block.direction}
-							thread={{
-								kind: 'thread',
-								handle: block.thread,
-								label: other?.headline || block.headline || 'New thread',
-								href: `/${params.repo}/${block.thread}`,
-								deleted: !other
-							}}
-							pending={block.steering?.read === false}
-						>
-							<ChatMessage><Markdown source={block.text} /></ChatMessage>
-						</ChatThreadMessage>
-					{:else if block.type === 'event'}
-						<ChatEvent time={new Date(block.at)}>{block.text}</ChatEvent>
-					{/if}
+					</ErrorBoundary>
 				{/each}
-				{#if summary.behind && summary.status !== 'discarded'}
-					{@const behind = summary.behind}
-					<ChatBehindMain
-						{...behind}
-						updating={updating?.sha === behind.sha &&
-							(updating.calling || summary.status !== 'needs-you')}
-						onupdate={() => bringUpToDate(behind.sha)}
-					/>
-				{/if}
-				{#if summary.status === 'shipping' || (summary.status !== 'discarded' && summary.changes?.files)}
-					<ShipPanel
-						intent={intentEntry?.intent}
-						results={intentEntry?.results}
-						status={summary.status}
-						progress={activity?.ship}
-						checks={summary.checks}
-						branch={detail.branch}
-						onship={(commit) => shipThread({ ...ref, ...commit })}
-					/>
-				{/if}
-				{#if phase.type === 'starting'}
-					<ChatStartup stages={phase.stages} />
-				{:else if phase.type === 'streaming'}
-					<ChatGroup author={agent}>
-						{#if phase.text}
-							<ChatMessage><Markdown source={phase.text} /></ChatMessage>
-						{/if}
-						{#if phase.calls.length}
-							<ChatTools calls={phase.calls.map(toolView)} />
-						{/if}
-					</ChatGroup>
-				{/if}
-				{#if retry}
-					<ChatRetry {retry} onretrynow={() => retryThreadNow(ref)} />
-				{/if}
-				{#if phase.type === 'thinking'}
-					<ChatActivity since={phase.since}>{phase.label}</ChatActivity>
-				{:else if !activity && summary.status === 'running'}
-					<ChatActivity>ReGit is working</ChatActivity>
-				{/if}
+				<ErrorBoundary title="Couldn't show this thread's status" resetOn={params.thread}>
+					{#if summary.behind && summary.status !== 'discarded'}
+						{@const behind = summary.behind}
+						<ChatBehindMain
+							{...behind}
+							updating={updating?.sha === behind.sha &&
+								(updating.calling || summary.status !== 'needs-you')}
+							onupdate={() => bringUpToDate(behind.sha)}
+						/>
+					{/if}
+					{#if summary.status === 'shipping' || (summary.status !== 'discarded' && summary.changes?.files)}
+						<ShipPanel
+							intent={intentEntry?.intent}
+							results={intentEntry?.results}
+							status={summary.status}
+							progress={activity?.ship}
+							checks={summary.checks}
+							branch={detail.branch}
+							onship={(commit) => shipThread({ ...ref, ...commit })}
+						/>
+					{/if}
+				</ErrorBoundary>
+				<ErrorBoundary title="Couldn't show the agent's progress" resetOn={params.thread}>
+					{#if phase.type === 'starting'}
+						<ChatStartup stages={phase.stages} />
+					{:else if phase.type === 'streaming'}
+						<ChatGroup author={agent}>
+							{#if phase.text}
+								<ChatMessage><Markdown source={phase.text} /></ChatMessage>
+							{/if}
+							{#if phase.calls.length}
+								<ChatTools calls={phase.calls.map(toolView)} />
+							{/if}
+						</ChatGroup>
+					{/if}
+					{#if retry}
+						<ChatRetry {retry} onretrynow={() => retryThreadNow(ref)} />
+					{/if}
+					{#if phase.type === 'thinking'}
+						<ChatActivity since={phase.since}>{phase.label}</ChatActivity>
+					{:else if !activity && summary.status === 'running'}
+						<ChatActivity>ReGit is working</ChatActivity>
+					{/if}
+				</ErrorBoundary>
 			</ChatLog>
 			{#snippet bottom()}
 				{#if summary.status === 'discarded'}
@@ -414,16 +422,18 @@
 						onsend={(text) => reply({ repo: params.repo, id: params.thread, text })}
 					/>
 				{/if}
-				<ChatFooter
-					mode={summary.auto ? `Auto · ${modes[summary.mode]}` : modes[summary.mode]}
-					context={detail.usage.context}
-					usage={detail.usage.rows.map((row) => ({
-						task: tasks[row.task],
-						model: row.model,
-						tokens: row.tokens,
-						cost: row.cost ?? 0
-					}))}
-				/>
+				<ErrorBoundary title="Couldn't show usage" resetOn={params.thread}>
+					<ChatFooter
+						mode={summary.auto ? `Auto · ${modes[summary.mode]}` : modes[summary.mode]}
+						context={detail.usage.context}
+						usage={detail.usage.rows.map((row) => ({
+							task: tasks[row.task],
+							model: row.model,
+							tokens: row.tokens,
+							cost: row.cost ?? 0
+						}))}
+					/>
+				</ErrorBoundary>
 			{/snippet}
 		</ThreadView>
 		<ThreadSidebar
@@ -433,21 +443,31 @@
 			live={detail.services.some((service) => service.status === 'running')}
 		>
 			{#snippet changesTab(close)}
-				{#await getChanges(ref) then files}
-					<ChangesPanel files={files ?? []} onclose={close} />
-				{/await}
+				<ErrorBoundary title="Couldn't show changes" resetOn={params.thread}>
+					{#await getChanges(ref) then files}
+						<ChangesPanel files={files ?? []} onclose={close} />
+					{:catch}
+						<ErrorNotice
+							title="Couldn't load changes"
+							inline
+							onretry={() => getChanges(ref).refresh()}
+						/>
+					{/await}
+				</ErrorBoundary>
 			{/snippet}
 			{#snippet servicesTab(close)}
-				<ServicesPanel
-					services={detail.services}
-					bind:selected={service}
-					{logs}
-					{busy}
-					error={failure}
-					onaction={act}
-					onlogs={showLogs}
-					onclose={close}
-				/>
+				<ErrorBoundary title="Couldn't show services" resetOn={params.thread}>
+					<ServicesPanel
+						services={detail.services}
+						bind:selected={service}
+						{logs}
+						{busy}
+						error={failure}
+						onaction={act}
+						onlogs={showLogs}
+						onclose={close}
+					/>
+				</ErrorBoundary>
 			{/snippet}
 		</ThreadSidebar>
 	</div>
