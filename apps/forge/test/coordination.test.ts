@@ -3,7 +3,7 @@ import { setup, untilThread } from './support.ts';
 
 const { worker, script, modelRequests, scriptDecisions, decisionRequests, seed } = await setup();
 
-test('suggests separate work and spins it off into a linked thread', async () => {
+test('suggests separate work and spins it off into a linked thread that starts working', async () => {
 	await seed('suggesting', { 'notes.md': 'Some notes\n' });
 	const suggestion = {
 		headline: 'fix(audit): query only the last entry',
@@ -18,8 +18,8 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 				item: {
 					type: 'function_call',
 					call_id: 'suggest',
-					name: 'suggest_thread',
-					arguments: JSON.stringify(suggestion)
+					name: 'launch_thread',
+					arguments: JSON.stringify({ ...suggestion, start: false })
 				}
 			}
 		],
@@ -51,28 +51,33 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 	const child = await repo.spinOff(id, card.id, sam);
 	expect(child).toMatchObject({
 		headline: suggestion.headline,
-		status: 'needs-you',
+		status: 'running',
 		mode: 'small',
 		parent: { id, headline: 'Tidy the notes.' }
 	});
 	expect((await repo.thread(id))!.entries.find((entry) => entry.id === card.id)).toMatchObject({
 		outcome: { kind: 'spun-off', thread: child.id, by: 'Sam' }
 	});
-	expect((await repo.thread(child.id))!.entries).toMatchObject([
-		{ type: 'message', author: { name: 'ReGit' }, text: suggestion.context },
-		{ type: 'intent', intent: { headline: suggestion.headline } }
-	]);
 	await expect(repo.spinOff(id, card.id, sam)).rejects.toThrow();
 
-	await repo.reply(child.id, { author: sam, text: 'Go ahead.' });
-	await untilThread(repo, child.id, (detail) =>
+	const started = await untilThread(repo, child.id, (detail) =>
 		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Got it.')
 	);
-	const requests = await modelRequests('suggesting');
-	expect(JSON.stringify(requests.at(-1)!.query)).toContain('spun off from another one');
-	expect(JSON.stringify(requests.at(-1)!.query)).toContain(suggestion.context);
+	expect(
+		started.entries.filter((entry) => ['message', 'intent', 'event'].includes(entry.type))
+	).toMatchObject([
+		{ type: 'message', author: { name: 'ReGit' }, text: suggestion.context },
+		{ type: 'intent', intent: { headline: suggestion.headline } },
+		{ type: 'event', text: 'Started by Sam' },
+		{ type: 'message', author: { kind: 'agent' }, text: 'Got it.' }
+	]);
+	const query = JSON.stringify((await modelRequests('suggesting')).at(-1)!.query);
+	expect(query).toContain('spun off from another one');
+	expect(query).toContain(suggestion.context);
+	expect(query).toContain(`Sam: Work on this thread's intent.`);
+	expect(query).toContain(suggestion.doneWhen[0]);
 
-	await repo.suggestThread(id, { ...suggestion, headline: 'docs: explain the audit log' });
+	await repo.launchThread(id, { ...suggestion, headline: 'docs: explain the audit log' }, false);
 	const second = (await repo.thread(id))!.entries.findLast((entry) => entry.type === 'suggestion')!;
 	repo.dismissSuggestion(id, second.id, sam);
 	await untilThread(repo, id, (detail) =>
@@ -80,6 +85,59 @@ test('suggests separate work and spins it off into a linked thread', async () =>
 			(entry) =>
 				entry.id === second.id && entry.type === 'suggestion' && entry.outcome?.kind === 'dismissed'
 		)
+	);
+});
+
+test('starts a thread when a person asks for one', async () => {
+	await seed('launching', { 'notes.md': 'Some notes\n' });
+	const launch = {
+		headline: 'docs(notes): add a table of contents',
+		purpose: 'The notes are hard to scan.',
+		doneWhen: ['notes.md starts with a table of contents'],
+		context: 'Sam asked for this as its own thread.',
+		start: true
+	};
+	await script('launching', [
+		[
+			{
+				type: 'response.output_item.done',
+				item: {
+					type: 'function_call',
+					call_id: 'launch',
+					name: 'launch_thread',
+					arguments: JSON.stringify(launch)
+				}
+			}
+		],
+		[{ type: 'response.output_text.delta', delta: 'On it.' }],
+		[{ type: 'response.output_text.delta', delta: 'On it.' }]
+	]);
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('launching');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const { id } = await repo.openThread({
+		repo: 'launching',
+		author: sam,
+		text: 'Start a thread that adds a table of contents to the notes.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const parent = await untilThread(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'On it.')
+	);
+	const card = parent.entries.find((entry) => entry.type === 'suggestion')!;
+	expect(card).toMatchObject({ outcome: { kind: 'spun-off', by: 'Sam' } });
+	const child = (card as { outcome: { thread: string } }).outcome.thread;
+	expect(parent.entries.find((entry) => entry.type === 'tools')).toMatchObject({
+		calls: [{ tool: 'launch_thread', target: launch.headline, status: 'done' }]
+	});
+
+	const started = await untilThread(repo, child, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'On it.')
+	);
+	expect(started.summary.parent).toEqual({ id, headline: parent.summary.headline });
+	expect(started.entries).toContainEqual(
+		expect.objectContaining({ type: 'event', text: 'Started by Sam' })
 	);
 });
 
