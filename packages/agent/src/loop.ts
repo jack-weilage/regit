@@ -40,7 +40,7 @@ export async function* runAgent({
 	tools,
 	instructions,
 	history,
-	maxSteps = 50,
+	maxSteps = Infinity,
 	signal,
 	steer,
 	retries = modelRetries,

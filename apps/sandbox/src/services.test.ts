@@ -133,6 +133,19 @@ test('runs one-off services from the CLI', async () => {
 	expect((await cli(['run', 'api'], options)).code).toBe(2);
 });
 
+test('keeps the arguments of a one-off command intact', async () => {
+	const port = await freePort();
+	await mkdir(join(root, 'web'));
+	const serveCwd = `node -e "require('http').createServer((q, s) => s.end(process.cwd())).listen(process.env.PORT)"`;
+
+	const options = { fetch, base: 'http://sandbox' };
+
+	const line = ['sh', '-c', `cd web && ${serveCwd}`];
+	expect((await cli(['run', 'web', '--port', String(port), '--', ...line], options)).code).toBe(0);
+	expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toEndWith('/web');
+	await cli(['stop', 'web'], options);
+});
+
 test('reports the log tail when a service exits before its port opens', async () => {
 	await expect(
 		sandbox.services.start({
