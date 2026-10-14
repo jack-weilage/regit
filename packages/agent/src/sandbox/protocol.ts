@@ -42,6 +42,9 @@ export interface HookResponse {
 	output: string;
 }
 
+// The hook route streams one of these per line while the hook runs.
+export type HookLine = { output: string } | { result: HookResponse } | { error: string };
+
 export interface CommitRequest {
 	message: string;
 	author: { name: string; email: string };

@@ -1177,7 +1177,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #stage<T>(
 		label: string,
-		run: () => Promise<T>,
+		run: (progress: (output: string) => void) => Promise<T>,
 		done?: (result: T) => string,
 		output?: (result: T) => string
 	) {
@@ -1185,7 +1185,10 @@ export class AttemptSandbox extends DurableObject<Env> {
 		(this.#activity.startup ??= { cold: false, stages: [] }).stages.push(stage);
 		this.#publish(true);
 		try {
-			const result = await run();
+			const result = await run((progress) => {
+				stage.output = progress;
+				this.#publish();
+			});
 			Object.assign(stage, {
 				status: 'done',
 				label: done?.(result) ?? label,
@@ -1585,9 +1588,14 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 	async #hook(fetch: Fetch, name: 'setup' | 'resume') {
 		const label = `Run .agents/${name}`;
+		let printed = '';
 		const { ran } = await this.#stage(
 			label,
-			() => sandboxWorkspace(fetch).hook(name),
+			(progress) =>
+				sandboxWorkspace(fetch).hook(name, (chunk) => {
+					printed = (printed + chunk).slice(-streamedOutputChars);
+					progress(printed);
+				}),
 			undefined,
 			(result) => result.output
 		);
@@ -1637,6 +1645,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 }
 
 const publishIntervalMs = 250;
+const streamedOutputChars = 4000;
 const governs: Record<string, string> = {
 	'.agents/checks.yml':
 		'This thread changes .agents/checks.yml, which decides what must pass before main deploys. It applies once this ships.',

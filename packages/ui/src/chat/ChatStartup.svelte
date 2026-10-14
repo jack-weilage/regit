@@ -34,6 +34,10 @@
 		done: 'passed',
 		failed: 'failed'
 	} as const;
+	// Keeps a running stage's output scrolled to its newest lines as they stream in.
+	const following = (stage: StartupStage) => (pre: HTMLElement) => {
+		if (stage.status === 'running' && stage.output) pre.scrollTop = pre.scrollHeight;
+	};
 	const took = (stage: StartupStage) =>
 		stage.startedAt === undefined ? null : (stage.finishedAt ?? time) - stage.startedAt;
 </script>
@@ -48,9 +52,14 @@
 					<span class="took">{formatDuration(took(stage)!)}</span>
 				{/if}
 				{#if stage.output}
-					<details class="output" open={stage.status === 'failed'}>
+					<details class="output" open={stage.status !== 'done'}>
 						<summary>Output for {stage.label}</summary>
-						<pre>{stage.output}</pre>
+						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+						<pre
+							role="log"
+							aria-label="Output of {stage.label}"
+							tabindex="0"
+							{@attach following(stage)}>{stage.output}</pre>
 					</details>
 				{/if}
 			</li>

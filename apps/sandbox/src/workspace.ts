@@ -392,8 +392,16 @@ async function abortRebase(root: string) {
 	await exec('git', [...noHooks, 'rebase', '--abort'], { cwd: root });
 }
 
-export async function hook(root: string, { name }: HookRequest): Promise<HookResponse> {
-	if (name !== 'setup' && name !== 'resume') throw new Error('Unknown lifecycle hook');
+export function isHook(name: unknown): name is HookRequest['name'] {
+	return name === 'setup' || name === 'resume';
+}
+
+export async function hook(
+	root: string,
+	{ name }: HookRequest,
+	onOutput?: (chunk: string) => void
+): Promise<HookResponse> {
+	if (!isHook(name)) throw new Error('Unknown lifecycle hook');
 	const path = `.agents/${name}`;
 	try {
 		if (!(await stat(join(root, path))).isFile()) throw new Error(`${path} must be a file`);
@@ -401,7 +409,11 @@ export async function hook(root: string, { name }: HookRequest): Promise<HookRes
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ran: false, output: '' };
 		throw error;
 	}
-	const result = await exec('bash', ['-e', path], { cwd: root, timeout: 15 * 60 * 1000 });
+	const result = await exec('bash', ['-e', path], {
+		cwd: root,
+		timeout: 15 * 60 * 1000,
+		onOutput
+	});
 	const output = truncate(result.output.trim());
 	if (result.timedOut || result.code !== 0) {
 		throw new Error(

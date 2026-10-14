@@ -42,6 +42,20 @@ test('runs optional lifecycle scripts from the root without an executable bit an
 	expect(await invalid.json()).toEqual({ error: 'Unknown lifecycle hook' });
 });
 
+test('streams lifecycle script output while the script runs', async () => {
+	await call('write_file', {
+		path: '.agents/setup',
+		content: 'echo first\nwhile [ ! -f .git/release ]; do sleep 0.05; done\necho second\n'
+	});
+	const chunks: string[] = [];
+	const finished = workspace.hook('setup', (chunk) => chunks.push(chunk));
+	while (!chunks.join('').includes('first')) await Bun.sleep(20);
+	expect(chunks.join('')).not.toContain('second');
+	await writeFile(join(root, '.git/release'), '');
+	expect(await finished).toEqual({ ran: true, output: 'first\nsecond' });
+	expect(chunks.join('')).toBe('first\nsecond\n');
+});
+
 describe('tools', () => {
 	test('reads image pixels, rejects unsupported or oversized files and resolves path boundaries', async () => {
 		const png =

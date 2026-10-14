@@ -27,6 +27,7 @@ import type {
 	Fetch,
 	HeadBranchRequest,
 	HeadBranchResponse,
+	HookLine,
 	HookRequest,
 	HookResponse,
 	PublishProvenanceRequest,
@@ -45,8 +46,8 @@ import { errorMessage, SandboxUnavailableError } from '../transient.ts';
 
 const origin = 'http://sandbox';
 
-async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortSignal) {
-	const response = await fetch(`${origin}${path}`, {
+function send(fetch: Fetch, path: string, body: string, signal?: AbortSignal) {
+	return fetch(`${origin}${path}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body,
@@ -57,6 +58,13 @@ async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortS
 			cause: error
 		});
 	});
+}
+
+async function post<T>(fetch: Fetch, path: string, body: string, signal?: AbortSignal) {
+	return answer<T>(await send(fetch, path, body, signal));
+}
+
+async function answer<T>(response: Response) {
 	const text = await response.text();
 	let result: T | ErrorResponse;
 	try {
@@ -129,8 +137,24 @@ export function sandboxWorkspace(fetch: Fetch) {
 		async clone(request: CloneRequest) {
 			return post<CloneResponse>(fetch, '/workspace/clone', JSON.stringify(request));
 		},
-		hook(name: HookRequest['name']) {
-			return post<HookResponse>(fetch, '/workspace/hook', JSON.stringify({ name }));
+		// Runs a lifecycle hook, passing its output to onOutput as it's printed.
+		async hook(name: HookRequest['name'], onOutput?: (chunk: string) => void) {
+			const response = await send(fetch, '/workspace/hook', JSON.stringify({ name }));
+			// TODO: remove once no running sandbox predates streamed hook output.
+			if (!response.headers.get('Content-Type')?.includes('ndjson') || !response.body)
+				return answer<HookResponse>(response);
+			let buffered = '';
+			for await (const text of response.body.pipeThrough(new TextDecoderStream())) {
+				const lines = (buffered + text).split('\n');
+				buffered = lines.pop()!;
+				for (const line of lines.filter(Boolean)) {
+					const parsed = JSON.parse(line) as HookLine;
+					if ('output' in parsed) onOutput?.(parsed.output);
+					else if ('result' in parsed) return parsed.result;
+					else throw new Error(parsed.error);
+				}
+			}
+			throw new SandboxUnavailableError(`The sandbox stopped before .agents/${name} finished`);
 		},
 		async commit(request: CommitRequest) {
 			const { sha } = await post<CommitResponse>(

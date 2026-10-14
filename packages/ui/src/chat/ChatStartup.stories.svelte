@@ -94,6 +94,28 @@
 />
 
 <Story
+	name="Streaming setup"
+	args={{
+		stages: [
+			...cold.slice(0, 3),
+			{
+				label: 'Run .agents/setup',
+				status: 'running',
+				startedAt: at(8),
+				output: Array.from({ length: 40 }, (_, line) => `Resolving package ${line + 1}`).join('\n')
+			}
+		]
+	}}
+	play={async ({ canvas }) => {
+		await waitFor(() => expect(canvas.getByText(/Resolving package 40/)).toBeVisible());
+		const output = canvas.getByText(/Resolving package 40/);
+		await expect(output.scrollTop + output.clientHeight).toBeGreaterThanOrEqual(
+			output.scrollHeight - 1
+		);
+	}}
+/>
+
+<Story
 	name="Between stages"
 	args={{ stages: ready.slice(0, 2) }}
 	play={async ({ canvas }) => {

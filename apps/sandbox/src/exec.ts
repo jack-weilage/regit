@@ -5,6 +5,7 @@ export interface ExecOptions {
 	env?: Record<string, string>;
 	timeout?: number;
 	signal?: AbortSignal;
+	onOutput?: (chunk: string) => void;
 }
 
 export interface ExecResult {
@@ -17,7 +18,7 @@ export interface ExecResult {
 export function exec(
 	command: string,
 	args: string[],
-	{ cwd, env, timeout = 120_000, signal }: ExecOptions
+	{ cwd, env, timeout = 120_000, signal, onOutput }: ExecOptions
 ) {
 	return new Promise<ExecResult>((resolve, reject) => {
 		const child = spawn(command, args, {
@@ -32,8 +33,12 @@ export function exec(
 		child.stdout.on('data', (chunk: Buffer) => {
 			output += chunk;
 			stdout += chunk;
+			onOutput?.(chunk.toString());
 		});
-		child.stderr.on('data', (chunk: Buffer) => (output += chunk));
+		child.stderr.on('data', (chunk: Buffer) => {
+			output += chunk;
+			onOutput?.(chunk.toString());
+		});
 
 		const kill = () => {
 			try {

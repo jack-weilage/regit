@@ -12,6 +12,7 @@ import {
 	diff,
 	headBranch,
 	hook,
+	isHook,
 	publishProvenance,
 	push,
 	pushShip,
@@ -56,7 +57,6 @@ export function createSandbox(
 		diff: async (body) => ({ diff: await diff(root, body) }),
 		'head-branch': async (body) => ({ branch: await headBranch(root, body) }),
 		toolchain: async () => ({ tools: await toolchain(root, mise) }),
-		hook: (body) => hook(root, body),
 		skills: async () => ({ skills: await discoverSkills(root) }),
 		trust: () => trustInterception()
 	};
@@ -96,6 +96,11 @@ export function createSandbox(
 			if (group === 'services' && Object.hasOwn(serviceRoutes, name)) {
 				return Response.json(await serviceRoutes[name]!((await request.json()) as never));
 			}
+			if (group === 'workspace' && name === 'hook') {
+				const { name: hookName } = (await request.json()) as { name: unknown };
+				if (!isHook(hookName)) return error('Unknown lifecycle hook', 400);
+				return streamed((output) => hook(root, { name: hookName }, output));
+			}
 			if (group === 'workspace' && Object.hasOwn(workspace, name)) {
 				return Response.json(await workspace[name]!((await request.json()) as never));
 			}
@@ -111,4 +116,22 @@ export function createSandbox(
 
 function error(message: string, status: number) {
 	return Response.json({ error: message }, { status });
+}
+
+// Streams output as it happens, one JSON object per line: {output} chunks, then {result} or {error}.
+function streamed(run: (output: (chunk: string) => void) => Promise<object>) {
+	const encoder = new TextEncoder();
+	const body = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			const send = (line: object) =>
+				controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+			try {
+				send({ result: await run((output) => send({ output })) });
+			} catch (cause) {
+				send({ error: cause instanceof Error ? cause.message : String(cause) });
+			}
+			controller.close();
+		}
+	});
+	return new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } });
 }
