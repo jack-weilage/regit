@@ -48,6 +48,7 @@
 	} from '@regit/core';
 	import { getLiveActivity, summarizeTools, toolView } from '#lib/activity.ts';
 	import { similarThreads } from '#lib/similar.ts';
+	import { threadStates } from '#lib/thread-state.svelte.ts';
 	import {
 		bringThreadUpToDate,
 		cancelAutomation,
@@ -129,14 +130,11 @@
 		JSON.stringify(detail?.summary.changes);
 		if (open && tab === 'changes') getChanges(ref).refresh();
 	});
-	let service = $state<string | null>(null);
-	let logs = $state<string | null>(null);
-	let busy = $state<string | null>(null);
-	let failure = $state<string | null>(null);
-
 	const live = getLiveActivity();
+	const stateFor = threadStates();
 
 	let ref = $derived({ repo: params.repo, id: data.threadRef.id });
+	let local = $derived(stateFor(ref.id));
 	let detail = $derived(await getThread(ref));
 	let activity = $derived(ref.id in live ? live[ref.id] : (detail?.activity ?? null));
 	let phase = $derived(activity?.agent ?? idlePhase);
@@ -168,30 +166,31 @@
 	let latestIntent = $derived(intentEntry?.id);
 
 	async function act(action: 'start' | 'stop' | 'restart', name: string) {
-		busy = name;
-		failure = null;
+		const thread = local;
+		thread.busy = name;
+		thread.failure = null;
 		try {
 			await serviceAction({ ...ref, action, name });
 		} catch (error) {
-			failure = error instanceof Error ? error.message : String(error);
+			thread.failure = error instanceof Error ? error.message : String(error);
 		} finally {
-			busy = null;
+			thread.busy = null;
 		}
 	}
 
-	let cancelling = $state<string | null>(null);
-
 	async function cancel(automation: string) {
-		cancelling = automation;
+		const thread = local;
+		thread.cancelling = automation;
 		try {
 			await cancelAutomation({ ...ref, automation });
 		} finally {
-			cancelling = null;
+			thread.cancelling = null;
 		}
 	}
 
 	async function showLogs(name: string) {
-		logs = await readServiceLogs({ ...ref, name }).catch(() => null);
+		const thread = local;
+		thread.logs = await readServiceLogs({ ...ref, name }).catch(() => null);
 	}
 
 	function view() {
@@ -217,15 +216,14 @@
 		reopenThread(ref);
 	}
 
-	let updating = $state<{ sha: string; calling: boolean } | null>(null);
-
 	async function bringUpToDate(sha: string) {
-		updating = { sha, calling: true };
+		const thread = local;
+		thread.updating = { sha, calling: true };
 		try {
 			await bringThreadUpToDate(ref);
-			updating = { sha, calling: false };
+			thread.updating = { sha, calling: false };
 		} catch {
-			updating = null;
+			thread.updating = null;
 		}
 	}
 
@@ -425,8 +423,8 @@
 						{@const behind = summary.behind}
 						<ChatBehindMain
 							{...behind}
-							updating={updating?.sha === behind.sha &&
-								(updating.calling || summary.status !== 'idle')}
+							updating={local.updating?.sha === behind.sha &&
+								(local.updating.calling || summary.status !== 'idle')}
 							onupdate={() => bringUpToDate(behind.sha)}
 						/>
 					{/if}
@@ -479,12 +477,13 @@
 							<AutomationsPanel
 								automations={detail.automations}
 								compact
-								busy={cancelling}
+								busy={local.cancelling}
 								oncancel={cancel}
 							/>
 						</ErrorBoundary>
 					{/if}
 					<ChatComposer
+						bind:value={local.draft}
 						working={summary.status === 'working'}
 						onstop={() => stopThread(ref)}
 						onsend={(text) => reply({ ...ref, text })}
@@ -525,16 +524,18 @@
 			{/snippet}
 			{#snippet servicesTab(close)}
 				<ErrorBoundary title="Couldn't show services" resetOn={params.thread}>
-					<ServicesPanel
-						services={detail.services}
-						bind:selected={service}
-						{logs}
-						{busy}
-						error={failure}
-						onaction={act}
-						onlogs={showLogs}
-						onclose={close}
-					/>
+					{#key ref.id}
+						<ServicesPanel
+							services={detail.services}
+							bind:selected={local.service}
+							logs={local.logs}
+							busy={local.busy}
+							error={local.failure}
+							onaction={act}
+							onlogs={showLogs}
+							onclose={close}
+						/>
+					{/key}
 				</ErrorBoundary>
 			{/snippet}
 		</ThreadSidebar>
