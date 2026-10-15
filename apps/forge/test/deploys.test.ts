@@ -80,6 +80,35 @@ test('deploys green commits with the repository secrets, keeping them out of wha
 	expect(JSON.stringify(await repo.main())).not.toContain('sekrit');
 });
 
+test("tells a thread's agent once when deploying what it shipped fails", async () => {
+	const { repo, sam, id } = await startedThread(
+		'deploy-fails',
+		[writeNotes('# Notes\\n'), say('Done.')],
+		undefined,
+		{ '.agents/deploy': 'echo "no route to production"; exit 4\n' }
+	);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
+	const failed = await untilMain(repo, (main) => !!main.deployFailure && !main.verifying);
+	const shipped = sh(join(dir, 'deploy-fails.git'), 'rev-parse', 'main');
+	expect(failed.deployFailure?.sha).toBe(shipped);
+	const notice = `What this thread shipped as ${shipped.slice(0, 7)} passed \`main\`'s deploy checks, but deploying ${shipped.slice(0, 7)}, which includes it, failed, so it isn't live:`;
+
+	for (const [text, reply] of [
+		['Is it live?', 'No.'],
+		['Anything else?', 'Nothing.']
+	]) {
+		await script('deploy-fails', [say(reply!)]);
+		await repo.reply(id, { author: sam, text: text! });
+		await untilThread(repo, id, (detail) =>
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === reply)
+		);
+		const query = JSON.stringify((await modelRequests('deploy-fails')).at(-1)!.query);
+		expect(query.split(notice)).toHaveLength(2);
+		expect(query).toContain('no route to production');
+	}
+});
+
 test('does not deploy without a deploy script or while main is failing', async () => {
 	const { repo, sam, id } = await startedThread(
 		'undeployed',

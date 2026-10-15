@@ -160,6 +160,7 @@ const similarTimeoutMs = 4000;
 const recentHistory = 12;
 const maxSearchHits = 30;
 const maxDiffChars = 20_000;
+const maxDeployOutput = 4_000;
 const pastTense: Record<string, string> = {
 	read_file: 'Read',
 	write_file: 'Wrote',
@@ -185,6 +186,11 @@ function verdictNotice(
 	if (verdict === 'deployed') return `What this thread shipped as ${short} is deployed.`;
 	const where = revert ? ` in ${revert.slice(0, 7)}` : '';
 	return `What this thread shipped as ${short} broke \`${branch}\`'s deploy checks, so it was reverted${where} and is no longer on \`${branch}\`.`;
+}
+
+function deployFailedNotice(shipped: string, sha: string, branch: string, output: string) {
+	const tail = output.length > maxDeployOutput ? `…${output.slice(-maxDeployOutput)}` : output;
+	return `What this thread shipped as ${shipped.slice(0, 7)} passed \`${branch}\`'s deploy checks, but deploying ${sha.slice(0, 7)}, which includes it, failed, so it isn't live:\n\n${tail}`;
 }
 
 function historyLines(entries: Entry[]) {
@@ -456,7 +462,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#active(thread);
 		await this.#notShipping(thread);
 		this.#takeHandBack(thread);
-		await this.#agent(thread).stop();
+		await this.#agent(thread).stop(by.name);
 		const pending = this.#sql
 			.exec<{ seq: number; body: string }>('SELECT seq, body FROM entries WHERE thread = ?', thread)
 			.toArray()
@@ -952,7 +958,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		try {
 			await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
 		} catch (error) {
-			this.#stopShipping(thread, error instanceof Error ? error.message : String(error));
+			await this.#stopShipping(thread, error instanceof Error ? error.message : String(error));
 			throw error;
 		}
 	}
@@ -1034,7 +1040,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const fixable = message.startsWith('Ship conflicts with ');
 		if (fixable && ship.handBacks < maxHandBacks && !summary.deleted)
 			return await this.#handBack(ship, message);
-		this.#stopShipping(ship.thread, message, failures);
+		const fixing = this.#fixing(ship.thread);
+		const reverting = !!fixing?.commits.length && !fixing.reverting;
+		await this.#stopShipping(ship.thread, message, failures, !reverting);
 		await this.#revert(ship.thread, `the fix couldn't ship: ${message}`);
 	}
 
@@ -1057,14 +1065,24 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			: null;
 		if (ship && !['errored', 'terminated', 'complete'].includes(ship.status))
 			throw new Error('This thread is shipping. Try again when it finishes.');
-		this.#stopShipping(thread, ship?.error?.message ?? 'the ship ended without reporting back');
+		await this.#stopShipping(
+			thread,
+			ship?.error?.message ?? 'the ship ended without reporting back'
+		);
 	}
 
-	#stopShipping(thread: string, reason: string, failures: RetryFailure[] = []) {
+	// A fix that couldn't ship leads to a revert, which the agent hears about instead.
+	async #stopShipping(thread: string, reason: string, failures: RetryFailure[] = [], tell = true) {
 		this.#sql.exec('DELETE FROM meta WHERE key = ?', `ship:${thread}`);
 		this.#setShipProgress(thread, null);
 		this.#setStatus(thread, 'idle');
 		this.#fail(thread, { title: 'Shipping stopped', error: reason, failures }, false);
+		if (!tell) return;
+		const branch = await this.#branch();
+		await this.#notify(
+			thread,
+			`Shipping this thread stopped before it landed: ${reason}\n\nNothing from this ship reached \`${branch}\`, so this thread's changes still need shipping.`
+		);
 	}
 
 	// Serious failures stand out in the thread and the thread list until the thread runs again.
@@ -1274,7 +1292,15 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				const thread = this.#shippedAs(commit);
 				if (thread) await this.#setVerdict(thread, 'deployed', ['landed', 'passed']);
 			}
-		} else if (deploy.ran) this.#setMain({ deployFailure: { sha, at, output: deploy.output } });
+		} else if (deploy.ran) {
+			this.#setMain({ deployFailure: { sha, at, output: deploy.output } });
+			const branch = await this.#branch();
+			for (const commit of commits) {
+				const thread = this.#shippedAs(commit);
+				if (thread && this.#summary(thread)?.shipped?.verdict === 'passed')
+					await this.#notify(thread, deployFailedNotice(commit, sha, branch, deploy.output));
+			}
+		}
 		await this.#doneVerifying(id);
 	}
 
@@ -1304,10 +1330,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#touch(thread);
 		// A failure reaches the agent as its hand-back or, failing that, the revert.
 		if (verdict === 'landed' || verdict === 'failed') return;
-		const notice = verdictNotice(verdict, shipped.sha, await this.#branch(), revert);
+		await this.#notify(thread, verdictNotice(verdict, shipped.sha, await this.#branch(), revert));
+	}
+
+	async #notify(thread: string, notice: string) {
 		await this.#agent(thread)
-			.verdict(notice)
-			.catch((error: unknown) => console.warn('Could not tell the agent the verdict', error));
+			.notify(notice)
+			.catch((error: unknown) => console.warn('Could not notify the agent', error));
 	}
 
 	#fixing(thread: string) {
@@ -1401,13 +1430,19 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 	}
 
-	revertFailed(id: string, error: string) {
+	async revertFailed(id: string, error: string) {
 		const thread = this.#meta(`revert:${id}`);
 		if (!thread) return;
 		this.#sql.exec('DELETE FROM meta WHERE key = ?', `revert:${id}`);
 		const fixing = this.#fixing(thread);
 		if (fixing) this.#saveFixing(thread, { ...fixing, reverting: null });
 		this.#fail(thread, { title: "Couldn't revert", error, failures: [] }, false);
+		const shas = fixing?.commits.map(({ sha }) => sha.slice(0, 7)).join(', ') || 'it';
+		const branch = await this.#branch();
+		await this.#notify(
+			thread,
+			`What this thread shipped broke \`${branch}\`'s deploy checks, and reverting ${shas} failed: ${error}\n\nIt is still on \`${branch}\`, which still fails its deploy checks.`
+		);
 	}
 
 	async deploySecrets(by: Author): Promise<DeploySecret[]> {

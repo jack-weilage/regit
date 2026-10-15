@@ -301,7 +301,7 @@ test('stopping a native command kills its children without destroying the worksp
 	await new Promise((resolve) => setTimeout(resolve, 500));
 	const env = await worker.getEnv();
 	const attempt = env.ATTEMPTS.getByName('native-stop-thread');
-	await attempt.stop();
+	await attempt.stop('Sam');
 	expect(await attempt.snapshot()).toMatchObject({ status: 'interrupted' });
 	await script('native-stop', [
 		[

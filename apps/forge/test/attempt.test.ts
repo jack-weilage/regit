@@ -245,6 +245,16 @@ test('stops a running attempt mid tool call', async () => {
 	expect((await env.ATTEMPTS.getByName(id).snapshot())!.status).toBe('interrupted');
 	await new Promise((resolve) => setTimeout(resolve, 1000));
 	expect((await repo.thread(id))!.entries.at(-1)).toMatchObject({ text: 'Stopped by Sam' });
+
+	await script('stopping', [[{ type: 'response.output_text.delta', delta: 'Picking up.' }]]);
+	await repo.reply(id, { author: sam, text: 'Carry on.' });
+	await expect
+		.poll(async () => (await repo.thread(id))!.entries.at(-1), { timeout: 30_000 })
+		.toMatchObject({ type: 'message', text: 'Picking up.' });
+	const stopped = 'Sam stopped your last turn before it finished';
+	const query = JSON.stringify((await modelRequests('stopping')).at(-1)!.query);
+	expect(query.split(stopped)).toHaveLength(2);
+	expect(query.indexOf(stopped)).toBeLessThan(query.indexOf('Sam: Carry on.'));
 });
 
 test('reports a sandbox that fails before asking the model', async () => {

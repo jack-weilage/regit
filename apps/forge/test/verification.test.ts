@@ -107,6 +107,50 @@ test("reverts what a thread shipped when its agent can't fix what it broke", asy
 	expect(JSON.stringify((await modelRequests('unfixable')).at(-1)!.query)).toContain(
 		`What this thread shipped as ${broken} broke \`main\`'s deploy checks, so it was reverted in ${revert} and is no longer on \`main\`.`
 	);
+	expect(JSON.stringify((await modelRequests('unfixable')).at(-1)!.query)).not.toContain(
+		'Shipping this thread stopped'
+	);
+});
+
+test("tells the agent when what it shipped couldn't be reverted", async () => {
+	const { repo, sam, id } = await greenStart('unrevertable', [
+		writeNotes('No title\\n'),
+		say('Done.')
+	]);
+	const sleep = {
+		type: 'response.output_item.done',
+		item: {
+			type: 'function_call',
+			call_id: 'pause',
+			name: 'run',
+			arguments: JSON.stringify({ command: 'sleep 5' })
+		}
+	};
+	await script('unrevertable', [[sleep], say("I can't tell what's wrong.")]);
+
+	await repo.ship(id, shipInput(sam));
+	const red = await untilMain(repo, (main) => main.verified?.passed === false);
+	const canonical = join(dir, 'unrevertable.git');
+	const work = join(dir, 'unrevertable-work');
+	sh(work, 'pull', '--quiet', canonical, 'main');
+	await commit(work, { 'notes.md': 'No title, still\n' }, 'Reword the notes');
+	sh(work, 'push', '--quiet', canonical, 'main');
+
+	await expect
+		.poll(async () => ((await repo.thread(id)) as ThreadDetail).summary.failure?.title, {
+			timeout: 180_000
+		})
+		.toBe("Couldn't revert");
+	await script('unrevertable', [say('Understood.')]);
+	await repo.reply(id, { author: sam, text: 'Where does it stand?' });
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Understood.')
+	);
+	const query = JSON.stringify((await modelRequests('unrevertable')).at(-1)!.query);
+	expect(query).toContain(
+		`What this thread shipped broke \`main\`'s deploy checks, and reverting ${red.verified!.sha.slice(0, 7)} failed: Reverting conflicts with main in notes.md`
+	);
+	expect(query).toContain('It is still on `main`, which still fails its deploy checks.');
 });
 
 test('bisects to the commit that broke main, rules out flakes, and starts new threads from the last green commit', async () => {

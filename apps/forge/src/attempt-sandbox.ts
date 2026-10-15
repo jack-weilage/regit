@@ -324,17 +324,20 @@ export class AttemptSandbox extends DurableObject<Env> {
 		);
 	}
 
-	// What became of what this thread shipped once it landed, told on its agent's next turn.
-	verdict(notice: string) {
+	// Something that happened to this thread outside its agent's turns, told at the start of its next one.
+	notify(notice: string) {
 		if (!this.#agent()) return;
-		const notices = JSON.parse(this.#meta('verdict-notices') ?? '[]') as string[];
-		this.#setMeta('verdict-notices', JSON.stringify([...notices, notice]));
+		const notices = JSON.parse(this.#meta('notices') ?? '[]') as string[];
+		this.#setMeta('notices', JSON.stringify([...notices, notice]));
 	}
 
-	async stop() {
+	async stop(by: string) {
 		this.#sql.exec('DELETE FROM inbox');
 		const attempt = this.#agent();
 		if (!attempt || !isActive(attempt.status)) return;
+		this.notify(
+			`${by} stopped your last turn before it finished. Tools that were running were cut off and may have partly taken effect, and nothing you planned after them ran. Check the workspace before repeating or continuing that work.`
+		);
 		this.#forgetRetries();
 		this.#setStatus('interrupted');
 		this.#controller?.abort();
@@ -470,7 +473,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			const opening: Turn[] = [
 				...this.#rebuiltNotes(),
 				...this.#retriedNotes(),
-				...this.#shippedNotes(),
+				...this.#noticeNotes(),
 				...(synced ? [] : await this.#conflictNotes(attempt, fetch)),
 				...this.#checkNotes(),
 				...this.#overlapNotes(),
@@ -887,11 +890,11 @@ export class AttemptSandbox extends DurableObject<Env> {
 		];
 	}
 
-	#shippedNotes(): Turn[] {
+	#noticeNotes(): Turn[] {
 		const shipped = this.#meta('shipped-notice');
-		const verdicts = JSON.parse(this.#meta('verdict-notices') ?? '[]') as string[];
-		this.#sql.exec("DELETE FROM meta WHERE key IN ('shipped-notice', 'verdict-notices')");
-		return [...(shipped ? [shipped] : []), ...verdicts].map((text) => ({
+		const notices = JSON.parse(this.#meta('notices') ?? '[]') as string[];
+		this.#sql.exec("DELETE FROM meta WHERE key IN ('shipped-notice', 'notices')");
+		return [...(shipped ? [shipped] : []), ...notices].map((text) => ({
 			role: 'notification' as const,
 			text
 		}));

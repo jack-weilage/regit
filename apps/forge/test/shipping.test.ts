@@ -104,6 +104,44 @@ test('hands a conflicting ship back to its agent to resolve, then ships again', 
 	expect(sh(runFork, 'rev-list', '--parents', '-1', 'main').split(' ')).toContain(main);
 });
 
+test('tells the agent when its ship stops without landing', async () => {
+	const { repo, sam, id } = await startedThread('ship-stops', [
+		writeNotes('# Notes\\n'),
+		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
+	]);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	const work = join(dir, 'ship-stops-work');
+	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
+	sh(work, 'push', '--quiet', join(dir, 'ship-stops.git'), 'main');
+	const main = sh(join(dir, 'ship-stops.git'), 'rev-parse', 'main');
+	await script('ship-stops', [
+		writeNotes('Some better notes\\n'),
+		[{ type: 'response.output_text.delta', delta: "Kept main's notes." }]
+	]);
+
+	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
+	await untilThread(
+		repo,
+		id,
+		(detail) =>
+			detail.summary.status === 'needs-you' && detail.summary.failure?.title === 'Shipping stopped'
+	);
+	expect(sh(join(dir, 'ship-stops.git'), 'rev-parse', 'main')).toBe(main);
+
+	await script('ship-stops', [[{ type: 'response.output_text.delta', delta: 'Noted.' }]]);
+	await repo.reply(id, { author: sam, text: 'Did it ship?' });
+	await untilThread(repo, id, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Noted.')
+	);
+	const query = JSON.stringify((await modelRequests('ship-stops')).at(-1)!.query);
+	expect(
+		query.split('Shipping this thread stopped before it landed: Nothing to ship')
+	).toHaveLength(2);
+	expect(query).toContain(
+		"Nothing from this ship reached `main`, so this thread's changes still need shipping."
+	);
+});
+
 test("ships to the branch the repository's HEAD points to, not its recorded default", async () => {
 	const { repo, sam, id } = await startedThread(
 		'imported',
