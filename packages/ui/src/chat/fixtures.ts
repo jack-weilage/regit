@@ -1,4 +1,5 @@
 import type { DiffFile, DiffHunk, Mentionable, SimilarThread } from './types.ts';
+import type { ChildThreadView } from './ChildThreads.svelte';
 import type { Automation, Intent } from '@regit/core';
 
 export const intent: Intent = {
@@ -298,5 +299,63 @@ export const endedAutomations: Automation[] = [
 		on: { schedule: '0 2 * * *' },
 		runs: { done: 0, limit: 50 },
 		ended: { at: automationsNow - 2 * hour, reason: 'cancelled', by: 'Sam Rivera' }
+	}
+];
+
+export const childThreads: ChildThreadView[] = [
+	{
+		id: 'c1',
+		number: 12,
+		headline: 'feat(ui): board of child threads',
+		status: 'working',
+		href: '/regit/12',
+		doneWhen: { met: 1, total: 4 },
+		previews: [{ name: 'storybook', href: 'https://c1-storybook.regit.run' }]
+	},
+	{
+		id: 'c2',
+		number: 13,
+		headline: 'feat(threads): tell a parent about its children',
+		status: 'idle',
+		needsYou: true,
+		href: '/regit/13',
+		doneWhen: { met: 2, total: 3 },
+		previews: [
+			{ name: 'web', href: 'https://c2-web.regit.run' },
+			{ name: 'storybook', href: 'https://c2-storybook.regit.run' }
+		]
+	},
+	{
+		id: 'c3',
+		number: 14,
+		headline: 'fix(forge): keep hand-backs from being lost',
+		status: 'shipping',
+		href: '/regit/14',
+		doneWhen: { met: 3, total: 3 }
+	},
+	{
+		id: 'c4',
+		number: 15,
+		headline: 'feat(threads): exempt family messages from the limit',
+		status: 'shipped',
+		href: '/regit/15',
+		doneWhen: { met: 2, total: 2 },
+		shipped: { sha: '4b02e7a91c3d5f6e8a0b2c4d6e8f0a1b2c3d4e5f', verdict: 'deployed' }
+	},
+	{
+		id: 'c5',
+		number: 16,
+		headline: 'perf(settings): page the member list',
+		status: 'shipped',
+		href: '/regit/16',
+		doneWhen: { met: 2, total: 2 },
+		shipped: { sha: '9f1c2d3e4b5a6978a0b1c2d3e4f5a6b7c8d9e0f1', verdict: 'failed' }
+	},
+	{
+		id: 'c6',
+		number: 17,
+		headline: '',
+		status: 'idle',
+		href: '/regit/17'
 	}
 ];

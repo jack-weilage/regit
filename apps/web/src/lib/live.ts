@@ -84,6 +84,7 @@ export function repoLiveHandlers(input: {
 	reloadMain(): void;
 	reloadThreads(): void;
 	reloadThread(id: string): void;
+	reloadChildren(id: string): void;
 	notice(summary: ThreadSummary): void;
 }): LiveHandlers {
 	return {
@@ -93,7 +94,10 @@ export function repoLiveHandlers(input: {
 			input.reloadMain();
 			input.reloadThreads();
 			const current = input.current();
-			if (current) input.reloadThread(current);
+			if (current) {
+				input.reloadThread(current);
+				input.reloadChildren(current);
+			}
 		},
 		message(data) {
 			const message = JSON.parse(data) as LiveMessage;
@@ -109,6 +113,8 @@ export function repoLiveHandlers(input: {
 			if (message.type === 'thread') {
 				input.notice(message.summary);
 				input.reloadThreads();
+				const parent = message.summary.parent?.id;
+				if (parent && parent === input.current()) input.reloadChildren(parent);
 			}
 			if (thread === input.current()) input.reloadThread(thread);
 		}

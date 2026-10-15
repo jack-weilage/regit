@@ -80,6 +80,29 @@ test('suggests separate work and spins it off into a linked thread that starts w
 		{ type: 'event', text: 'Started by Sam' },
 		{ type: 'message', author: { kind: 'agent' }, text: 'Got it.' }
 	]);
+	expect(await repo.children(id)).toMatchObject([
+		{
+			summary: { id: child.id, number: 2, parent: { id } },
+			doneWhen: { met: 0, total: suggestion.doneWhen.length },
+			previews: []
+		}
+	]);
+	expect(await repo.children(child.id)).toEqual([]);
+	await repo.doneWhenRecorded(child.id, [{ check: 1, status: 'met', evidence: 'test' }], 'tree');
+	await repo.attemptUpdated(child.id, {
+		type: 'services',
+		preview: `${child.id}-{name}.regit.run`,
+		services: [
+			{ name: 'web', command: 'bun dev', port: 5173, saved: true, status: 'running' },
+			{ name: 'docs', command: 'bun docs', port: 4000, saved: true, status: 'stopped' }
+		]
+	});
+	expect(await repo.children(id)).toMatchObject([
+		{
+			doneWhen: { met: 1, total: 1 },
+			previews: [{ name: 'web', url: `https://${child.id}-web.regit.run` }]
+		}
+	]);
 	const query = JSON.stringify((await modelRequests('suggesting')).at(-1)!.query);
 	expect(query).toContain('spun off from another one');
 	expect(query).toContain(suggestion.context);

@@ -43,6 +43,7 @@ import type {
 	ShipInput,
 	StartupStage,
 	ThreadActivity,
+	ThreadChild,
 	ThreadDetail,
 	ThreadEvent,
 	ThreadOverlap,
@@ -549,6 +550,33 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			.exec<ThreadRow>(`${selectThreads} WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC`)
 			.toArray()
 			.map(toSummary);
+	}
+
+	children(id: string): ThreadChild[] {
+		return this.#sql
+			.exec<ThreadRow>(
+				`${selectThreads} WHERE t.parent = ? AND t.deleted_at IS NULL ORDER BY t.number`,
+				id
+			)
+			.toArray()
+			.map((row) => {
+				const intent = this.#latestIntentEntry(row.id);
+				return {
+					summary: toSummary(row),
+					doneWhen: intent
+						? {
+								met: intent.intent.doneWhen.filter((check) => {
+									const result = intent.results?.[check];
+									return result?.status === 'met' && !result.stale;
+								}).length,
+								total: intent.intent.doneWhen.length
+							}
+						: null,
+					previews: this.#services(row.id)
+						.filter((service) => service.status === 'running' && service.preview)
+						.map((service) => ({ name: service.name, url: service.preview }))
+				};
+			});
 	}
 
 	otherThreads(from: string) {

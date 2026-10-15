@@ -49,6 +49,10 @@ export const getThread = query(thread, async ({ repo, id }) =>
 	(await coordinator(repo)).thread(id)
 );
 
+export const getChildren = query(thread, async ({ repo, id }) =>
+	(await coordinator(repo)).children(id)
+);
+
 export const getMain = query(name, async (repo) => (await coordinator(repo)).main());
 
 export const getDeploySettings = query(name, async (repo) => {

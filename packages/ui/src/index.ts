@@ -25,6 +25,7 @@ export { default as ChatBehindMain } from './chat/ChatBehindMain.svelte';
 export { default as ChatComposer } from './chat/ChatComposer.svelte';
 export { default as ChatDiff } from './chat/ChatDiff.svelte';
 export { default as ChatEvent } from './chat/ChatEvent.svelte';
+export { default as ChildThreads, type ChildThreadView } from './chat/ChildThreads.svelte';
 export { default as ChatFailure } from './chat/ChatFailure.svelte';
 export { default as ChatRecovered } from './chat/ChatRecovered.svelte';
 export { default as ChatRetry } from './chat/ChatRetry.svelte';

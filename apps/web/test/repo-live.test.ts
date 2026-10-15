@@ -10,6 +10,7 @@ function setup() {
 	const reloadMain = vi.fn();
 	const reloadThreads = vi.fn();
 	const reloadThread = vi.fn();
+	const reloadChildren = vi.fn();
 	const notice = vi.fn();
 	const handlers = repoLiveHandlers({
 		activities,
@@ -18,6 +19,7 @@ function setup() {
 		reloadMain,
 		reloadThreads,
 		reloadThread,
+		reloadChildren,
 		notice
 	});
 	return {
@@ -26,6 +28,7 @@ function setup() {
 		reloadMain,
 		reloadThreads,
 		reloadThread,
+		reloadChildren,
 		notice,
 		handlers,
 		navigate(id: string | undefined) {
@@ -60,7 +63,8 @@ test('summary updates refresh the sidebar and current detail; activity remains k
 });
 
 test('reconnection clears stale activity and reloads the current internal ID after navigation', () => {
-	const { handlers, activities, navigate, reloadMain, reloadThreads, reloadThread, main } = setup();
+	const { handlers, activities, navigate, reloadMain, reloadThreads, reloadThread, reloadChildren, main } =
+		setup();
 	activities.abcdef012345 = null;
 	navigate('fedcba543210');
 	handlers.reconnected();
@@ -69,7 +73,21 @@ test('reconnection clears stale activity and reloads the current internal ID aft
 	expect(reloadMain).toHaveBeenCalledOnce();
 	expect(reloadThreads).toHaveBeenCalledOnce();
 	expect(reloadThread).toHaveBeenCalledExactlyOnceWith('fedcba543210');
+	expect(reloadChildren).toHaveBeenCalledExactlyOnceWith('fedcba543210');
 	navigate(undefined);
 	handlers.reconnected();
 	expect(reloadThread).toHaveBeenCalledTimes(1);
+});
+
+test("a child's summary refreshes the current parent's board, and only that", () => {
+	const { handlers, reloadChildren, reloadThread } = setup();
+	const child = (parent: string | null) =>
+		({ id: 'child0000001', number: 43, parent: parent && { id: parent } }) as ThreadSummary;
+	handlers.message(JSON.stringify({ type: 'thread', summary: child('abcdef012345') }));
+	expect(reloadChildren).toHaveBeenCalledExactlyOnceWith('abcdef012345');
+	expect(reloadThread).not.toHaveBeenCalled();
+	handlers.message(JSON.stringify({ type: 'thread', summary: child('other') }));
+	handlers.message(JSON.stringify({ type: 'thread', summary: child(null) }));
+	handlers.message(JSON.stringify({ type: 'entry', thread: 'child0000001', entry: {} }));
+	expect(reloadChildren).toHaveBeenCalledOnce();
 });

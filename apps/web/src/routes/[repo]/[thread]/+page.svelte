@@ -21,6 +21,7 @@
 		ChatStartup,
 		ChatThreadMessage,
 		ChatTools,
+		ChildThreads,
 		DeletedThread,
 		ShipPanel,
 		Markdown,
@@ -56,6 +57,7 @@
 		dismissSuggestion,
 		forwardIntent,
 		getChanges,
+		getChildren,
 		readServiceLogs,
 		serviceAction,
 		getThread,
@@ -141,6 +143,7 @@
 	let retry = $derived(activity?.retry ?? null);
 	let user = $derived(await getUser());
 	let threads = $derived(await getThreads(params.repo));
+	let children = $derived(await getChildren(ref));
 
 	let latestFailure = $derived(detail?.entries.findLast((entry) => entry.type === 'failure')?.id);
 	let progress = $derived.by((): { status?: IntentStatus; note?: string } => {
@@ -400,6 +403,23 @@
 						{/if}
 					</ErrorBoundary>
 				{/each}
+				{#if children.length}
+					<ErrorBoundary title="Couldn't show spun-off threads" resetOn={params.thread}>
+						<ChildThreads
+							threads={children.map(({ summary: child, doneWhen, previews }) => ({
+								id: child.id,
+								number: child.number,
+								headline: child.headline,
+								status: child.status,
+								needsYou: child.needsYou,
+								href: `/${params.repo}/${child.number}`,
+								doneWhen: doneWhen ?? undefined,
+								previews: previews.map((preview) => ({ name: preview.name, href: preview.url })),
+								shipped: child.shipped ?? undefined
+							}))}
+						/>
+					</ErrorBoundary>
+				{/if}
 				<ErrorBoundary title="Couldn't show this thread's status" resetOn={params.thread}>
 					{#if summary.behind && summary.status !== 'archived'}
 						{@const behind = summary.behind}

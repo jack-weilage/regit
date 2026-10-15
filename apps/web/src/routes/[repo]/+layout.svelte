@@ -35,6 +35,7 @@
 		getMain,
 		getRepos,
 		revokeGitAccessToken,
+		getChildren,
 		getThread,
 		getThreads,
 		getUser,
@@ -136,6 +137,7 @@
 				reloadMain: () => getMain(repo).refresh(),
 				reloadThreads: () => getThreads(repo).refresh(),
 				reloadThread: (id) => getThread({ repo, id }).refresh(),
+				reloadChildren: (id) => getChildren({ repo, id }).refresh(),
 				notice
 			}),
 			{

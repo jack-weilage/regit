@@ -251,6 +251,13 @@ export interface ThreadService {
 	preview: string;
 }
 
+// A thread launched from another, with what its parent's board shows about it.
+export interface ThreadChild {
+	summary: ThreadSummary;
+	doneWhen: { met: number; total: number } | null;
+	previews: { name: string; url: string }[];
+}
+
 export interface ThreadDetail {
 	summary: ThreadSummary;
 	branch: string;
@@ -298,6 +305,7 @@ export interface RepoCoordinatorApi {
 	threads(): ThreadSummary[];
 	resolveThread(ref: string): Pick<ThreadSummary, 'id' | 'number'> | null;
 	thread(id: string): Promise<ThreadDetail | null>;
+	children(id: string): ThreadChild[];
 	main(): MainStatus;
 	deploySecrets(by: Author): Promise<DeploySecret[]>;
 	setDeploySecret(name: string, value: string, by: Author): Promise<void>;
