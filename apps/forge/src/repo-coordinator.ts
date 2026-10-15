@@ -188,6 +188,20 @@ function verdictNotice(
 	return `What this thread shipped as ${short} broke \`${branch}\`'s deploy checks, so it was reverted${where} and is no longer on \`${branch}\`.`;
 }
 
+function parentVerdictNotice(
+	verdict: 'passed' | 'deployed' | 'reverted',
+	sha: string,
+	branch: string,
+	revert?: string
+) {
+	const short = sha.slice(0, 7);
+	if (verdict === 'passed')
+		return `shipped as ${short}, which passed \`${branch}\`'s deploy checks.`;
+	if (verdict === 'deployed') return `shipped as ${short}, which is now deployed.`;
+	const where = revert ? ` in ${revert.slice(0, 7)}` : '';
+	return `shipped as ${short}, which broke \`${branch}\`'s deploy checks, so it was reverted${where} and is no longer on \`${branch}\`.`;
+}
+
 function deployFailedNotice(shipped: string, sha: string, branch: string, output: string) {
 	const tail = output.length > maxDeployOutput ? `…${output.slice(-maxDeployOutput)}` : output;
 	return `What this thread shipped as ${shipped.slice(0, 7)} passed \`${branch}\`'s deploy checks, but deploying ${sha.slice(0, 7)}, which includes it, failed, so it isn't live:\n\n${tail}`;
@@ -1018,6 +1032,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const { by, email, title, body } = ship;
 		this.#setMeta(`ship-input:${ship.thread}`, JSON.stringify({ by, email, title, body }));
+		this.#sql.exec('DELETE FROM meta WHERE key = ?', `parent-told:${ship.thread}`);
 		const fixing = this.#fixing(ship.thread);
 		if (fixing)
 			this.#saveFixing(ship.thread, {
@@ -1028,6 +1043,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#setStatus(ship.thread, 'shipped');
 		this.#add(ship.thread, { type: 'event', text: `Shipped ${sha.slice(0, 7)} to ${branch}` });
 		this.#threadEvent(ship.thread, 'landed');
+		await this.#tellParent(ship.thread, `shipped as ${sha.slice(0, 7)} to \`${branch}\`.`);
 		this.#checkOverlaps(ship.thread);
 		await this.#verify({ sha, headline: title, thread: ship.thread });
 	}
@@ -1120,6 +1136,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			tone: 'warning'
 		});
 		this.#setStatus(ship.thread, 'working');
+		const commit = ship.source.sha.slice(0, 7);
+		await this.#tellParent(
+			ship.thread,
+			conflict
+				? `conflicted with ${conflict[1]} while shipping ${commit}, so it was handed back to its agent to bring up to date; it ships again once its agent finishes.`
+				: `couldn't ship ${commit} (${message}), so it was handed back to its agent to fix; it ships again once its agent finishes.`
+		);
 		await this.#converse(
 			ship.thread,
 			agent,
@@ -1330,7 +1353,52 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		this.#touch(thread);
 		// A failure reaches the agent as its hand-back or, failing that, the revert.
 		if (verdict === 'landed' || verdict === 'failed') return;
-		await this.#notify(thread, verdictNotice(verdict, shipped.sha, await this.#branch(), revert));
+		const branch = await this.#branch();
+		await this.#notify(thread, verdictNotice(verdict, shipped.sha, branch, revert));
+		await this.#tellParent(thread, parentVerdictNotice(verdict, shipped.sha, branch, revert));
+	}
+
+	// A thread started with launch_thread tells the thread that started it how it turns out:
+	// a working parent reads it at its next step, and an idle one starts a turn.
+	async #tellParent(child: string, text: string) {
+		const summary = this.#summary(child);
+		const parent = summary?.parent && this.#summary(summary.parent.id);
+		if (!summary || !parent || parent.deleted || parent.status === 'archived') return;
+		const about = `Thread #${summary.number} (${summary.headline || 'New thread'}), which this thread started, ${text}`;
+		if (parent.status === 'shipping') return await this.#notify(parent.id, about);
+		const entry = this.#add(parent.id, { type: 'event', text: about });
+		if (['idle', 'shipped'].includes(parent.status)) this.#setStatus(parent.id, 'working');
+		await this.#converse(parent.id, agent, about, entry).catch(() => {});
+	}
+
+	// Told once per reason, so a parent and child messaging each other don't keep waking each other.
+	async #tellParentNeedsYou(thread: string) {
+		const summary = this.#summary(thread);
+		if (!summary?.parent) return;
+		const told = `parent-told:${thread}`;
+		if (!summary.needsYou) {
+			this.#sql.exec('DELETE FROM meta WHERE key = ?', told);
+			return;
+		}
+		const entries = this.#entries(thread);
+		const intent = this.#latestIntentEntry(thread);
+		const unmet = intent ? unmetChecks(intent) : 0;
+		const reasons = [
+			summary.failure && `${summary.failure.title}: ${summary.failure.error}`,
+			summary.behind?.conflicts.length &&
+				`it conflicts with \`${summary.behind.branch}\` in ${summary.behind.conflicts.join(', ')}`,
+			summary.changes?.files && 'it has changes ready to ship',
+			unmet && `${unmet} of its done-when checks ${unmet === 1 ? 'is' : 'are'} unmet`
+		].filter(Boolean);
+		const reason = reasons.join('; ');
+		if (this.#meta(told) === reason) return;
+		this.#setMeta(told, reason);
+		const checkpoint = entries.findLast((entry) => entry.type === 'tools' && entry.checkpoint);
+		const commit =
+			checkpoint?.type === 'tools' && checkpoint.checkpoint
+				? ` Its latest commit is ${checkpoint.checkpoint.slice(0, 7)}.`
+				: '';
+		await this.#tellParent(thread, `ended a turn and needs a person: ${reason}.${commit}`);
 	}
 
 	async #notify(thread: string, notice: string) {
@@ -1361,8 +1429,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const failed = blockingFailures(results).map(({ name }) => name);
 		const summary = this.#summary(thread);
 		const input = JSON.parse(this.#meta(`ship-input:${thread}`) ?? 'null') as ShipInput | null;
+		const brokeMain = `shipped as ${culprit.sha.slice(0, 7)}, which failed \`${branch}\`'s deploy checks (${failed.join(', ')})`;
 		if (summary?.status !== 'shipped' || summary.deleted || fixing.fixes >= maxFixes || !input) {
 			const why = fixing.fixes ? 'the fix did not make them pass' : 'nobody was free to fix them';
+			await this.#tellParent(thread, `${brokeMain}, and ${why}, so it is being reverted.`);
 			return await this.#revert(thread, `Deploy checks failed (${failed.join(', ')}), and ${why}.`);
 		}
 		this.#saveFixing(thread, { ...fixing, fixes: fixing.fixes + 1 });
@@ -1383,6 +1453,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			tone: 'danger'
 		});
 		this.#setStatus(thread, 'working');
+		await this.#tellParent(
+			thread,
+			`${brokeMain}, so it was handed back to its agent to fix; the fix ships once its agent finishes.`
+		);
 		await this.#converse(
 			thread,
 			agent,
@@ -1741,7 +1815,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		}
 		if (!working) return;
 		const handBack = this.#takeHandBack(thread);
-		if (!handBack) return;
+		if (!handBack) return await this.#tellParentNeedsYou(thread);
 		if (update.status !== 'finished')
 			return await this.#revert(thread, 'the agent stopped before fixing them');
 		try {
@@ -2093,11 +2167,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 
 	// Unmet done-when checks on the thread's current tree flag it as needing someone.
 	#countUnmet(thread: string, entry: Extract<Entry, { type: 'intent' }>) {
-		const unmet = entry.intent.doneWhen.filter((check) => {
-			const result = entry.results?.[check];
-			return result?.status === 'unmet' && !result.stale;
-		}).length;
-		this.#sql.exec('UPDATE threads SET unmet = ? WHERE id = ?', unmet, thread);
+		this.#sql.exec('UPDATE threads SET unmet = ? WHERE id = ?', unmetChecks(entry), thread);
 	}
 
 	#latestIntent(thread: string) {
@@ -2115,6 +2185,13 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 const selectThreads =
 	'SELECT t.*, p.headline AS parent_headline, p.number AS parent_number FROM threads t LEFT JOIN threads p ON p.id = t.parent';
+
+function unmetChecks(entry: Extract<Entry, { type: 'intent' }>) {
+	return entry.intent.doneWhen.filter((check) => {
+		const result = entry.results?.[check];
+		return result?.status === 'unmet' && !result.stale;
+	}).length;
+}
 
 function headlineFrom(text: string) {
 	const line = text.trim().split('\n')[0]!.trim();
