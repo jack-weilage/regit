@@ -375,10 +375,17 @@ const treeOf = (root: string, sha: string) => git(root, ['rev-parse', `${sha}^{t
 export async function diff(root: string, { base, head = 'HEAD' }: DiffRequest) {
 	const result = await exec(
 		'git',
-		['diff', '--no-color', '--no-ext-diff', '--find-renames', base, head],
-		{
-			cwd: root
-		}
+		[
+			'-c',
+			'core.quotePath=false',
+			'diff',
+			'--no-color',
+			'--no-ext-diff',
+			'--find-renames',
+			base,
+			head
+		],
+		{ cwd: root }
 	);
 	if (result.code !== 0) throw new Error(`git diff failed: ${result.output.trim()}`);
 	return result.stdout;

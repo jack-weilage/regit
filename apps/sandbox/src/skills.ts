@@ -5,6 +5,8 @@ import type { SkillInfo } from '@regit/agent';
 const folders = ['.agents/skills', '.claude/skills'];
 const maxResources = 50;
 
+const bun = (globalThis as unknown as { Bun: { YAML: { parse(text: string): unknown } } }).Bun;
+
 export async function discoverSkills(root: string): Promise<SkillInfo[]> {
 	const skills = new Map<string, SkillInfo>();
 	for (const folder of folders) {
@@ -44,22 +46,42 @@ async function files(directory: string): Promise<string[]> {
 }
 
 function frontmatter(text: string) {
-	const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
-	if (!match) return { fields: {} as Record<string, string>, body: text.trim() };
+	const match = /^\uFEFF?---\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)([\s\S]*)$/.exec(text);
+	if (!match) return { fields: {}, body: text.trim() };
+	const yaml = match[1] ?? '';
+	let parsed: unknown;
+	try {
+		parsed = bun.YAML.parse(yaml);
+	} catch {
+		parsed = lenient(yaml);
+	}
+	const fields: { name?: string; description?: string } = {};
+	if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+		const { name, description } = parsed as Record<string, unknown>;
+		if (typeof name === 'string' && name.trim()) fields.name = name.trim();
+		if (typeof description === 'string' && description.trim())
+			fields.description = description.trim();
+	}
+	return { fields, body: match[2]!.trim() };
+}
+
+// Skills often hold YAML that isn't strictly valid, like `description: Use when: …`, so read top-level fields line by
+// line when the YAML parser rejects it.
+function lenient(yaml: string) {
 	const fields: Record<string, string> = {};
-	const lines = match[1]!.split(/\r?\n/);
+	const lines = yaml.split(/\r?\n/);
 	for (let index = 0; index < lines.length; index++) {
 		const field = /^([\w-]+):\s*(.*)$/.exec(lines[index]!);
 		if (!field) continue;
 		const [, key, value = ''] = field;
-		if (value === '>' || value === '|' || value === '>-' || value === '|-') {
+		if (/^[>|][+-]?$/.test(value)) {
 			const block: string[] = [];
-			while (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1]!))
+			while (index + 1 < lines.length && /^(\s+\S|\s*$)/.test(lines[index + 1]!))
 				block.push(lines[++index]!.trim());
-			fields[key!] = block.join(value.startsWith('>') ? ' ' : '\n');
+			fields[key!] = block.join(value.startsWith('>') ? ' ' : '\n').trim();
 		} else if (value) {
 			fields[key!] = value.replace(/^(['"])(.*)\1$/, '$2');
 		}
 	}
-	return { fields, body: match[2]!.trim() };
+	return fields;
 }

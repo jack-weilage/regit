@@ -30,14 +30,16 @@ export function exec(
 		let output = '';
 		let stdout = '';
 		let timedOut = false;
-		child.stdout.on('data', (chunk: Buffer) => {
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', (chunk: string) => {
 			output += chunk;
 			stdout += chunk;
-			onOutput?.(chunk.toString());
+			onOutput?.(chunk);
 		});
-		child.stderr.on('data', (chunk: Buffer) => {
+		child.stderr.on('data', (chunk: string) => {
 			output += chunk;
-			onOutput?.(chunk.toString());
+			onOutput?.(chunk);
 		});
 
 		const kill = () => {

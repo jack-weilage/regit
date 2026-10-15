@@ -98,6 +98,33 @@ test('marks large files, dropping hunks that are too big to keep', () => {
 	expect(huge).toMatchObject({ additions: 6000, tooLarge: true, hunks: [] });
 });
 
+test('reads quoted, non-ASCII and spaced paths', () => {
+	const [quoted, renamed, raw, spaced, tabbed] = parseDiff(`diff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"
+--- "a/docs/caf\\303\\251.md"
++++ "b/docs/caf\\303\\251.md"
+@@ -1 +1 @@
+-a
++b
+diff --git a/a b.txt "b/na\\303\\257ve \\360\\237\\245\\236.txt"
+similarity index 100%
+rename from a b.txt
+rename to "na\\303\\257ve \\360\\237\\245\\236.txt"
+diff --git a/menü b/menü b/menü b/menü
+new file mode 100644
+diff --git a/my notes.md b/my notes.md
+deleted file mode 100644
+diff --git "a/tab\\there \\"q\\".md" "b/tab\\there \\"q\\".md"
+new file mode 100644
+`);
+	expect(quoted).toMatchObject({ path: 'docs/café.md', change: 'modified', additions: 1 });
+	expect(quoted!.oldPath).toBeUndefined();
+	expect(renamed).toMatchObject({ path: 'naïve 🥞.txt', oldPath: 'a b.txt', change: 'renamed' });
+	expect(raw).toMatchObject({ path: 'menü b/menü', change: 'added' });
+	expect(raw!.oldPath).toBeUndefined();
+	expect(spaced).toMatchObject({ path: 'my notes.md', change: 'deleted' });
+	expect(tabbed).toMatchObject({ path: 'tab\there "q".md', change: 'added' });
+});
+
 test('returns nothing for an empty diff', () => {
 	expect(parseDiff('')).toEqual([]);
 });

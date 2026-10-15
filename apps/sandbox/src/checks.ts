@@ -114,6 +114,15 @@ function matcher(patterns: string[]) {
 
 const lines = (text: string) => text.split('\n').filter(Boolean);
 
+// Lists entries NUL-separated (-z), so git doesn't quote paths with non-ASCII or special characters.
+async function entries(root: string, args: string[]) {
+	const result = await exec('git', [...args.slice(0, 1), '-z', ...args.slice(1)], { cwd: root });
+	if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${result.output.trim()}`);
+	return result.stdout.split('\0').filter(Boolean);
+}
+
+const entryPath = (entry: string) => entry.slice(entry.indexOf('\t') + 1);
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 function commitRef(ref: string) {
@@ -130,9 +139,15 @@ export async function checks(
 ): Promise<ChecksResponse> {
 	commitRef(base);
 	commitRef(commit);
-	const governing = lines(
-		await git(root, ['diff', '--name-only', base, commit, '--', checksFile, deployScript])
-	);
+	const governing = await entries(root, [
+		'diff',
+		'--name-only',
+		base,
+		commit,
+		'--',
+		checksFile,
+		deployScript
+	]);
 	const file = `${commit}:${checksFile}`;
 	if ((await exec('git', ['cat-file', '-e', file], { cwd: root })).code !== 0)
 		return { checks: [], governing };
@@ -146,8 +161,8 @@ export async function checks(
 			governing
 		};
 	}
-	const changed = lines(await git(root, ['diff', '--name-only', '--no-renames', base, commit]));
-	const files = lines((await exec('git', ['ls-tree', '-r', commit], { cwd: root })).stdout);
+	const changed = await entries(root, ['diff', '--name-only', '--no-renames', base, commit]);
+	const files = await entries(root, ['ls-tree', '-r', commit]);
 	const tree = await git(root, ['rev-parse', `${commit}^{tree}`]);
 	const diff = sha256((await exec('git', ['diff', base, commit], { cwd: root })).stdout);
 	const checks = specs.map((spec) => {
@@ -156,7 +171,7 @@ export async function checks(
 		const inputsHash = spec.ask
 			? diff
 			: inputs
-				? sha256(files.filter((line) => inputs(line.slice(line.indexOf('\t') + 1))).join('\n'))
+				? sha256(files.filter((entry) => inputs(entryPath(entry))).join('\n'))
 				: tree;
 		return { ...spec, applies: changed.some(touches), inputsHash };
 	});
@@ -210,9 +225,10 @@ async function prepareCheckout(root: string, commit: string, signal: AbortSignal
 		await git(root, ['worktree', 'prune']);
 		await git(root, ['worktree', 'add', '--quiet', '--force', '--detach', checkout, commit]);
 	}
-	const entries = lines((await exec('git', ['ls-tree', '-r', commit], { cwd: root })).stdout);
 	const dependencies = sha256(
-		entries.filter((line) => dependencyFile.test(line.slice(line.indexOf('\t') + 1))).join('\n')
+		(await entries(root, ['ls-tree', '-r', commit]))
+			.filter((entry) => dependencyFile.test(entryPath(entry)))
+			.join('\n')
 	);
 	const stamp = join(root, checkLogs, 'checkout.setup');
 	if ((await readFile(stamp, 'utf8').catch(() => null)) === dependencies) return { dir };

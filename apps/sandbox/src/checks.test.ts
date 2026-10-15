@@ -131,6 +131,32 @@ describe('planning checks', () => {
 		const third = await workspace.checks({ base, commit: 'HEAD' });
 		expect(third.checks[2]!.inputsHash).not.toBe(second.checks[2]!.inputsHash);
 	});
+
+	test('matches non-ASCII paths by their real names', async () => {
+		const base = await git(root, ['rev-parse', 'HEAD']);
+		await commit({
+			'.agents/checks.yml': `checks:
+  - name: menu
+    run: exit 0
+    inputs: ['docs/**']
+    when: ['docs/café/**']
+    before: [handoff]
+`,
+			'notes.md': 'Notes\n'
+		});
+		const first = await workspace.checks({ base, commit: 'HEAD' });
+		expect(first.checks[0]!.applies).toBe(false);
+
+		const before = await git(root, ['rev-parse', 'HEAD']);
+		await commit({ 'docs/café/menü.md': 'Crêpes\n' });
+		const second = await workspace.checks({ base: before, commit: 'HEAD' });
+		expect(second.checks[0]!.applies).toBe(true);
+		expect(second.checks[0]!.inputsHash).not.toBe(first.checks[0]!.inputsHash);
+
+		await commit({ 'docs/café/menü.md': 'Galettes\n' });
+		const third = await workspace.checks({ base: before, commit: 'HEAD' });
+		expect(third.checks[0]!.inputsHash).not.toBe(second.checks[0]!.inputsHash);
+	});
 });
 
 describe('what governs deploys', () => {

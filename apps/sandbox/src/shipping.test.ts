@@ -333,4 +333,13 @@ describe('shipping', () => {
 		expect(diff).toContain("-export const greeting = 'hello';\n+export const greeting = 'hi';");
 		expect(diff).toContain('new file mode');
 	});
+
+	test('diffs non-ASCII paths under their real names', async () => {
+		await call('write_file', { path: 'docs/café.md', content: 'Crêpes 🥞\n' });
+		await workspace.commit({ message: 'Add the menu', author });
+
+		const diff = await workspace.diff({ base });
+		expect(diff).toContain('diff --git a/docs/café.md b/docs/café.md');
+		expect(diff).toContain('+Crêpes 🥞');
+	});
 });
