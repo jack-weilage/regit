@@ -203,6 +203,11 @@ function parentVerdictNotice(
 	return `broke \`${branch}\`'s deploy checks with \`${short}\` and was reverted${where}.`;
 }
 
+function parseTold(value: string | null | undefined) {
+	if (!value?.startsWith('{')) return null;
+	return JSON.parse(value) as { reason: string; commit: string | null };
+}
+
 function deployFailedNotice(shipped: string, sha: string, branch: string, output: string) {
 	const tail = output.length > maxDeployOutput ? `…${output.slice(-maxDeployOutput)}` : output;
 	return `What this thread shipped as ${shipped.slice(0, 7)} passed \`${branch}\`'s deploy checks, but deploying ${sha.slice(0, 7)}, which includes it, failed, so it isn't live:\n\n${tail}`;
@@ -1479,7 +1484,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.#converse(parent.id, agent, about, entry).catch(() => {});
 	}
 
-	// Told once per reason, so a parent and child messaging each other don't keep waking each other.
+	// Told once per reason and commit, so each handoff wakes the parent but a parent and child messaging each other don't keep waking each other.
 	async #tellParentNeedsYou(thread: string) {
 		const summary = this.#summary(thread);
 		if (!summary?.parent) return;
@@ -1489,6 +1494,8 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			return;
 		}
 		const entries = this.#entries(thread);
+		const checkpoint = entries.findLast((entry) => entry.type === 'tools' && entry.checkpoint);
+		const commit = checkpoint?.type === 'tools' ? (checkpoint.checkpoint ?? null) : null;
 		const intent = this.#latestIntentEntry(thread);
 		const unmet = intent ? unmetChecks(intent) : 0;
 		const reasons = [
@@ -1499,14 +1506,16 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			unmet && `${unmet} done-when ${unmet === 1 ? 'check' : 'checks'} unmet`
 		].filter(Boolean);
 		const reason = reasons.join('; ');
-		if (this.#meta(told) === reason) return;
-		this.#setMeta(told, reason);
-		const checkpoint = entries.findLast((entry) => entry.type === 'tools' && entry.checkpoint);
-		const commit =
-			checkpoint?.type === 'tools' && checkpoint.checkpoint
-				? ` Latest commit: \`${checkpoint.checkpoint.slice(0, 7)}\`.`
-				: '';
-		await this.#tellParent(thread, `needs a person: ${reason}.${commit}`);
+		const last = parseTold(this.#meta(told));
+		if (last?.reason === reason && last.commit === commit) return;
+		this.#setMeta(told, JSON.stringify({ reason, commit }));
+		if (commit && commit !== last?.commit && summary.changes?.files)
+			return await this.#tellParent(
+				thread,
+				`handed off \`${commit.slice(0, 7)}\` for review: ${reason}.`
+			);
+		const latest = commit ? ` Latest commit: \`${commit.slice(0, 7)}\`.` : '';
+		await this.#tellParent(thread, `needs a person: ${reason}.${latest}`);
 	}
 
 	async #notify(thread: string, notice: string) {

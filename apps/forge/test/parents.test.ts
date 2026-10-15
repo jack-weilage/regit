@@ -71,6 +71,13 @@ async function launched(
 	return { ...started, parent, child, told };
 }
 
+const latestCommit = async (repo: Awaited<ReturnType<typeof startedThread>>['repo'], id: string) =>
+	(
+		(await repo.thread(id))!.entries.findLast(
+			(entry) => entry.type === 'tools' && entry.checkpoint
+		) as { checkpoint: string }
+	).checkpoint;
+
 const parentQueries = async (repo: string, parent: string) =>
 	(await modelRequests(repo))
 		.filter(
@@ -84,14 +91,11 @@ test('wakes an idle parent when its child needs a person, ships, passes and depl
 		[writeNotes('# Notes\\n'), say('Done.')],
 		{ ...titled, '.agents/deploy': 'echo deployed\n' }
 	);
-	const checkpoint = (await repo.thread(child))!.entries.findLast(
-		(entry) => entry.type === 'tools' && entry.checkpoint
-	) as { checkpoint: string };
-	const needsYou = about(
-		`needs a person: changes ready to ship. Latest commit: \`${checkpoint.checkpoint.slice(0, 7)}\`.`
+	const handedOff = about(
+		`handed off \`${(await latestCommit(repo, child)).slice(0, 7)}\` for review: changes ready to ship.`
 	);
-	expect(events(told)).toContain(needsYou);
-	expect(JSON.stringify((await modelRequests('parent-idle')).at(-1)!.query)).toContain(needsYou);
+	expect(events(told)).toContain(handedOff);
+	expect(JSON.stringify((await modelRequests('parent-idle')).at(-1)!.query)).toContain(handedOff);
 
 	await script('parent-idle', noted(6));
 	await repo.ship(child, shipInput(sam));
@@ -120,6 +124,58 @@ test('wakes an idle parent when its child needs a person, ships, passes and depl
 	const own = JSON.stringify((await modelRequests('parent-idle')).at(-1)!.query);
 	expect(own).toContain(`What this thread shipped as ${shipped} is deployed.`);
 	expect(own).not.toContain('Spun-off thread');
+});
+
+test('wakes a parent on each handoff once its checks pass, but not on turns that change nothing', async () => {
+	const { repo, sam, parent, child, told } = await launched(
+		'parent-handoff',
+		[writeNotes('No title\\n'), say('Done.'), writeNotes('# Notes\\n'), say('Fixed.')],
+		{
+			'.agents/checks.yml': `checks:
+  - name: title
+    run: grep -q '^# ' notes.md
+    before: [handoff]
+`
+		}
+	);
+	const handedOff = (detail: ThreadDetail) =>
+		events(detail).filter((text) => text.startsWith(about('handed off')));
+	const first = about(
+		`handed off \`${(await latestCommit(repo, child)).slice(0, 7)}\` for review: changes ready to ship.`
+	);
+	expect(events(told).filter((text) => text.startsWith('Spun-off thread'))).toEqual([first]);
+
+	await script('parent-handoff', [writeNotes('# Notes\\n\\nMore\\n'), say('More.'), say('Noted.')]);
+	await repo.reply(child, { author: sam, text: 'Add more.' });
+	const again = await untilThread(
+		repo,
+		parent,
+		(detail) =>
+			detail.summary.status === 'idle' &&
+			handedOff(detail).length === 2 &&
+			detail.entries.at(-1)?.type === 'message'
+	);
+	const second = about(
+		`handed off \`${(await latestCommit(repo, child)).slice(0, 7)}\` for review: changes ready to ship.`
+	);
+	expect(second).not.toBe(first);
+	expect(handedOff(again)).toEqual([first, second]);
+	expect((await parentQueries('parent-handoff', parent)).at(-1)).toContain(second);
+
+	await script('parent-handoff', [say('Nothing to change.')]);
+	await repo.reply(child, { author: sam, text: 'Anything else?' });
+	await untilThread(
+		repo,
+		child,
+		(detail) =>
+			detail.summary.status === 'idle' &&
+			detail.entries.some(
+				(entry) => entry.type === 'message' && entry.text === 'Nothing to change.'
+			)
+	);
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	expect(handedOff((await repo.thread(parent))!)).toEqual([first, second]);
+	expect(await parentQueries('parent-handoff', parent)).toEqual([]);
 });
 
 test('steers a working parent when its child is handed back a conflicting ship', async () => {
