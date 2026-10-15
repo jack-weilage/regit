@@ -324,6 +324,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS ships (
+				sha TEXT PRIMARY KEY,
+				thread TEXT NOT NULL,
+				headline TEXT NOT NULL,
+				at INTEGER NOT NULL,
+				reverted INTEGER NOT NULL DEFAULT 0
+			);
+			CREATE INDEX IF NOT EXISTS ships_by_thread ON ships (thread);
 			CREATE TABLE IF NOT EXISTS deploy_secrets (
 				name TEXT PRIMARY KEY,
 				iv TEXT NOT NULL,
@@ -341,6 +349,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				/* Already added. */
 			}
 		}
+		// TODO: remove once every repository's coordinator has recorded its earlier ships.
+		this.#sql.exec(
+			'INSERT OR IGNORE INTO ships (sha, thread, headline, at) SELECT shipped_sha, id, headline, shipped_at FROM threads WHERE shipped_sha IS NOT NULL AND shipped_at IS NOT NULL'
+		);
 		this.ctx.storage.transactionSync(() => initializeThreadNumbers(this.#sql));
 		// Live connections ping to tell a dead socket from a quiet one; the runtime answers without waking this object.
 		this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
@@ -430,7 +442,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async archive(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		await this.#notShipping(thread);
-		this.#takeHandBack(thread);
+		await this.#dropHandBack(thread, `${by.name} archived this thread before it fixed them`);
 		if (summary.status === 'archived') return;
 		const reopen = ['working', 'shipping'].includes(summary.status) ? 'idle' : summary.status;
 		this.#sql.exec('UPDATE threads SET reopen_status = ? WHERE id = ?', reopen, thread);
@@ -459,7 +471,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async delete(thread: string, by: Author) {
 		this.#active(thread);
 		await this.#notShipping(thread);
-		this.#takeHandBack(thread);
+		await this.#dropHandBack(thread, `${by.name} deleted this thread before it fixed them`);
 		this.#sql.exec(
 			'UPDATE threads SET deleted_at = ?, deleted_by = ? WHERE id = ?',
 			Date.now(),
@@ -476,7 +488,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async stop(thread: string, by: Author) {
 		const summary = this.#active(thread);
 		await this.#notShipping(thread);
-		this.#takeHandBack(thread);
+		await this.#dropHandBack(thread, `${by.name} stopped this thread before it fixed them`);
 		await this.#agent(thread).stop(by.name);
 		const pending = this.#sql
 			.exec<{ seq: number; body: string }>('SELECT seq, body FROM entries WHERE thread = ?', thread)
@@ -530,6 +542,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			this.#automations.purge(id);
 			this.#sql.exec('DELETE FROM entries WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM usage WHERE thread = ?', id);
+			this.#sql.exec('DELETE FROM ships WHERE thread = ?', id);
 			this.#sql.exec('DELETE FROM threads WHERE id = ?', id);
 		}
 		await this.#runAutomations();
@@ -1081,6 +1094,13 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			ship.by.name,
 			ship.thread
 		);
+		this.#sql.exec(
+			'INSERT OR IGNORE INTO ships (sha, thread, headline, at) VALUES (?, ?, ?, ?)',
+			sha,
+			ship.thread,
+			ship.title,
+			Date.now()
+		);
 		const { by, email, title, body } = ship;
 		this.#setMeta(`ship-input:${ship.thread}`, JSON.stringify({ by, email, title, body }));
 		this.#sql.exec('DELETE FROM meta WHERE key = ?', `parent-told:${ship.thread}`);
@@ -1215,6 +1235,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		return row && (JSON.parse(row.value) as { input: ShipInput; handBacks: number });
 	}
 
+	// A thread put down while fixing what it broke on main won't ship the fix, so what it shipped is reverted.
+	async #dropHandBack(thread: string, reason: string) {
+		if (this.#takeHandBack(thread)) await this.#revert(thread, reason);
+	}
+
 	// Main moved: record how far behind each thread is and warn those that now conflict. Forks only take main when asked or handed back.
 	async landed(landing: Landing) {
 		const { ref, after } = landing;
@@ -1336,7 +1361,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		});
 		const proven = passed ? commits : commits.slice(0, culprit ? commits.indexOf(culprit.sha) : 0);
 		for (const commit of proven) {
-			const thread = this.#shippedAs(commit);
+			const thread = this.#latestShip(commit);
 			if (!thread) continue;
 			await this.#setVerdict(thread, 'passed', ['landed', 'failed']);
 			this.#sql.exec('DELETE FROM meta WHERE key = ?', `fixing:${thread}`);
@@ -1363,14 +1388,14 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (deploy.ran && deploy.ok) {
 			this.#setMain({ deployed: { sha, at }, deployFailure: null });
 			for (const commit of commits) {
-				const thread = this.#shippedAs(commit);
+				const thread = this.#latestShip(commit);
 				if (thread) await this.#setVerdict(thread, 'deployed', ['landed', 'passed']);
 			}
 		} else if (deploy.ran) {
 			this.#setMain({ deployFailure: { sha, at, output: deploy.output } });
 			const branch = await this.#branch();
 			for (const commit of commits) {
-				const thread = this.#shippedAs(commit);
+				const thread = this.#latestShip(commit);
 				if (thread && this.#summary(thread)?.shipped?.verdict === 'passed')
 					await this.#notify(thread, deployFailedNotice(commit, sha, branch, deploy.output));
 			}
@@ -1385,14 +1410,37 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		await this.#doneVerifying(id);
 	}
 
+	// The thread that shipped a commit still on main, whichever of its ships it was.
 	#shippedAs(sha: string) {
 		const [row] = this.#sql
-			.exec<{ id: string }>(
-				'SELECT id FROM threads WHERE shipped_sha = ? AND deleted_at IS NULL',
+			.exec<{ thread: string }>(
+				'SELECT s.thread FROM ships s JOIN threads t ON t.id = s.thread WHERE s.sha = ? AND s.reverted = 0 AND t.deleted_at IS NULL',
 				sha
 			)
 			.toArray();
-		return row?.id ?? null;
+		return row?.thread ?? null;
+	}
+
+	// A thread's verdict describes its latest ship, so only that commit changes it.
+	#latestShip(sha: string) {
+		const thread = this.#shippedAs(sha);
+		return thread && this.#summary(thread)?.shipped?.sha === sha ? thread : null;
+	}
+
+	#shipsAfter(thread: string, sha: string, range: string[]) {
+		const index = range.indexOf(sha);
+		if (index < 0) return [];
+		return range
+			.slice(index + 1)
+			.flatMap((later) =>
+				this.#sql
+					.exec<Omit<Culprit, 'thread'>>(
+						'SELECT sha, headline FROM ships WHERE sha = ? AND thread = ? AND reverted = 0',
+						later,
+						thread
+					)
+					.toArray()
+			);
 	}
 
 	async #setVerdict(thread: string, verdict: Verdict, from?: Verdict[], revert?: string) {
@@ -1473,7 +1521,12 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (fixing.reverting) return;
 		const known = fixing.commits.some(({ sha }) => sha === culprit.sha);
 		if (known && !(fixing.fixed && range.includes(fixing.fixed))) return;
-		if (!known) fixing.commits.push({ sha: culprit.sha, headline: culprit.headline });
+		if (!known) {
+			const later = this.#shipsAfter(thread, culprit.sha, range).filter(
+				({ sha }) => !fixing.commits.some((commit) => commit.sha === sha)
+			);
+			fixing.commits.push({ sha: culprit.sha, headline: culprit.headline }, ...later);
+		}
 		this.#saveFixing(thread, fixing);
 		await this.#setVerdict(thread, 'failed');
 		const branch = await this.#branch();
@@ -1537,7 +1590,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	async reverted(id: string, reverted: { sha: string; branch: string } | null) {
 		const thread = this.#meta(`revert:${id}`);
 		if (!thread) return;
+		const commits = this.#fixing(thread)?.commits ?? [];
 		this.#sql.exec('DELETE FROM meta WHERE key IN (?, ?)', `revert:${id}`, `fixing:${thread}`);
+		if (reverted)
+			for (const { sha } of commits)
+				this.#sql.exec('UPDATE ships SET reverted = 1 WHERE sha = ?', sha);
 		await this.#setVerdict(thread, 'reverted', undefined, reverted?.sha);
 		const where = reverted ? ` in ${reverted.sha.slice(0, 7)}` : '';
 		this.#fail(
