@@ -21,9 +21,13 @@ export interface SimilarCandidate {
 	headline: string;
 	purpose?: string;
 	doneWhen?: string[];
+	// Archived or long untouched: shown only when definitely related.
+	inactive?: boolean;
 }
 
 export const maxSimilarCandidates = 40;
+const maxSimilarMatches = 5;
+const maxRelated = 2;
 
 const relations = {
 	same: 'Same goal; doing both would duplicate work',
@@ -86,10 +90,10 @@ export async function assessRequest(
 			const { same = 0, overlap = 0, related = 0 } = answers[keys[index]!]?.probabilities ?? {};
 			if (same >= 0.8)
 				return [{ thread: candidate.id, relation: 'same', probability: round(same) }];
-			if (same + overlap >= 0.5) {
+			if (same + overlap >= (candidate.inactive ? 0.8 : 0.5)) {
 				return [{ thread: candidate.id, relation: 'overlap', probability: round(same + overlap) }];
 			}
-			if (same + overlap + related >= 0.5) {
+			if (!candidate.inactive && same + overlap + related >= 0.8) {
 				return [
 					{
 						thread: candidate.id,
@@ -103,7 +107,13 @@ export async function assessRequest(
 		.sort(
 			(a, b) =>
 				order.indexOf(a.relation) - order.indexOf(b.relation) || b.probability - a.probability
-		);
+		)
+		.filter(
+			(match, index, matches) =>
+				match.relation !== 'related' ||
+				index - matches.findIndex((other) => other.relation === 'related') < maxRelated
+		)
+		.slice(0, maxSimilarMatches);
 	return { similar, size: likeliest(answers.size?.probabilities) };
 }
 

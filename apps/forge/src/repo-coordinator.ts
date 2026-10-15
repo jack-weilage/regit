@@ -158,6 +158,7 @@ const emptyMain: MainStatus = {
 	failure: null
 };
 const similarTimeoutMs = 4000;
+const similarMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
 const recentHistory = 12;
 const maxSearchHits = 30;
 const maxDiffChars = 20_000;
@@ -889,6 +890,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 	}
 
 	async #assess(text: string, exclude?: string): Promise<Assessment | null> {
+		const since = Date.now() - similarMaxAgeMs;
 		const candidates = this.threads()
 			.filter((thread) => thread.id !== exclude && thread.headline)
 			.slice(0, maxSimilarCandidates)
@@ -897,6 +899,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				return {
 					id: thread.id,
 					headline: thread.headline,
+					...((thread.status === 'archived' || thread.updatedAt < since) && { inactive: true }),
 					...(intent?.type === 'intent' && {
 						purpose: intent.intent.purpose,
 						doneWhen: intent.intent.doneWhen

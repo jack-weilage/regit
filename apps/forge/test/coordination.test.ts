@@ -426,19 +426,22 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 		})
 	);
 
-	await scriptDecisions('dupes', [
-		{
-			answers: {
-				t1: { probabilities: { unrelated: 1 } },
-				t2: { probabilities: { same: 0.2, overlap: 0.6, related: 0.1, unrelated: 0.1 } }
-			}
-		}
-	]);
-	const live = await repo.assess('Show members a page at a time');
-	expect(live).toEqual({
-		similar: [{ thread: expect.any(String), relation: 'overlap', probability: 0.8 }],
+	await untilThread(repo, first.id, (detail) => detail.summary.status === 'idle');
+	await repo.archive(first.id, sam);
+
+	const weak = { probabilities: { same: 0.1, overlap: 0.6, related: 0.2, unrelated: 0.1 } };
+	await scriptDecisions('dupes', [{ answers: { t1: weak, t2: weak } }]);
+	expect(await repo.assess('Show members a page at a time')).toEqual({
+		similar: [{ thread: second.id, relation: 'overlap', probability: 0.7 }],
 		size: 'medium'
 	});
+
+	const strong = { probabilities: { same: 0.2, overlap: 0.7, related: 0.1, unrelated: 0 } };
+	await scriptDecisions('dupes', [{ answers: { t1: strong, t2: strong } }]);
+	expect((await repo.assess('Show members a page at a time')).similar).toEqual([
+		{ thread: expect.any(String), relation: 'overlap', probability: 0.9 },
+		{ thread: expect.any(String), relation: 'overlap', probability: 0.9 }
+	]);
 });
 
 test('sizes an auto thread once, when it opens', async () => {
