@@ -282,6 +282,55 @@ test('refuses thread messages to itself, unknown or idle threads, and past the l
 	await expect(send(from.id, to.id, 'After the person')).resolves.toContain('Delivered');
 });
 
+test('exempts messages between a parent and its children from the limit', async () => {
+	await seed('family', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('family');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	await script(
+		'family',
+		Array.from({ length: 40 }, () => [{ type: 'response.output_text.delta', delta: 'Ok.' }])
+	);
+	const parent = await repo.openThread({
+		repo: 'family',
+		author: sam,
+		text: 'Split the work.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const outsider = await repo.openThread({
+		repo: 'family',
+		author: sam,
+		text: 'Something else.',
+		mode: 'small',
+		machine: 'standard-1'
+	});
+	const child = async (headline: string) => {
+		await repo.launchThread(
+			parent.id,
+			{ headline, purpose: 'Part of the work.', doneWhen: ['Done'], context: '' },
+			false
+		);
+		const card = (await repo.thread(parent.id))!.entries.findLast(
+			(entry) => entry.type === 'suggestion'
+		)!;
+		return (await repo.spinOff(parent.id, card.id, sam)).id;
+	};
+	const [first, second] = [await child('feat: first part'), await child('feat: second part')];
+	const send = async (a: string, b: string, text: string) => repo.messageThread(a, b, text);
+
+	for (let i = 0; i < 6; i++) {
+		await expect(send(parent.id, first, `Down ${i}`)).resolves.toContain('Delivered');
+		await expect(send(first, parent.id, `Up ${i}`)).resolves.toContain('Delivered');
+	}
+	for (let i = 0; i < 5; i++) await send(outsider.id, first, `Aside ${i}`);
+	await expect(send(outsider.id, first, 'One more')).rejects.toThrow();
+	await expect(send(parent.id, first, 'Still fine')).resolves.toContain('Delivered');
+
+	for (let i = 0; i < 5; i++) await send(first, second, `Sibling ${i}`);
+	await expect(send(first, second, 'One more')).rejects.toThrow();
+});
+
 test('flags a proposed intent that duplicates another thread, and forwards it there', async () => {
 	await seed('dupes', { 'notes.md': 'Some notes\n' });
 	const env = await worker.getEnv();

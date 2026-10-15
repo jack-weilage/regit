@@ -623,7 +623,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		if (['archived', 'shipping'].includes(recipient.status)) {
 			throw new Error(`Thread ${to} is ${recipient.status}. Tell your person instead.`);
 		}
-		if (this.#threadMessagesSincePerson(to) >= maxThreadMessages) {
+		if (
+			!this.#relatives(to).has(from) &&
+			this.#threadMessagesSincePerson(to) >= maxThreadMessages
+		) {
 			throw new Error(
 				`Thread ${to} has had ${maxThreadMessages} thread messages since a person last wrote there. Ask your person before sending more.`
 			);
@@ -726,13 +729,33 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const rows = this.#sql
 			.exec<{ body: string }>('SELECT body FROM entries WHERE thread = ? ORDER BY seq DESC', thread)
 			.toArray();
+		const relatives = this.#relatives(thread);
 		let count = 0;
 		for (const row of rows) {
 			const entry = JSON.parse(row.body) as Entry;
 			if (entry.type === 'message' && entry.author.kind === 'person') break;
-			if (entry.type === 'thread-message' && entry.direction === 'in') count++;
+			if (
+				entry.type === 'thread-message' &&
+				entry.direction === 'in' &&
+				!relatives.has(entry.thread)
+			)
+				count++;
 		}
 		return count;
+	}
+
+	// A thread's parent and children coordinate freely; the message limit is for unrelated threads.
+	#relatives(thread: string) {
+		const rows = this.#sql
+			.exec<{
+				id: string;
+			}>(
+				'SELECT parent AS id FROM threads WHERE id = ? AND parent IS NOT NULL UNION SELECT id FROM threads WHERE parent = ?',
+				thread,
+				thread
+			)
+			.toArray();
+		return new Set(rows.map((row) => row.id));
 	}
 
 	resolveThread(ref: string): Pick<ThreadSummary, 'id' | 'number'> | null {

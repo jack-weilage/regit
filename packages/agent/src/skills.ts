@@ -100,7 +100,7 @@ Every thread in this repository has its own agent working on one intent. Coordin
 - Use message_thread only when the other thread must do something or answer you: a renamed API, a moved file, a changed shared component, or a question only it can answer. Find its id with list_threads.
 - Be specific: say what changed, where (path:line), and what you need.
 - Working threads read messages at their next step; idle threads' agents reply in the conversation. Archived threads and threads being shipped refuse messages, so tell your person instead.
-- A thread accepts at most five thread messages until a person writes in it, so don't chat.
+- A thread accepts at most five messages from threads other than its parent and children until a person writes in it, so don't chat.
 
 ## Messages from other threads
 
