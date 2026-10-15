@@ -235,6 +235,37 @@ test('coordinates a thread from a request to recorded changes, live', async () =
 	expect(phases.some((agent) => agent.type === 'thinking' && agent.label === 'Thinking')).toBe(
 		true
 	);
+	const labels = phases.flatMap((agent) =>
+		agent.type === 'thinking'
+			? [agent.label]
+			: agent.type === 'starting'
+				? ['(sandbox stages)']
+				: []
+	);
+	const setups = labels
+		.filter((label, i) => label !== labels[i - 1])
+		.join('\n')
+		.split(/\nThinking(?:\n|$)/)
+		.map((run) => run.split('\n'))
+		.filter((run) => run[0] === "Opening the thread's branch");
+	expect(setups).toEqual([
+		[
+			"Opening the thread's branch",
+			'Connecting to the sandbox',
+			'(sandbox stages)',
+			'Connecting to the sandbox',
+			'Finding the last green commit',
+			'Comparing with main',
+			'Loading skills and guidance'
+		],
+		[
+			"Opening the thread's branch",
+			'Connecting to the sandbox',
+			'Comparing with main',
+			'Loading skills and guidance'
+		]
+	]);
+	expect(labels).not.toContain('Starting');
 	expect(
 		phases.some(
 			(agent) =>

@@ -453,13 +453,15 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const deadline = Date.now() + sliceMs;
 		const retry = this.#retry();
 		if (retry) this.#saveRetry({ ...retry, next: null });
-		this.#think('Starting');
+		this.#think(setupLabels.branch);
 		try {
 			const fork = await this.#fork(attempt);
 			const token = await this.#token(fork);
+			this.#think(setupLabels.sandbox);
 			const fetch = await this.#sandbox({ repo: attempt.repo, ...fork }, token);
 			const rebuilt = !!this.#meta('rebuilt');
 			if (!attempt.base) {
+				this.#think(setupLabels.startingPoint);
 				attempt.base = await this.#startingPoint(attempt, fetch, fork, token);
 				this.#sql.exec('UPDATE agent SET base = ?', attempt.base);
 			}
@@ -467,7 +469,9 @@ export class AttemptSandbox extends DurableObject<Env> {
 
 			const pending = await this.#drain(attempt.repo);
 			const syncing = !!this.#meta('sync');
+			if (syncing) this.#think(setupLabels.sync);
 			const synced = syncing ? await this.#sync(attempt, fetch, fork, token, unrebased) : null;
+			this.#think(setupLabels.compare);
 			if (synced) await this.#recheckBehind(attempt, fetch);
 			else await this.#reportBehind(attempt, fetch);
 			const opening: Turn[] = [
@@ -493,6 +497,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 			}
 			const workspace = sandboxWorkspace(fetch);
 			const { model, effort } = this.#model(attempt.mode);
+			this.#think(setupLabels.guidance);
 			const skills = await this.#skills(fetch, [
 				threadsSkill,
 				servicesSkill,
@@ -814,6 +819,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async #rebase(attempt: AgentRow, fetch: Fetch, fork: Fork, token: string) {
 		const pending = this.#meta('rebase');
 		if (!pending) return null;
+		this.#think(setupLabels.rebase);
 		const { sha, branch, from } = JSON.parse(pending) as {
 			sha: string;
 			branch: string;
@@ -1771,6 +1777,17 @@ export class AttemptSandbox extends DurableObject<Env> {
 		}
 	}
 }
+
+// What a turn shows while it prepares, one label per step, before the model's first request.
+const setupLabels = {
+	branch: "Opening the thread's branch",
+	sandbox: 'Connecting to the sandbox',
+	startingPoint: 'Finding the last green commit',
+	rebase: 'Replaying work onto the shipped commit',
+	sync: 'Syncing with main',
+	compare: 'Comparing with main',
+	guidance: 'Loading skills and guidance'
+};
 
 const publishIntervalMs = 250;
 const streamedOutputChars = 4000;

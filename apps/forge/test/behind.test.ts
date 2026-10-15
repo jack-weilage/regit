@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import type { ThreadDetail } from '@regit/core';
+import type { LiveMessage, ThreadDetail } from '@regit/core';
 import { setup, untilThread, writeNotes } from './support.ts';
 
 const { dir, git, script, modelRequests, sh, commit, startedThread } = await setup();
@@ -123,12 +123,33 @@ test('records how far behind main threads are, warns on conflicts and merges onl
 		writeNotes('# Notes\\n\\nSome better notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Merged main.' }]
 	]);
+	const live: LiveMessage[] = [];
+	const { webSocket: socket } = await repo.fetch('https://repo/live', {
+		headers: { Upgrade: 'websocket' }
+	});
+	socket!.accept();
+	socket!.addEventListener('message', (event) => live.push(JSON.parse(String(event.data))));
 	await repo.bringUpToDate(id, sam);
 	const merged = await untilThread(
 		repo,
 		id,
 		(detail) => detail.summary.status === 'idle' && detail.summary.behind === null
 	);
+	socket!.close();
+	const labels = live.flatMap((message) =>
+		message.type === 'activity' &&
+		message.thread === id &&
+		message.activity?.agent.type === 'thinking'
+			? [message.activity.agent.label]
+			: []
+	);
+	expect(labels.filter((label, i) => label !== labels[i - 1]).slice(0, 5)).toEqual([
+		"Opening the thread's branch",
+		'Connecting to the sandbox',
+		'Syncing with main',
+		'Comparing with main',
+		'Loading skills and guidance'
+	]);
 	expect(merged.entries).toContainEqual(
 		expect.objectContaining({
 			type: 'event',
