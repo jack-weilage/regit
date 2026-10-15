@@ -87,7 +87,7 @@ test("tells a thread's agent once when deploying what it shipped fails", async (
 		undefined,
 		{ '.agents/deploy': 'echo "no route to production"; exit 4\n' }
 	);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	await repo.ship(id, { by: sam, email: 'sam@example.com', title: 'docs: add a title', body: '' });
 	const failed = await untilMain(repo, (main) => !!main.deployFailure && !main.verifying);
 	const shipped = sh(join(dir, 'deploy-fails.git'), 'rev-parse', 'main');

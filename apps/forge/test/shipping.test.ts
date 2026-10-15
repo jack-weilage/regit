@@ -109,7 +109,7 @@ test('tells the agent when its ship stops without landing', async () => {
 		writeNotes('# Notes\\n'),
 		[{ type: 'response.output_text.delta', delta: 'Added the title.' }]
 	]);
-	await untilThread(repo, id, (detail) => detail.summary.status === 'needs-you');
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
 	const work = join(dir, 'ship-stops-work');
 	await commit(work, { 'notes.md': 'Some better notes\n' }, 'Better notes');
 	sh(work, 'push', '--quiet', join(dir, 'ship-stops.git'), 'main');
@@ -124,7 +124,7 @@ test('tells the agent when its ship stops without landing', async () => {
 		repo,
 		id,
 		(detail) =>
-			detail.summary.status === 'needs-you' && detail.summary.failure?.title === 'Shipping stopped'
+			detail.summary.status === 'idle' && detail.summary.failure?.title === 'Shipping stopped'
 	);
 	expect(sh(join(dir, 'ship-stops.git'), 'rev-parse', 'main')).toBe(main);
 
