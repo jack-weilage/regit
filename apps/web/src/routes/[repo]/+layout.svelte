@@ -49,6 +49,7 @@
 	} from '#lib/data.remote.ts';
 	import { similarThreads } from '#lib/similar.ts';
 	import { createAndOpen } from '#lib/repos.ts';
+	import { preferenceCookies, remember } from '#lib/preferences.ts';
 
 	let { children, params } = $props();
 
@@ -69,6 +70,10 @@
 	let fetchedMain = $derived(await getMain(repo));
 	let liveMain = $state<{ repo: string; main: MainStatus } | null>(null);
 	let main = $derived(liveMain?.repo === repo ? liveMain.main : fetchedMain);
+	let archivedOpen = $state(page.data.archivedOpen);
+	$effect(() => {
+		if (archivedOpen !== undefined) remember(preferenceCookies.archivedOpen, String(archivedOpen));
+	});
 	let deleting = $state<string | null>(null);
 	let deleteOpen = $state(false);
 	let threads = $derived<ThreadListItem[]>(
@@ -215,6 +220,7 @@
 		{similar}
 		{size}
 		{main}
+		bind:archivedOpen
 		onupdate={updated.current ? () => window.location.reload() : undefined}
 		ondeploys={owner ? () => (managingDeploys = true) : undefined}
 		onmembers={owner ? () => (managingMembers = true) : undefined}

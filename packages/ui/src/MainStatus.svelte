@@ -16,7 +16,7 @@
 	import Popover from './Popover.svelte';
 	import StatusIcon from './StatusIcon.svelte';
 	import { clock, stopwatch } from './chat/clock.svelte.ts';
-	import { formatAgo, formatDuration } from './chat/format.ts';
+	import { formatDuration, useFormat } from './chat/format.ts';
 
 	interface Props {
 		main: MainStatus;
@@ -25,6 +25,8 @@
 	}
 
 	let { main, threadHref, now }: Props = $props();
+
+	const format = useFormat();
 
 	const id = $props.id();
 	let waitingButton: HTMLButtonElement | undefined = $state();
@@ -107,7 +109,7 @@
 				<StatusIcon state={summary.icon} />
 				<span class="text">{summary.text}</span>
 				<time class="when" datetime={new Date(summary.at).toISOString()}
-					>{formatAgo(summary.at, now ?? clock.now)}</time
+					>{format.ago(summary.at, now ?? clock.now)}</time
 				>
 			</p>
 		{/if}

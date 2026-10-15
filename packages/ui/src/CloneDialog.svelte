@@ -10,7 +10,7 @@
 <script lang="ts">
 	import type { Attachment } from 'svelte/attachments';
 	import Button from './Button.svelte';
-	import { formatAgo, formatDate } from './chat/format.ts';
+	import { useFormat } from './chat/format.ts';
 
 	interface Props {
 		open?: boolean;
@@ -33,6 +33,8 @@
 		oncreate,
 		onrevoke
 	}: Props = $props();
+
+	const format = useFormat();
 
 	const id = $props.id();
 	let label = $state('');
@@ -94,8 +96,8 @@
 					<span class="token">
 						<span>{token.label}</span>
 						<span class="hint">
-							{token.expiresAt <= time ? 'expired' : `expires ${formatDate(token.expiresAt)}`} ·
-							{token.lastUsedAt ? `used ${formatAgo(token.lastUsedAt, time)}` : 'never used'}
+							{token.expiresAt <= time ? 'expired' : `expires ${format.date(token.expiresAt)}`} ·
+							{token.lastUsedAt ? `used ${format.ago(token.lastUsedAt, time)}` : 'never used'}
 						</span>
 					</span>
 					<Button

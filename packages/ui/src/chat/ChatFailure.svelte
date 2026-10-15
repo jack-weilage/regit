@@ -3,7 +3,7 @@
 	import Button from '../Button.svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import RetryFailures from './RetryFailures.svelte';
-	import { formatTime } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		title: string;
@@ -14,6 +14,8 @@
 	}
 
 	let { title, error, failures = [], time, onresume }: Props = $props();
+
+	const format = useFormat();
 
 	let busy = $state(false);
 	let problem = $state<string | null>(null);
@@ -37,7 +39,7 @@
 			<StatusIcon state="failed" />
 			{title}
 			{#if time}
-				<time datetime={time.toISOString()}>· {formatTime(time)}</time>
+				<time datetime={time.toISOString()}>· {format.time(time)}</time>
 			{/if}
 		</strong>
 		{#if onresume}

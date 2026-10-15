@@ -24,6 +24,7 @@
 		size?: Exclude<Mode, 'auto'>;
 		main?: MainStatus | null;
 		now?: number;
+		archivedOpen?: boolean;
 		onswitchrepo?: (repo: string) => void;
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onclone?: () => void;
@@ -48,6 +49,7 @@
 		size,
 		main,
 		now,
+		archivedOpen = $bindable(),
 		onswitchrepo,
 		oncreaterepo,
 		onclone,
@@ -111,7 +113,7 @@
 			class="list"
 			onclick={(event) => (event.target as HTMLElement).closest('a') && (open = false)}
 		>
-			<ThreadList {threads} {current} {now} newThread="{id}-new-thread" />
+			<ThreadList {threads} {current} {now} bind:archivedOpen newThread="{id}-new-thread" />
 		</div>
 
 		<div class="bottom">

@@ -91,6 +91,15 @@
 		}
 	];
 
+	const live = $state<{ threads: ThreadListItem[]; current?: string; archivedOpen?: boolean }>({
+		threads,
+		current: 'router'
+	});
+
+	function reset() {
+		Object.assign(live, { threads, current: 'router', archivedOpen: undefined });
+	}
+
 	const { Story } = defineMeta({
 		title: 'Chat/Thread list',
 		component: ThreadList,
@@ -238,6 +247,59 @@
 			'aria-current',
 			'page'
 		);
+	}}
+>
+	{#snippet template(args)}
+		<div style="inline-size: 17rem; block-size: 30rem">
+			<ThreadList {...args} />
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Archived stays collapsed"
+	play={async ({ canvas, userEvent }) => {
+		reset();
+		const list = () => canvas.queryByRole('list', { name: 'Archived' });
+		await waitFor(() => expect(list()).not.toBeNull());
+		await userEvent.click(canvas.getByText('Archived'));
+		await waitFor(() => expect(list()).toBeNull());
+		await expect(live.archivedOpen).toBe(false);
+		await expect(canvas.getByText('Archived').closest('details')).not.toHaveAttribute('open');
+
+		live.threads = live.threads.map((thread) => ({ ...thread, updatedAt: thread.updatedAt + 1 }));
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await expect(list()).toBeNull();
+
+		live.current = 'members';
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await expect(list()).toBeNull();
+
+		live.current = 'search';
+		await waitFor(() => expect(list()).not.toBeNull());
+		await expect(live.archivedOpen).toBe(true);
+		reset();
+	}}
+>
+	{#snippet template()}
+		<div style="inline-size: 17rem; block-size: 30rem">
+			<ThreadList
+				threads={live.threads}
+				current={live.current}
+				{now}
+				bind:archivedOpen={live.archivedOpen}
+			/>
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Archived remembered collapsed"
+	args={{ current: 'router', archivedOpen: false }}
+	play={async ({ canvas, userEvent }) => {
+		await expect(canvas.queryByRole('list', { name: 'Archived' })).toBeNull();
+		await userEvent.click(canvas.getByText('Archived'));
+		await canvas.findByRole('list', { name: 'Archived' });
 	}}
 >
 	{#snippet template(args)}
@@ -556,7 +618,7 @@
 				id: 'fresh',
 				headline: 'fix(auth): refresh expired sessions',
 				status: 'working',
-				updatedAt: Date.now() - 50_000,
+				updatedAt: Date.now() - 5_000,
 				href: '#'
 			}
 		]

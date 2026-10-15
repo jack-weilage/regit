@@ -1,12 +1,14 @@
 <script lang="ts">
 	import type { RetryFailure } from '@regit/core';
-	import { formatClock } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		failures: RetryFailure[];
 	}
 
 	let { failures }: Props = $props();
+
+	const format = useFormat();
 
 	// Runs of the same failure, such as an outage that outlasts several retries, collapse into one row.
 	let runs = $derived(
@@ -22,7 +24,7 @@
 <ol class="failures">
 	{#each runs as run, index (index)}
 		<li>
-			<time datetime={new Date(run.at).toISOString()}>{formatClock(run.at)}</time>
+			<time datetime={new Date(run.at).toISOString()}>{format.clock(run.at)}</time>
 			<span class="label"
 				>{run.label}{#if run.count > 1}&nbsp;×{run.count}{/if}</span
 			>

@@ -60,7 +60,8 @@
 	import StatusIcon from '../StatusIcon.svelte';
 	import ThreadIcon from './ThreadIcon.svelte';
 	import ThreadPreview from './ThreadPreview.svelte';
-	import { formatAge } from './format.ts';
+	import { useFormat } from './format.ts';
+	import { untrack } from 'svelte';
 	import { clock } from './clock.svelte.ts';
 	import { needsYou, statuses } from './status.ts';
 
@@ -69,19 +70,29 @@
 		current?: string;
 		newThread?: string;
 		now?: number;
+		/** Whether Archived is expanded; unset until someone toggles it. */
+		archivedOpen?: boolean;
 	}
 
-	let { threads, current, newThread, now }: Props = $props();
+	let { threads, current, newThread, now, archivedOpen = $bindable() }: Props = $props();
+
+	const format = useFormat();
 
 	let time = $derived(now ?? clock.now);
 
 	const id = $props.id();
 
-	let archivedOpen = $state(false);
+	const isArchived = (thread: string | undefined) =>
+		threads.some(({ id, status }) => id === thread && status === 'archived');
 
+	let expanded = $derived(archivedOpen ?? isArchived(current));
+
+	// Opening an archived thread reveals the group; updates and reloads leave it as it was.
+	let revealed = untrack(() => current);
 	$effect(() => {
-		if (threads.some((thread) => thread.id === current && thread.status === 'archived'))
-			archivedOpen = true;
+		if (current === revealed) return;
+		revealed = current;
+		if (untrack(() => isArchived(current))) archivedOpen = true;
 	});
 
 	let previewed: { thread: ThreadListItem; anchor: HTMLElement } | null = $state(null);
@@ -142,15 +153,21 @@
 		</ul>
 	{/if}
 	{#if archived.length}
-		<details class="collapsible" bind:open={archivedOpen}>
-			<summary class="title">
+		<details class="collapsible" open={expanded}>
+			<summary
+				class="title"
+				onclick={(event) => {
+					event.preventDefault();
+					archivedOpen = !expanded;
+				}}
+			>
 				<svg class="chevron" viewBox="0 0 16 16" aria-hidden="true">
 					<path d="m6 4 4 4-4 4" />
 				</svg>
 				<span id="{id}-archived">Archived</span>
 				<span class="count">{archived.length}</span>
 			</summary>
-			{#if archivedOpen}
+			{#if expanded}
 				<ul aria-labelledby="{id}-archived">
 					{@render branch(archived)}
 				</ul>
@@ -207,7 +224,7 @@
 						</svg>
 					{/if}
 					<time datetime={new Date(thread.updatedAt).toISOString()}
-						>{formatAge(thread.updatedAt, time)}</time
+						>{format.age(thread.updatedAt, time)}</time
 					>
 				</a>
 				{#if thread.actions?.length}

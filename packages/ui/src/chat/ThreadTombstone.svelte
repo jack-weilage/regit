@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatDate } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		deletedBy: string;
@@ -10,12 +10,14 @@
 	}
 
 	let { deletedBy, deletedAt, shippedBy, shippedAt, sha }: Props = $props();
+
+	const format = useFormat();
 </script>
 
 <div class="tombstone">
-	<p>The conversation was deleted by {deletedBy} on {formatDate(deletedAt)}.</p>
+	<p>The conversation was deleted by {deletedBy} on {format.date(deletedAt)}.</p>
 	<p class="hint">
-		Shipped by {shippedBy} in <code>{sha.slice(0, 7)}</code> on {formatDate(shippedAt)}.
+		Shipped by {shippedBy} in <code>{sha.slice(0, 7)}</code> on {format.date(shippedAt)}.
 	</p>
 </div>
 

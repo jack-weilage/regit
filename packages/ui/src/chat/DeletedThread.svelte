@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Button from '../Button.svelte';
 	import { clock } from './clock.svelte.ts';
-	import { formatAgo } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		deletedBy: string;
@@ -14,6 +14,8 @@
 
 	let { deletedBy, deletedAt, purgeAt, back, now, onrestore }: Props = $props();
 
+	const format = useFormat();
+
 	let time = $derived(now ?? clock.now);
 
 	let days = $derived(Math.max(1, Math.ceil((purgeAt - time) / 86_400_000)));
@@ -22,7 +24,7 @@
 <div class="deleted">
 	<h1>This thread was deleted</h1>
 	<p>
-		{deletedBy} deleted it {formatAgo(deletedAt, time)}. It's gone for good in {days}
+		{deletedBy} deleted it {format.ago(deletedAt, time)}. It's gone for good in {days}
 		{days === 1 ? 'day' : 'days'}.
 	</p>
 	<div class="buttons">

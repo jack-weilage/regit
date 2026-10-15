@@ -3,7 +3,7 @@
 	import Button from '../Button.svelte';
 	import AutomationIcon from './AutomationIcon.svelte';
 	import { clock } from './clock.svelte.ts';
-	import { formatAgo, formatDate } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		automations: Automation[];
@@ -15,6 +15,8 @@
 	}
 
 	let { automations, compact = false, busy = null, now, oncancel }: Props = $props();
+
+	const format = useFormat();
 
 	const id = $props.id();
 
@@ -30,7 +32,7 @@
 	let summary = $derived(
 		[
 			`${active.length} ${active.length === 1 ? 'automation' : 'automations'}`,
-			soonest ? `next ${formatAgo(soonest, time)}` : active.length ? 'waiting' : null
+			soonest ? `next ${format.ago(soonest, time)}` : active.length ? 'waiting' : null
 		]
 			.filter(Boolean)
 			.join(' · ')
@@ -39,9 +41,9 @@
 	function status(automation: Automation) {
 		const { runs, nextAt, expiresAt } = automation;
 		return [
-			nextAt === null ? 'Waiting' : `Next ${formatAgo(nextAt, time)}`,
+			nextAt === null ? 'Waiting' : `Next ${format.ago(nextAt, time)}`,
 			runs.limit > 1 ? `${runs.done} of ${runs.limit} runs` : null,
-			`ends ${formatDate(expiresAt)}`
+			`ends ${format.date(expiresAt)}`
 		]
 			.filter(Boolean)
 			.join(' · ');

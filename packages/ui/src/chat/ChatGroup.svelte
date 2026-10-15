@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import Avatar from '../Avatar.svelte';
-	import { formatTime } from './format.ts';
+	import { useFormat } from './format.ts';
 	import type { Author } from './types.ts';
 
 	interface Props {
@@ -12,6 +12,8 @@
 	}
 
 	let { author, time, own = false, children }: Props = $props();
+
+	const format = useFormat();
 
 	let headless = $derived(own || author.kind === 'agent');
 </script>
@@ -26,7 +28,7 @@
 			<Avatar name={author.name} src={author.avatar} aria-hidden="true" />
 			<span class="name">{author.name}</span>
 			{#if time}
-				<time datetime={time.toISOString()}>{formatTime(time)}</time>
+				<time datetime={time.toISOString()}>{format.time(time)}</time>
 			{/if}
 		</header>
 	{/if}

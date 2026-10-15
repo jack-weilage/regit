@@ -2,7 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import StatusIcon from '../StatusIcon.svelte';
 	import AutomationIcon from './AutomationIcon.svelte';
-	import { formatTime } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		name: string;
@@ -15,6 +15,8 @@
 	}
 
 	let { name, trigger, run, limit, time, pending = false, children }: Props = $props();
+
+	const format = useFormat();
 </script>
 
 <article class="automation chat-enter" aria-label="Automation {name}">
@@ -23,7 +25,7 @@
 		<span><strong>{name}</strong> · {trigger}</span>
 		<span class="run">
 			{limit > 1 ? `Run ${run} of ${limit}` : 'Ran once'}{#if time}{' · '}<time
-					datetime={time.toISOString()}>{formatTime(time)}</time
+					datetime={time.toISOString()}>{format.time(time)}</time
 				>{/if}
 		</span>
 	</header>

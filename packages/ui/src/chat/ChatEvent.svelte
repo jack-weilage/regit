@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { EventTone } from '@regit/core';
 	import type { Snippet } from 'svelte';
-	import { formatTime } from './format.ts';
+	import { useFormat } from './format.ts';
 
 	interface Props {
 		time?: Date;
@@ -12,6 +12,8 @@
 	}
 
 	let { time, tone, text, children }: Props = $props();
+
+	const format = useFormat();
 
 	let parts = $derived(text?.split(/`([^`\n]+)`/) ?? []);
 </script>
@@ -43,7 +45,7 @@
 				{@render children?.()}
 			{/if}
 			{#if time}
-				<span class="when">· <time datetime={time.toISOString()}>{formatTime(time)}</time></span>
+				<span class="when">· <time datetime={time.toISOString()}>{format.time(time)}</time></span>
 			{/if}
 		</span>
 	</span>

@@ -2,7 +2,7 @@
 	import type { Attachment } from 'svelte/attachments';
 	import { machines, type DeploySecret, type Machine } from '@regit/core';
 	import Button from './Button.svelte';
-	import { formatAgo } from './chat/format.ts';
+	import { useFormat } from './chat/format.ts';
 
 	interface Props {
 		open?: boolean;
@@ -25,6 +25,8 @@
 		onsave,
 		onremove
 	}: Props = $props();
+
+	const format = useFormat();
 
 	const id = $props.id();
 	let name = $state('');
@@ -89,7 +91,7 @@
 				<li>
 					<span class="secret">
 						<code>{secret.name}</code>
-						<span class="hint">set by {secret.updatedBy} {formatAgo(secret.updatedAt, time)}</span>
+						<span class="hint">set by {secret.updatedBy} {format.ago(secret.updatedAt, time)}</span>
 					</span>
 					<span class="actions">
 						<Button
