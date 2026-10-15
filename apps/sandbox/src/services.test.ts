@@ -156,6 +156,51 @@ test('reports the log tail when a service exits before its port opens', async ()
 	).rejects.toThrow(/exited with code 3 before port \d+ opened:\nmissing module/);
 });
 
+test('reports a missing cwd as a failure of that service and keeps serving', async () => {
+	const options = { fetch, base: 'http://sandbox' };
+	await mkdir(join(root, '.agents'));
+	await writeFile(
+		join(root, '.agents/services.yml'),
+		`services:\n  web:\n    command: ${server('hi')}\n    cwd: missing/dir\n    port: ${await freePort()}\n`
+	);
+
+	const started = await cli(['start', 'web'], options);
+	expect(started.code).toBe(1);
+	expect(started.output).toContain("web can't start: its cwd missing/dir");
+	expect(started.output).toContain('is not a directory');
+	expect((await cli(['run', 'api', '--port', '1', '--cwd', 'nope', '--', 'true'], options)).output)
+		.toContain("api can't start: its cwd nope");
+
+	const port = await freePort();
+	expect(await sandbox.services.start({ name: 'ok', command: server('ok'), port })).toMatchObject({
+		status: 'running'
+	});
+	expect(await (await fetch(`http://sandbox/preview/${port}/`)).text()).toBe('ok');
+});
+
+test('restart re-reads services.yml so edits take effect', async () => {
+	const [before, after] = await Promise.all([freePort(), freePort()]);
+	await mkdir(join(root, '.agents'));
+	await mkdir(join(root, 'web'));
+	const serve = `node -e "require('http').createServer((q, s) => s.end(process.env.GREETING + ' from ' + require('path').basename(process.cwd()))).listen(process.env.PORT)"`;
+	const save = (port: number, cwd: string, greeting: string) =>
+		writeFile(
+			join(root, '.agents/services.yml'),
+			`services:\n  web:\n    command: ${serve}\n    cwd: ${cwd}\n    port: ${port}\n    env:\n      GREETING: ${greeting}\n`
+		);
+
+	await save(before, '.', 'hi');
+	await sandbox.services.start({ name: 'web' });
+	expect(await (await fetch(`http://sandbox/preview/${before}/`)).text()).toStartWith('hi from ');
+
+	await save(after, 'web', 'hello');
+	expect(
+		await cli(['restart', 'web'], { fetch, base: 'http://sandbox', preview: 'p1-{name}.regit.run' })
+	).toEqual({ code: 0, output: `web  running  :${after}  saved  https://p1-web.regit.run` });
+	expect(await (await fetch(`http://sandbox/preview/${after}/`)).text()).toBe('hello from web');
+	expect((await fetch(`http://sandbox/preview/${before}/`)).status).toBe(502);
+});
+
 test('restarts running services in the new checkout when the workspace is recloned', async () => {
 	const port = await freePort();
 	const remote = async (message: string) => {

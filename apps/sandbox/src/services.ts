@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { openSync, closeSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -77,15 +77,28 @@ export function createServices(
 				`Port ${spec.port} is already in use by another process, so ${spec.name} can't start on it. Stop that process or give ${spec.name} another port.`
 			);
 
+		const cwd = resolve(root, spec.cwd ?? '.');
+		if (!(await stat(cwd).catch(() => null))?.isDirectory())
+			throw new ToolError(
+				`${spec.name} can't start: its cwd ${spec.cwd ?? '.'} (${cwd}) is not a directory.`
+			);
+
 		await mkdir(logs, { recursive: true });
 		const log = openSync(join(logs, `${spec.name}.log`), 'w');
-		const child = spawn('sh', ['-c', spec.command], {
-			cwd: resolve(root, spec.cwd ?? '.'),
-			env: { ...process.env, HOST: '0.0.0.0', ...spec.env, PORT: String(spec.port) },
-			detached: true,
-			stdio: ['ignore', log, log]
-		});
-		closeSync(log);
+		let failure: Error | undefined;
+		let child: ChildProcess;
+		try {
+			child = spawn('sh', ['-c', spec.command], {
+				cwd,
+				env: { ...process.env, HOST: '0.0.0.0', ...spec.env, PORT: String(spec.port) },
+				detached: true,
+				stdio: ['ignore', log, log]
+			});
+		} catch (cause) {
+			throw new ToolError(`${spec.name} failed to start: ${(cause as Error).message}`);
+		} finally {
+			closeSync(log);
+		}
 		const entry: Running = {
 			spec,
 			saved: specs.some((service) => service.name === spec.name),
@@ -93,18 +106,26 @@ export function createServices(
 			status: 'starting',
 			exitCode: null,
 			startedAt: Date.now(),
-			exited: new Promise((done) =>
-				child.on('exit', (code) => {
+			exited: new Promise((done) => {
+				const finish = (code: number | null) => {
 					entry.status = 'exited';
 					entry.exitCode = code;
 					done();
-				})
-			)
+				};
+				child.on('exit', finish);
+				child.on('error', (error) => {
+					failure = error;
+					if (child.pid === undefined || child.exitCode !== null) finish(null);
+				});
+			})
 		};
 		running.set(spec.name, entry);
 
 		const deadline = Date.now() + readyTimeoutMs;
 		while (Date.now() < deadline) {
+			if (failure && entry.status === 'exited') {
+				throw new ToolError(`${spec.name} failed to start: ${failure.message}`);
+			}
 			if (entry.status === 'exited') {
 				throw new ToolError(
 					`${spec.name} exited with code ${entry.exitCode} before port ${spec.port} opened:\n${await tail(spec.name, 30)}`
@@ -135,9 +156,9 @@ export function createServices(
 	}
 
 	async function restart(name: string) {
-		const spec = running.get(name)?.spec;
+		const entry = running.get(name);
 		await stop(name);
-		return start(spec ?? { name });
+		return start(entry && !entry.saved ? entry.spec : { name });
 	}
 
 	async function tail(name: string, lines = 100) {
