@@ -35,7 +35,7 @@
 		checks?: CheckRun | null;
 		branch: string;
 		now?: number;
-		onship: (commit: { title: string; body: string }) => Promise<unknown>;
+		onship?: (commit: { title: string; body: string }) => Promise<unknown>;
 	}
 
 	let {
@@ -71,7 +71,7 @@
 		busy = true;
 		error = null;
 		try {
-			await onship({ title, body });
+			await onship!({ title, body });
 			writing = false;
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : String(cause);
@@ -96,7 +96,7 @@
 		{#if shipping && progress}
 			<span class="elapsed">{formatDuration((now ?? stopwatch.now) - progress.started)}</span>
 		{/if}
-		{#if !writing && !shipping}
+		{#if onship && !writing && !shipping}
 			<Button
 				variant="primary"
 				size="sm"
@@ -162,7 +162,7 @@
 		</div>
 	{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-	{#if writing && !shipping}
+	{#if onship && writing && !shipping}
 		<form
 			onsubmit={(event) => {
 				event.preventDefault();

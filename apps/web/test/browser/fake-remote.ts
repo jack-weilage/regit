@@ -56,6 +56,7 @@ export const getThreads = query((_: string) => []);
 export const getChildren = query((_: { id: string }) => []);
 export const getChanges = query((_: { id: string }) => []);
 export const getUser = query(() => ({ name: 'Ada' }));
+export const getRepos = query(() => [{ name: 'demo', machine: 'basic', role: 'owner' as const }]);
 export const readServiceLogs = async ({ id, name }: { id: string; name: string }) =>
 	`${name} logs of ${id}`;
 // Never finishes, so the thread stays "Updating…".

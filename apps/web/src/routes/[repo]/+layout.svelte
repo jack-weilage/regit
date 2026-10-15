@@ -6,6 +6,7 @@
 		CloneDialog,
 		DeployDialog,
 		DeleteThreadDialog,
+		MembersDialog,
 		Toast,
 		type Mode,
 		type SimilarThread,
@@ -31,6 +32,9 @@
 		archiveThread,
 		reopenThread,
 		getDeploySettings,
+		getRepoMembers,
+		grantRepoMember,
+		revokeRepoMember,
 		getGitAccess,
 		getMain,
 		getRepos,
@@ -148,6 +152,21 @@
 		);
 
 	let managingDeploys = $state(false);
+	let managingMembers = $state(false);
+
+	// Principal IDs are JSON [issuer, subject]; owners add Access users from their own issuer.
+	function subject(principal: string) {
+		try {
+			const [, sub] = JSON.parse(principal);
+			return typeof sub === 'string' ? sub : principal;
+		} catch {
+			return principal;
+		}
+	}
+
+	function principal(sub: string) {
+		return sub.startsWith('[') ? sub : JSON.stringify([JSON.parse(user.id)[0], sub]);
+	}
 
 	let cloning = $state(false);
 	let created = $state<{ label: string; secret: string } | null>(null);
@@ -198,6 +217,7 @@
 		{main}
 		onupdate={updated.current ? () => window.location.reload() : undefined}
 		ondeploys={owner ? () => (managingDeploys = true) : undefined}
+		onmembers={owner ? () => (managingMembers = true) : undefined}
 		onclone={() => {
 			created = null;
 			cloning = true;
@@ -253,6 +273,26 @@
 			/>
 			{#snippet failed()}
 				<Toast ondismiss={() => (managingDeploys = false)}>Couldn't load deploy settings</Toast>
+			{/snippet}
+		</svelte:boundary>
+	{/if}
+	{#if managingMembers}
+		<svelte:boundary>
+			{@const members = await getRepoMembers(repo)}
+			<MembersDialog
+				bind:open={managingMembers}
+				{repo}
+				members={members.map((member) => ({
+					id: member.principalId,
+					label: subject(member.principalId),
+					role: member.role,
+					you: member.principalId === user.id
+				}))}
+				onadd={({ id, role }) => grantRepoMember({ repo, principalId: principal(id), role })}
+				onremove={(principalId) => revokeRepoMember({ repo, principalId })}
+			/>
+			{#snippet failed()}
+				<Toast ondismiss={() => (managingMembers = false)}>Couldn't load members</Toast>
 			{/snippet}
 		</svelte:boundary>
 	{/if}

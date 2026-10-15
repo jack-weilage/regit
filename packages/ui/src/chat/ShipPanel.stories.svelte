@@ -33,6 +33,15 @@
 />
 
 <Story
+	name="Can't ship"
+	args={{ onship: undefined }}
+	play={async ({ canvas }) => {
+		await expect(canvas.getByText('Unshipped changes')).toBeVisible();
+		await expect(canvas.queryByRole('button', { name: 'Ship' })).toBeNull();
+	}}
+/>
+
+<Story
 	name="Done when"
 	args={{
 		results: {

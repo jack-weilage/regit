@@ -28,6 +28,7 @@
 		oncreaterepo?: (repo: NewRepo) => Promise<void>;
 		onclone?: () => void;
 		ondeploys?: () => void;
+		onmembers?: () => void;
 		onupdate?: () => void;
 		onquery?: (text: string) => void;
 		onstart: (thread: { text: string; mode: Mode; machine: Machine }) => void;
@@ -51,6 +52,7 @@
 		oncreaterepo,
 		onclone,
 		ondeploys,
+		onmembers,
 		onupdate,
 		onquery,
 		onstart,
@@ -78,11 +80,14 @@
 					})),
 					...(onclone ? [{ label: 'Clone…', separated: true, onselect: onclone }] : []),
 					...(ondeploys ? [{ label: 'Deploys…', separated: !onclone, onselect: ondeploys }] : []),
+					...(onmembers
+						? [{ label: 'Members…', separated: !onclone && !ondeploys, onselect: onmembers }]
+						: []),
 					...(oncreaterepo
 						? [
 								{
 									label: 'New repository…',
-									separated: !onclone && !ondeploys,
+									separated: !onclone && !ondeploys && !onmembers,
 									onselect: () => document.getElementById(`${id}-new-repo`)?.showPopover()
 								}
 							]

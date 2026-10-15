@@ -59,6 +59,7 @@
 		forwardIntent,
 		getChanges,
 		getChildren,
+		getRepos,
 		readServiceLogs,
 		serviceAction,
 		getThread,
@@ -136,6 +137,9 @@
 	let ref = $derived({ repo: params.repo, id: data.threadRef.id });
 	let local = $derived(stateFor(ref.id));
 	let detail = $derived(await getThread(ref));
+	let canShip = $derived(
+		(await getRepos()).find((repo) => repo.name === params.repo)?.role === 'owner'
+	);
 	let activity = $derived(ref.id in live ? live[ref.id] : (detail?.activity ?? null));
 	let phase = $derived(activity?.agent ?? idlePhase);
 	let retry = $derived(activity?.retry ?? null);
@@ -436,7 +440,7 @@
 							progress={activity?.ship}
 							checks={summary.checks}
 							branch={detail.branch}
-							onship={(commit) => shipThread({ ...ref, ...commit })}
+							onship={canShip ? (commit) => shipThread({ ...ref, ...commit }) : undefined}
 						/>
 					{/if}
 				</ErrorBoundary>
