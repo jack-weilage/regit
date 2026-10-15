@@ -666,6 +666,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			name: `Thread #${sender.number} (${sender.headline || 'New thread'})`,
 			kind: 'agent' as const
 		};
+		if (['idle', 'shipped'].includes(recipient.status)) this.#setStatus(to, 'working');
 		await this.#converse(to, author, text, entry);
 		return steering
 			? 'Delivered. Its agent reads it at its next step.'

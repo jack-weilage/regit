@@ -282,6 +282,74 @@ test('refuses thread messages to itself, unknown or idle threads, and past the l
 	await expect(send(from.id, to.id, 'After the person')).resolves.toContain('Delivered');
 });
 
+test('wakes an idle thread on a message and refuses messages while it ships', async () => {
+	await seed('waking', { 'notes.md': 'Some notes\n' });
+	const env = await worker.getEnv();
+	const repo = env.REPOS.getByName('waking');
+	const sam = { name: 'Sam', kind: 'person' as const };
+	const say = (delta: string) => [{ type: 'response.output_text.delta', delta }];
+	const call = (name: string, args: object) => [
+		{
+			type: 'response.output_item.done',
+			item: { type: 'function_call', call_id: name, name, arguments: JSON.stringify(args) }
+		}
+	];
+	const open = async (text: string, reply: string) => {
+		await script('waking', [say(reply)]);
+		const { id } = await repo.openThread({
+			repo: 'waking',
+			author: sam,
+			text,
+			mode: 'small',
+			machine: 'standard-1'
+		});
+		await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
+		return id;
+	};
+	const recipient = await open('Rework the settings page.', 'Listening.');
+	const sender = await open('Rename the user id.', 'Ready.');
+
+	await script('waking', [call('run', { command: 'sleep 3' }), say('Handled.')]);
+	await repo.messageThread(sender, recipient, 'User.id is now User.accountId.');
+	expect((await repo.thread(recipient))!.summary.status).toBe('working');
+	await untilThread(
+		repo,
+		recipient,
+		(detail) =>
+			detail.summary.status === 'idle' &&
+			detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Handled.')
+	);
+
+	const sql = await worker.getDurableObjectStorage('REPOS', { name: 'waking' });
+	await sql.exec("UPDATE threads SET status = 'shipping' WHERE id = ?", recipient);
+	await expect(repo.messageThread(sender, recipient, 'Hi')).rejects.toThrow();
+	await script('waking', [
+		call('message_thread', { thread: recipient, text: 'One more rename.' }),
+		say('Told Sam instead.')
+	]);
+	await repo.reply(sender, { author: sam, text: 'Tell the settings thread.' });
+	const told = await untilThread(repo, sender, (detail) =>
+		detail.entries.some((entry) => entry.type === 'message' && entry.text === 'Told Sam instead.')
+	);
+	expect(told.entries).toContainEqual(
+		expect.objectContaining({
+			type: 'tools',
+			calls: [
+				expect.objectContaining({
+					tool: 'message_thread',
+					status: 'failed',
+					output: expect.stringContaining(
+						`Thread ${recipient} is shipping. Tell your person instead.`
+					)
+				})
+			]
+		})
+	);
+	const detail = (await repo.thread(recipient))!;
+	expect(detail.summary.status).toBe('shipping');
+	expect(detail.entries.filter((entry) => entry.type === 'thread-message')).toHaveLength(1);
+});
+
 test('exempts messages between a parent and its children from the limit', async () => {
 	await seed('family', { 'notes.md': 'Some notes\n' });
 	const env = await worker.getEnv();
