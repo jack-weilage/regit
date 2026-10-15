@@ -860,7 +860,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 		const merged = await this.#shell(fetch, `${gitAsReGit} merge --no-edit ${ref}`);
 		const conflicts = merged.ok
 			? []
-			: (await this.#git(fetch, 'git diff --name-only --diff-filter=U'))
+			: (await this.#git(fetch, 'git -c core.quotePath=false diff --name-only --diff-filter=U'))
 					.split('\n')
 					.filter(Boolean);
 		if (!merged.ok && !conflicts.length) {
@@ -1035,7 +1035,7 @@ export class AttemptSandbox extends DurableObject<Env> {
 	async #conflictsWith(fetch: Fetch, ref: string) {
 		const merged = await this.#shell(
 			fetch,
-			`git merge-tree --write-tree --name-only --no-messages HEAD ${ref}`
+			`git -c core.quotePath=false merge-tree --write-tree --name-only --no-messages HEAD ${ref}`
 		);
 		return merged.ok ? [] : merged.output.trim().split('\n').slice(1).filter(Boolean);
 	}

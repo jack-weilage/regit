@@ -96,10 +96,7 @@ export async function commit(root: string, { message, author }: CommitRequest) {
 	const merging =
 		(await exec('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: root })).code === 0;
 	if (merging) {
-		const unmerged = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
-			.split('\n')
-			.filter(Boolean);
-		for (const file of unmerged) {
+		for (const file of await unmerged(root)) {
 			const content = await readFile(join(root, file), 'utf8').catch(() => '');
 			if (/^(<{7}|>{7})( |$)/m.test(content)) return null;
 		}
@@ -192,9 +189,7 @@ export async function buildShip(
 		env: identity('COMMITTER', committer)
 	});
 	if (rebased.code !== 0) {
-		const conflicts = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
-			.split('\n')
-			.filter(Boolean);
+		const conflicts = await unmerged(root);
 		await abortRebase(root);
 		if (conflicts.length)
 			throw new Error(`Ship conflicts with ${branch} in ${conflicts.join(', ')}`);
@@ -231,9 +226,7 @@ export async function buildRevert(
 	await git(root, ['clean', '-fd']);
 	const applied = await exec('git', [...noHooks, 'revert', '--no-commit', sha], { cwd: root });
 	if (applied.code !== 0) {
-		const conflicts = (await git(root, ['diff', '--name-only', '--diff-filter=U']))
-			.split('\n')
-			.filter(Boolean);
+		const conflicts = await unmerged(root);
 		await exec('git', [...noHooks, 'revert', '--abort'], { cwd: root });
 		await git(root, ['reset', '--hard', head]);
 		if (conflicts.length)
@@ -348,12 +341,18 @@ export async function clashes(
 async function conflicts(root: string, ours: string, theirs: string) {
 	const merged = await exec(
 		'git',
-		['merge-tree', '--write-tree', '--name-only', '--no-messages', ours, theirs],
+		['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', ours, theirs],
 		{ cwd: root }
 	);
 	if (merged.code !== 0 && merged.code !== 1)
 		throw new Error(`git merge-tree failed: ${merged.output.trim()}`);
-	return merged.code === 1 ? merged.stdout.trim().split('\n').slice(1).filter(Boolean) : [];
+	return merged.code === 1 ? merged.stdout.split('\0').slice(1).filter(Boolean) : [];
+}
+
+async function unmerged(root: string) {
+	const listed = await exec('git', ['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: root });
+	if (listed.code !== 0) throw new Error(`git diff failed: ${listed.output.trim()}`);
+	return listed.stdout.split('\0').filter(Boolean);
 }
 
 async function forkHead(root: string, { remote, branch, published }: CompareRequest['forks'][0]) {

@@ -404,3 +404,40 @@ test('blames a conflict on another thread only in files both threads changed', a
 		'Conflicts with "Rewrite the notes." in notes.md'
 	]);
 });
+
+test('names conflicting files with non-ASCII paths as they are', async () => {
+	const path = 'docs/café ü.md';
+	const { repo, sam, id } = await startedThread(
+		'unicode',
+		[write(`printf 'Ours\\n' > '${path}'`), done('Changed the docs.')],
+		undefined,
+		{ [path]: 'Docs\n' }
+	);
+	await untilThread(repo, id, (detail) => detail.summary.status === 'idle');
+	const work = join(dir, 'unicode-work');
+	await commit(work, { [path]: 'Theirs\n' }, 'Their docs');
+	sh(work, 'push', '--quiet', join(dir, 'unicode.git'), 'main');
+
+	await script('unicode', [done('Saw the conflict.')]);
+	await repo.reply(id, { author: sam, text: 'Anything new?' });
+	const behind = await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'idle' && !!detail.summary.behind
+	);
+	expect(behind.summary.behind).toMatchObject({ conflicts: [path] });
+	expect(JSON.stringify((await modelRequests('unicode')).at(-1)!.query)).toContain(
+		`that conflict with this thread's changes in ${path}.`
+	);
+
+	await script('unicode', [write(`printf 'Both\\n' > '${path}'`), done('Merged main.')]);
+	await repo.bringUpToDate(id, sam);
+	await untilThread(
+		repo,
+		id,
+		(detail) => detail.summary.status === 'idle' && detail.summary.behind === null
+	);
+	expect(JSON.stringify((await modelRequests('unicode')).at(-2)!.query)).toContain(
+		`merging it into this thread conflicts in ${path}.`
+	);
+});

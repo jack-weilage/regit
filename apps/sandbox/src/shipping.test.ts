@@ -244,6 +244,53 @@ describe('shipping', () => {
 		).rejects.toThrow('Invalid branch');
 	});
 
+	test('names conflicting files with non-ASCII paths as they are', async () => {
+		const path = 'docs/café ü.md';
+		await call('write_file', { path, content: 'base\n' });
+		base = (await workspace.commit({ message: 'Add docs', author }))!;
+		await workspace.push({ ref: 'main' });
+		await call('write_file', { path, content: 'ours\n' });
+		const sourceSha = (await workspace.commit({ message: 'Ours', author }))!;
+		await git(root, ['push', remote, 'HEAD:refs/heads/ours']);
+		const elsewhere = join(dir, 'unicode');
+		await git(dir, ['clone', remote, elsewhere]);
+		await writeFile(join(elsewhere, path), 'theirs\n');
+		await git(elsewhere, [
+			'-c',
+			'user.name=Lin',
+			'-c',
+			'user.email=lin@example.com',
+			'commit',
+			'-am',
+			'Theirs'
+		]);
+		await git(elsewhere, ['push', 'origin', 'main']);
+
+		const ours = { id: 'ours', remote, branch: 'ours' };
+		expect((await workspace.compare({ remote, forks: [ours] })).threads).toEqual([
+			{ id: 'ours', behind: 1, conflicts: [path] }
+		]);
+		expect(
+			await workspace.clashes({ fork: ours, others: [{ id: 'main', remote, branch: 'main' }] })
+		).toEqual({ clashes: [{ id: 'main', files: [path] }] });
+
+		await git(root, ['fetch', remote, 'main']);
+		await expect(
+			git(root, [
+				'-c',
+				'user.name=ReGit',
+				'-c',
+				'user.email=agent@regit.dev',
+				'merge',
+				'FETCH_HEAD'
+			])
+		).rejects.toThrow(/CONFLICT/);
+		expect(await workspace.commit({ message: 'Too early', author })).toBeNull();
+		await git(root, ['merge', '--abort']);
+
+		await expect(ship(sourceSha)).rejects.toThrow(`Ship conflicts with main in ${path}`);
+	});
+
 	test('reverts a commit on main once, and names the files when later work conflicts', async () => {
 		const { sha } = await ship((await checkpoint("export const greeting = 'hi';\n", 'Source'))!);
 		const revert = () =>
