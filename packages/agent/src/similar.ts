@@ -20,6 +20,7 @@ export interface SimilarCandidate {
 	id: string;
 	headline: string;
 	purpose?: string;
+	doneWhen?: string[];
 }
 
 export const maxSimilarCandidates = 40;
@@ -57,10 +58,7 @@ export async function assessRequest(
 	const shortlist = candidates.slice(0, maxSimilarCandidates);
 	const keys = shortlist.map((_, index) => `t${index + 1}`);
 	const threads = Object.fromEntries(
-		shortlist.map((candidate, index) => [
-			keys[index],
-			candidate.purpose ? `${candidate.headline} — ${candidate.purpose}` : candidate.headline
-		])
+		shortlist.map((candidate, index) => [keys[index], describeCandidate(candidate)])
 	);
 	const { answers } = await decide({
 		state: { new_intent: text.trim(), threads },
@@ -107,6 +105,11 @@ export async function assessRequest(
 				order.indexOf(a.relation) - order.indexOf(b.relation) || b.probability - a.probability
 		);
 	return { similar, size: likeliest(answers.size?.probabilities) };
+}
+
+function describeCandidate({ headline, purpose, doneWhen = [] }: SimilarCandidate) {
+	const checks = doneWhen.length ? ` Done when: ${doneWhen.join('; ')}` : '';
+	return `${purpose ? `${headline} — ${purpose}` : headline}${checks}`;
 }
 
 function likeliest(probabilities: Record<string, number> = {}): Size {

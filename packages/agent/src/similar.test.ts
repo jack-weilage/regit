@@ -5,7 +5,8 @@ const candidates = [
 	{
 		id: 'members',
 		headline: 'perf(settings): load org members in pages',
-		purpose: 'Big orgs wait.'
+		purpose: 'Big orgs wait.',
+		doneWhen: ['Members load 50 at a time', 'Scrolling loads the next page']
 	},
 	{ id: 'rename', headline: 'feat(api): rename user id to account id' },
 	{ id: 'cache', headline: 'Cache org settings' },
@@ -45,7 +46,7 @@ test('asks how the intent relates to each thread and keeps the meaningful matche
 	expect(requests[0]!.state).toEqual({
 		new_intent: 'Page org members on the settings page',
 		threads: {
-			t1: 'perf(settings): load org members in pages — Big orgs wait.',
+			t1: 'perf(settings): load org members in pages — Big orgs wait. Done when: Members load 50 at a time; Scrolling loads the next page',
 			t2: 'feat(api): rename user id to account id',
 			t3: 'Cache org settings',
 			t4: 'docs: add a contributing guide'

@@ -897,7 +897,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				return {
 					id: thread.id,
 					headline: thread.headline,
-					...(intent?.type === 'intent' && { purpose: intent.intent.purpose })
+					...(intent?.type === 'intent' && {
+						purpose: intent.intent.purpose,
+						doneWhen: intent.intent.doneWhen
+					})
 				};
 			});
 		try {

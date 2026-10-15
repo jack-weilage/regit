@@ -408,7 +408,7 @@ test('flags a proposed intent that duplicates another thread, and forwards it th
 	expect(asked!.state).toMatchObject({
 		new_intent: expect.stringContaining('fix(settings): page the member list'),
 		threads: {
-			t1: 'perf(settings): load org members in pages — Big orgs wait for every member to load.'
+			t1: 'perf(settings): load org members in pages — Big orgs wait for every member to load. Done when: Settings loads in under a second'
 		}
 	});
 	await untilThread(repo, second.id, (detail) => detail.summary.status === 'idle');
