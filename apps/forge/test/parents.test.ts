@@ -31,8 +31,7 @@ const shipInput = (by: { id: string; name: string; kind: 'person' }) => ({
 	title: 'docs: change the notes',
 	body: ''
 });
-const about = (text: string) =>
-	`Thread #2 (docs: change the notes), which this thread started, ${text}`;
+const about = (text: string) => `Spun-off thread #2 (docs: change the notes) ${text}`;
 const events = (detail: ThreadDetail) =>
 	detail.entries.flatMap((entry) => (entry.type === 'event' ? [entry.text] : []));
 
@@ -89,7 +88,7 @@ test('wakes an idle parent when its child needs a person, ships, passes and depl
 		(entry) => entry.type === 'tools' && entry.checkpoint
 	) as { checkpoint: string };
 	const needsYou = about(
-		`ended a turn and needs a person: it has changes ready to ship. Its latest commit is ${checkpoint.checkpoint.slice(0, 7)}.`
+		`needs a person: changes ready to ship. Latest commit: \`${checkpoint.checkpoint.slice(0, 7)}\`.`
 	);
 	expect(events(told)).toContain(needsYou);
 	expect(JSON.stringify((await modelRequests('parent-idle')).at(-1)!.query)).toContain(needsYou);
@@ -99,9 +98,9 @@ test('wakes an idle parent when its child needs a person, ships, passes and depl
 	await untilThread(repo, child, (detail) => detail.summary.shipped?.verdict === 'deployed');
 	const shipped = sh(join(dir, 'parent-idle.git'), 'rev-parse', '--short=7', 'main');
 	const notices = [
-		about(`shipped as ${shipped} to \`main\`.`),
-		about(`shipped as ${shipped}, which passed \`main\`'s deploy checks.`),
-		about(`shipped as ${shipped}, which is now deployed.`)
+		about(`shipped \`${shipped}\` to \`main\`.`),
+		about(`passed \`main\`'s deploy checks with \`${shipped}\`.`),
+		about(`is live as \`${shipped}\`.`)
 	];
 	const done = await untilThread(
 		repo,
@@ -120,7 +119,7 @@ test('wakes an idle parent when its child needs a person, ships, passes and depl
 	);
 	const own = JSON.stringify((await modelRequests('parent-idle')).at(-1)!.query);
 	expect(own).toContain(`What this thread shipped as ${shipped} is deployed.`);
-	expect(own).not.toContain('which this thread started');
+	expect(own).not.toContain('Spun-off thread');
 });
 
 test('steers a working parent when its child is handed back a conflicting ship', async () => {
@@ -141,20 +140,20 @@ test('steers a working parent when its child is handed back a conflicting ship',
 	await expect.poll(async () => (await parentQueries('parent-working', parent)).length).toBe(1);
 
 	await repo.ship(child, shipInput(sam));
-	const handBack = about('conflicted with main while shipping');
+	const handBack = about('conflicted with `main` while shipping');
 	const steered = await untilThread(repo, parent, (detail) =>
 		events(detail).some((text) => text.startsWith(handBack))
 	);
 	expect(steered.summary.status).toBe('working');
 	expect(events(steered).find((text) => text.startsWith(handBack))).toMatch(
-		/while shipping [0-9a-f]{7}, so it was handed back to its agent to bring up to date; it ships again once its agent finishes\.$/
+		/while shipping `[0-9a-f]{7}`; it ships again once its agent brings it up to date\.$/
 	);
 
 	await expect
 		.poll(async () => (await repo.thread(child))!.summary.status, { timeout: 60_000 })
 		.toBe('shipped');
 	const shipped = sh(join(dir, 'parent-working.git'), 'rev-parse', '--short=7', 'main');
-	const landed = about(`shipped as ${shipped} to \`main\`.`);
+	const landed = about(`shipped \`${shipped}\` to \`main\`.`);
 	await expect
 		.poll(
 			async () => {
@@ -185,13 +184,11 @@ test('tells a parent when its child breaks main, is handed back, and is reverted
 	const broken = reverted.summary.shipped!.sha.slice(0, 7);
 	const revert = sh(join(dir, 'parent-reverted.git'), 'rev-parse', '--short=7', 'main');
 	const notices = [
-		about(`shipped as ${broken} to \`main\`.`),
+		about(`shipped \`${broken}\` to \`main\`.`),
 		about(
-			`shipped as ${broken}, which failed \`main\`'s deploy checks (title), so it was handed back to its agent to fix; the fix ships once its agent finishes.`
+			`broke \`main\`'s deploy checks (title) with \`${broken}\`; the fix ships once its agent finishes.`
 		),
-		about(
-			`shipped as ${broken}, which broke \`main\`'s deploy checks, so it was reverted in ${revert} and is no longer on \`main\`.`
-		)
+		about(`broke \`main\`'s deploy checks with \`${broken}\` and was reverted in \`${revert}\`.`)
 	];
 	await untilThread(
 		repo,

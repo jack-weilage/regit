@@ -68,7 +68,7 @@ test('ships without waiting for checks, then hands a failure on main back to the
 		(detail) => detail.summary.shipped?.verdict === 'passed'
 	);
 	expect(events(detail)).toContain(
-		`Deploy checks failed on main after this shipped as ${broken.slice(0, 7)}: title. Handing it back to the agent to fix.`
+		`\`${broken.slice(0, 7)}\` failed \`main\`'s deploy checks (title); handed back to the agent to fix`
 	);
 	const notice = JSON.stringify((await modelRequests('broke-main')).at(-2)!.query);
 	expect(notice).toContain('the deploy checks from .agents/checks.yml failed on `main`');

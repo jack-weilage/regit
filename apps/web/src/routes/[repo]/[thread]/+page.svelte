@@ -397,7 +397,7 @@
 								<ChatMessage><Markdown source={block.text} /></ChatMessage>
 							</ChatAutomation>
 						{:else if block.type === 'event'}
-							<ChatEvent time={new Date(block.at)} tone={block.tone}>{block.text}</ChatEvent>
+							<ChatEvent time={new Date(block.at)} tone={block.tone} text={block.text} />
 						{/if}
 					</ErrorBoundary>
 				{/each}

@@ -142,7 +142,7 @@ test.each(['stop', 'archive', 'delete'] as const)(
 			id,
 			(detail) =>
 				detail.summary.status === 'working' &&
-				events(detail).some((text) => text.endsWith('Handing it back to the agent to fix.'))
+				events(detail).some((text) => text.endsWith('handed back to the agent to fix'))
 		);
 
 		await repo[action](id, sam);

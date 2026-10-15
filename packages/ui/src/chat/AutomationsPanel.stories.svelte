@@ -68,7 +68,10 @@
 						>I'll check error rates and the settings page 15 minutes after it deploys.</ChatMessage
 					>
 				</ChatGroup>
-				<ChatEvent time={new Date(automationsNow - 40 * 60_000)}>Shipped 4f2a9c1 to main</ChatEvent>
+				<ChatEvent
+					time={new Date(automationsNow - 40 * 60_000)}
+					text="Shipped `4f2a9c1` to `main`"
+				/>
 				<ChatAutomation
 					name="post-deploy-check"
 					trigger="15m after what this thread shipped deploys"

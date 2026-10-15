@@ -108,7 +108,7 @@ test('only an owner can ship, and shipping squashes the thread onto main with pr
 	expect(shipped.summary).toMatchObject({ changes: null, shipped: { sha, by: 'Sam' } });
 	expect(shipped.entries.at(-1)).toMatchObject({
 		type: 'event',
-		text: `Shipped ${sha.slice(0, 7)} to main`
+		text: `Shipped \`${sha.slice(0, 7)}\` to \`main\``
 	});
 	expect(sh(canonical, 'rev-parse', 'main^')).toBe(original);
 	expect(sh(canonical, 'show', 'main:notes.md')).toBe('# Notes');

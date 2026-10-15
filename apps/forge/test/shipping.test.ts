@@ -28,7 +28,7 @@ test('ships finished work as one commit on main', async () => {
 	expect(shipped.summary.shipped).toMatchObject({ sha: main, by: 'Sam' });
 	expect(shipped.entries.at(-1)).toMatchObject({
 		type: 'event',
-		text: `Shipped ${main.slice(0, 7)} to main`
+		text: `Shipped \`${main.slice(0, 7)}\` to \`main\``
 	});
 	expect(sh(join(dir, 'shipping.git'), 'log', '--format=%an|%s', 'main')).toBe(
 		'Sam|docs: add a title\nSam|init'
@@ -89,7 +89,7 @@ test('hands a conflicting ship back to its agent to resolve, then ships again', 
 	expect(shipped.entries).toContainEqual(
 		expect.objectContaining({
 			type: 'event',
-			text: 'Ship conflicts with main in notes.md. Handing it back to the agent to bring up to date.',
+			text: 'Ship conflicts with `main` in `notes.md`; handed back to the agent to bring up to date',
 			tone: 'warning'
 		})
 	);
@@ -154,10 +154,11 @@ test("ships to the branch the repository's HEAD points to, not its recorded defa
 	const shipped = await untilThread(repo, id, (detail) => detail.summary.status === 'shipped');
 
 	expect(shipped.branch).toBe('master');
-	expect(shipped.entries.slice(-2).map((entry) => entry.type === 'event' && entry.text)).toEqual([
-		'Sam is shipping this thread to master',
-		`Shipped ${sh(join(dir, 'imported.git'), 'rev-parse', '--short=7', 'master')} to master`
-	]);
+	const events = shipped.entries.flatMap((entry) => (entry.type === 'event' ? [entry.text] : []));
+	expect(events.at(-1)).toBe(
+		`Shipped \`${sh(join(dir, 'imported.git'), 'rev-parse', '--short=7', 'master')}\` to \`master\``
+	);
+	expect(events.filter((text) => text.includes('shipping'))).toEqual([]);
 	expect(sh(join(dir, 'imported.git'), 'log', '--format=%s', 'master')).toBe(
 		'docs: add a title\ninit'
 	);

@@ -6,14 +6,18 @@
 	interface Props {
 		time?: Date;
 		tone?: EventTone;
-		children: Snippet;
+		/** Plain text where `backticked` spans render as code; used instead of children. */
+		text?: string;
+		children?: Snippet;
 	}
 
-	let { time, tone, children }: Props = $props();
+	let { time, tone, text, children }: Props = $props();
+
+	let parts = $derived(text?.split(/`([^`\n]+)`/) ?? []);
 </script>
 
 <p class={['event', 'chat-enter', tone]}>
-	<span>
+	<span class="body">
 		{#if tone}
 			<svg
 				class="mark"
@@ -29,10 +33,19 @@
 				<path d={tone === 'danger' ? 'M8 5v3.5M8 11v.01' : 'M8 6.5v3.25M8 11.75v.01'} />
 			</svg>
 		{/if}
-		{@render children()}
-		{#if time}
-			· <time datetime={time.toISOString()}>{formatTime(time)}</time>
-		{/if}
+		<span class="text">
+			{#if text !== undefined}
+				{#each parts as part, index (index)}{#if index % 2}<code
+							>{#each part.split(/(?<=\/)/) as piece, at (at)}{#if at}<wbr
+									/>{/if}{piece}{/each}</code
+						>{:else}{part}{/if}{/each}
+			{:else}
+				{@render children?.()}
+			{/if}
+			{#if time}
+				<span class="when">· <time datetime={time.toISOString()}>{formatTime(time)}</time></span>
+			{/if}
+		</span>
 	</span>
 </p>
 
@@ -46,8 +59,10 @@
 		margin: 0;
 		color: var(--color-muted);
 		font-size: var(--text-meta);
+		line-height: 1.5;
 		text-align: center;
 		text-wrap: balance;
+		overflow-wrap: break-word;
 
 		&::before,
 		&::after {
@@ -65,29 +80,43 @@
 		}
 
 		&:is(.warning, .danger) {
+			align-items: start;
 			color: var(--tone);
+			text-align: start;
+			text-wrap: pretty;
 
 			&::before,
 			&::after {
+				margin-block-start: 0.5lh;
 				border-color: color-mix(in oklab, var(--tone) 35%, var(--color-border));
+			}
+
+			.body {
+				display: flex;
+				gap: 0.35em;
 			}
 		}
 	}
 
-	span {
+	.body {
 		flex: 0 1 auto;
+		min-inline-size: 0;
 	}
 
 	.mark {
+		flex: none;
 		inline-size: 1.2em;
 		block-size: 1.2em;
-		margin-inline-end: 0.3em;
-		vertical-align: -0.25em;
+		margin-block-start: calc((1lh - 1.2em) / 2);
 		fill: none;
 		stroke: currentColor;
 		stroke-width: 1.5;
 		stroke-linecap: round;
 		stroke-linejoin: round;
+	}
+
+	.when {
+		white-space: nowrap;
 	}
 
 	time {
@@ -96,6 +125,6 @@
 
 	.event :global(code) {
 		font-family: var(--font-mono);
-		font-size: inherit;
+		font-size: 0.95em;
 	}
 </style>

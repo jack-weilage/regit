@@ -197,11 +197,10 @@ function parentVerdictNotice(
 	revert?: string
 ) {
 	const short = sha.slice(0, 7);
-	if (verdict === 'passed')
-		return `shipped as ${short}, which passed \`${branch}\`'s deploy checks.`;
-	if (verdict === 'deployed') return `shipped as ${short}, which is now deployed.`;
-	const where = revert ? ` in ${revert.slice(0, 7)}` : '';
-	return `shipped as ${short}, which broke \`${branch}\`'s deploy checks, so it was reverted${where} and is no longer on \`${branch}\`.`;
+	if (verdict === 'passed') return `passed \`${branch}\`'s deploy checks with \`${short}\`.`;
+	if (verdict === 'deployed') return `is live as \`${short}\`.`;
+	const where = revert ? ` in \`${revert.slice(0, 7)}\`` : '';
+	return `broke \`${branch}\`'s deploy checks with \`${short}\` and was reverted${where}.`;
 }
 
 function deployFailedNotice(shipped: string, sha: string, branch: string, output: string) {
@@ -1036,10 +1035,6 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			since: now,
 			started: now
 		});
-		this.#add(thread, {
-			type: 'event',
-			text: `${by.name} is shipping this thread to ${await this.#branch()}`
-		});
 		try {
 			await this.env.SHIP_THREAD.create({ id: ship.id, params: ship });
 		} catch (error) {
@@ -1119,9 +1114,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				fixed: sha
 			});
 		this.#setStatus(ship.thread, 'shipped');
-		this.#add(ship.thread, { type: 'event', text: `Shipped ${sha.slice(0, 7)} to ${branch}` });
+		const shipped = `\`${sha.slice(0, 7)}\` to \`${branch}\``;
+		this.#add(ship.thread, { type: 'event', text: `Shipped ${shipped}` });
 		this.#threadEvent(ship.thread, 'landed');
-		await this.#tellParent(ship.thread, `shipped as ${sha.slice(0, 7)} to \`${branch}\`.`);
+		await this.#tellParent(ship.thread, `shipped ${shipped}.`);
 		this.#checkOverlaps(ship.thread);
 		await this.#verify({ sha, headline: title, thread: ship.thread });
 	}
@@ -1207,19 +1203,25 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 				handBacks: ship.handBacks + 1
 			})
 		);
-		const conflict = /^Ship conflicts with (\S+) in /.exec(message);
+		const conflict = /^Ship conflicts with (\S+) in (.+)$/.exec(message);
+		const files = conflict?.[2]
+			?.split(', ')
+			.map((file) => `\`${file}\``)
+			.join(', ');
 		const entry = this.#add(ship.thread, {
 			type: 'event',
-			text: `${message}. Handing it back to the agent to ${conflict ? 'bring up to date' : 'fix'}.`,
+			text: conflict
+				? `Ship conflicts with \`${conflict[1]}\` in ${files}; handed back to the agent to bring up to date`
+				: `Couldn't ship: ${message}; handed back to the agent to fix`,
 			tone: 'warning'
 		});
 		this.#setStatus(ship.thread, 'working');
-		const commit = ship.source.sha.slice(0, 7);
+		const commit = `\`${ship.source.sha.slice(0, 7)}\``;
 		await this.#tellParent(
 			ship.thread,
 			conflict
-				? `conflicted with ${conflict[1]} while shipping ${commit}, so it was handed back to its agent to bring up to date; it ships again once its agent finishes.`
-				: `couldn't ship ${commit} (${message}), so it was handed back to its agent to fix; it ships again once its agent finishes.`
+				? `conflicted with \`${conflict[1]}\` while shipping ${commit}; it ships again once its agent brings it up to date.`
+				: `couldn't ship ${commit} (${message}); it ships again once its agent fixes that.`
 		);
 		await this.#converse(
 			ship.thread,
@@ -1470,7 +1472,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const summary = this.#summary(child);
 		const parent = summary?.parent && this.#summary(summary.parent.id);
 		if (!summary || !parent || parent.deleted || parent.status === 'archived') return;
-		const about = `Thread #${summary.number} (${summary.headline || 'New thread'}), which this thread started, ${text}`;
+		const about = `Spun-off thread #${summary.number} (${summary.headline || 'New thread'}) ${text}`;
 		if (parent.status === 'shipping') return await this.#notify(parent.id, about);
 		const entry = this.#add(parent.id, { type: 'event', text: about });
 		if (['idle', 'shipped'].includes(parent.status)) this.#setStatus(parent.id, 'working');
@@ -1492,9 +1494,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const reasons = [
 			summary.failure && `${summary.failure.title}: ${summary.failure.error}`,
 			summary.behind?.conflicts.length &&
-				`it conflicts with \`${summary.behind.branch}\` in ${summary.behind.conflicts.join(', ')}`,
-			summary.changes?.files && 'it has changes ready to ship',
-			unmet && `${unmet} of its done-when checks ${unmet === 1 ? 'is' : 'are'} unmet`
+				`conflicts with \`${summary.behind.branch}\` in ${summary.behind.conflicts.map((file) => `\`${file}\``).join(', ')}`,
+			summary.changes?.files && 'changes ready to ship',
+			unmet && `${unmet} done-when ${unmet === 1 ? 'check' : 'checks'} unmet`
 		].filter(Boolean);
 		const reason = reasons.join('; ');
 		if (this.#meta(told) === reason) return;
@@ -1502,9 +1504,9 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const checkpoint = entries.findLast((entry) => entry.type === 'tools' && entry.checkpoint);
 		const commit =
 			checkpoint?.type === 'tools' && checkpoint.checkpoint
-				? ` Its latest commit is ${checkpoint.checkpoint.slice(0, 7)}.`
+				? ` Latest commit: \`${checkpoint.checkpoint.slice(0, 7)}\`.`
 				: '';
-		await this.#tellParent(thread, `ended a turn and needs a person: ${reason}.${commit}`);
+		await this.#tellParent(thread, `needs a person: ${reason}.${commit}`);
 	}
 
 	async #notify(thread: string, notice: string) {
@@ -1540,10 +1542,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const failed = blockingFailures(results).map(({ name }) => name);
 		const summary = this.#summary(thread);
 		const input = JSON.parse(this.#meta(`ship-input:${thread}`) ?? 'null') as ShipInput | null;
-		const brokeMain = `shipped as ${culprit.sha.slice(0, 7)}, which failed \`${branch}\`'s deploy checks (${failed.join(', ')})`;
+		const short = `\`${culprit.sha.slice(0, 7)}\``;
+		const brokeMain = `broke \`${branch}\`'s deploy checks (${failed.join(', ')}) with ${short}`;
 		if (summary?.status !== 'shipped' || summary.deleted || fixing.fixes >= maxFixes || !input) {
 			const why = fixing.fixes ? 'the fix did not make them pass' : 'nobody was free to fix them';
-			await this.#tellParent(thread, `${brokeMain}, and ${why}, so it is being reverted.`);
+			await this.#tellParent(thread, `${brokeMain}; ${why}, so it is being reverted.`);
 			return await this.#revert(thread, `Deploy checks failed (${failed.join(', ')}), and ${why}.`);
 		}
 		this.#saveFixing(thread, { ...fixing, fixes: fixing.fixes + 1 });
@@ -1560,14 +1563,11 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		);
 		const entry = this.#add(thread, {
 			type: 'event',
-			text: `Deploy checks failed on ${branch} after this shipped as ${culprit.sha.slice(0, 7)}: ${failed.join(', ')}. Handing it back to the agent to fix.`,
+			text: `${short} failed \`${branch}\`'s deploy checks (${failed.join(', ')}); handed back to the agent to fix`,
 			tone: 'danger'
 		});
 		this.#setStatus(thread, 'working');
-		await this.#tellParent(
-			thread,
-			`${brokeMain}, so it was handed back to its agent to fix; the fix ships once its agent finishes.`
-		);
+		await this.#tellParent(thread, `${brokeMain}; the fix ships once its agent finishes.`);
 		await this.#converse(
 			thread,
 			agent,
@@ -1582,10 +1582,10 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 		const id = crypto.randomUUID().replaceAll('-', '');
 		this.#saveFixing(thread, { ...fixing, reverting: id });
 		this.#setMeta(`revert:${id}`, thread);
-		const shas = fixing.commits.map(({ sha }) => sha.slice(0, 7)).join(', ');
+		const shas = fixing.commits.map(({ sha }) => `\`${sha.slice(0, 7)}\``).join(', ');
 		this.#add(thread, {
 			type: 'event',
-			text: `Reverting ${shas} on ${await this.#branch()}: ${reason}`,
+			text: `Reverting ${shas} on \`${await this.#branch()}\`: ${reason}`,
 			tone: 'danger'
 		});
 		const params = { id, repo: this.#repo(), thread, commits: fixing.commits, reason };
@@ -1608,7 +1608,7 @@ export class RepoCoordinator extends DurableObject<Env> implements RepoCoordinat
 			thread,
 			{
 				title: 'Reverted',
-				error: `What this thread shipped broke ${await this.#branch()}'s deploy checks, so it was reverted${where} and is no longer there.`,
+				error: `It broke ${await this.#branch()}'s deploy checks, so it was reverted${where}.`,
 				failures: []
 			},
 			false
